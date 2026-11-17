@@ -32,6 +32,16 @@ Mount the disk image on the Mac and copy VDT Studio into Applications. The built
 
 The local package has a Developer ID signature. Apple notarization and Gatekeeper acceptance of a quarantined download are separate distribution gates. The native alpha build targets Apple Silicon and configures macOS 14 as its deployment floor. Local host acceptance establishes only the tested macOS and hardware.
 
+The macOS package includes a signed Cursor process supervisor. A packaged Cursor checkpoint connection remains unavailable until the host has reviewed exact-release evidence for the CLI payload, OS, network policy and Grok model. Qualification requires a separate Cursor sign-in, an independently verified read-only vendor payload, and an installed-app test that saves and reopens a calculable tree.
+
+The Windows package omits the prototype Cursor activation by default. A private build can stage a reviewed activation module, native worker and preload as a pinned resource set. The Windows build prerequisites and qualification boundary are documented in the [worker build instructions](../apps/desktop/windows-cursor-worker/README.md).
+
+The 17 November private installed candidates passed both exact Grok models
+through ordinary chat and reopened the same calculated trees. macOS used its
+signed bundle executable with a separate SSD profile. Windows used an x64
+copy from the verified `08966a5` NSIS baseline with reviewed `f0cd622` web
+and native worker resources in the Windows 11 ARM64 guest.
+
 ## Production Distribution Boundary
 
 The repository also includes a Windows x64 NSIS candidate build path. For

@@ -1,3 +1,4 @@
+import { inside, currentWorkspaceRoot } from "../executable-scope";
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -68,25 +69,6 @@ function compareVersions(left: Version, right: Version): number {
     return a < b ? -1 : 1;
   }
   return 0;
-}
-
-function inside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
-}
-
-async function currentWorkspaceRoot(): Promise<string> {
-  const cwd = await realpath(process.cwd());
-  let root = cwd;
-  let directory = cwd;
-  for (let level = 0; level < 12; level += 1) {
-    if (await lstat(path.join(directory, ".git")).catch(() => undefined) ||
-        await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => undefined)) root = directory;
-    const parent = path.dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return root;
 }
 
 async function candidatesOnPath(options: CodexExecutableSelectionOptions): Promise<string[]> {

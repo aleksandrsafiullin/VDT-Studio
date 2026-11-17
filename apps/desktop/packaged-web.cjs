@@ -1,9 +1,77 @@
 const { Console } = require("node:console");
-const { randomBytes } = require("node:crypto");
-const { readFileSync } = require("node:fs");
+const { createHash, randomBytes } = require("node:crypto");
+const { fstatSync, lstatSync, readFileSync } = require("node:fs");
 const { createServer } = require("node:http");
-const { createRequire } = require("node:module");
+const { createRequire, isBuiltin } = require("node:module");
 const { join } = require("node:path");
+const { compileFunction } = require("node:vm");
+
+const cursorIsolationActivationKey = Symbol.for("vdt-studio.packaged-cursor-isolation.activation.v1");
+const windowsStorageActivationKey = Symbol.for("vdt-studio.packaged-windows-storage.activation.v1");
+// Release-reviewed digest of the complete self-contained runtime module for
+// each qualified target. Targets without accepted evidence omit the resource.
+const cursorIsolationResourceManifest = Object.freeze({});
+const cursorIsolationResourceName = "cursor-isolation.cjs";
+
+function packagedCursorIsolationEntry(platform, arch) {
+  return cursorIsolationResourceManifest[`${platform}-${arch}`];
+}
+
+function packagedCursorIsolationDigest(platform, arch) {
+  const entry = packagedCursorIsolationEntry(platform, arch);
+  return platform === "win32" ? entry?.activation : entry;
+}
+
+function measurePackagedCursorIsolation(filename, expectedDigest) {
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest)) throw new Error("Invalid bundled Cursor runtime digest.");
+
+  const metadata = lstatSync(filename);
+  const maxBytes = 8 * 1024 * 1024;
+  if (!metadata.isFile() || metadata.size > maxBytes) {
+    throw new Error("Invalid bundled Cursor runtime.");
+  }
+  const bytes = readFileSync(filename);
+  if (bytes.length > maxBytes || createHash("sha256").update(bytes).digest("hex") !== expectedDigest) {
+    throw new Error("Bundled Cursor runtime failed integrity verification.");
+  }
+  return bytes;
+}
+
+async function loadPackagedCursorIsolation(directory, expectedDigest) {
+  if (expectedDigest === undefined) return undefined;
+  const filename = join(directory, cursorIsolationResourceName);
+  const bytes = measurePackagedCursorIsolation(filename, expectedDigest);
+  // Evaluate the bytes already measured. No require() or unresolved relative
+  // dependencies can reopen writable paths after the integrity check.
+  const builtinRequire = (specifier) => {
+    if (!isBuiltin(specifier)) throw new Error("Bundled Cursor runtime dependencies must be self-contained.");
+    return require(specifier);
+  };
+  const module = { exports: {} };
+  const evaluate = compileFunction(bytes.toString("utf8"),
+    ["exports", "require", "module", "__filename", "__dirname"], { filename });
+  evaluate(module.exports, builtinRequire, module, filename, directory);
+  const activation = await module.exports.createPackagedCursorActivation();
+  if (!activation || typeof activation !== "object") {
+    throw new Error("Bundled Cursor runtime did not supply an activation.");
+  }
+  return Object.freeze(activation);
+}
+
+async function activatePackagedCursorIsolation() {
+  const expectedDigest = packagedCursorIsolationDigest(process.platform, process.arch);
+  if (!expectedDigest || process.env.VDT_APP_MODE !== "desktop" || process.env.NODE_ENV !== "production") return;
+  try {
+    const hasNativeAuthority = process.platform === "win32"
+      ? Boolean(globalThis[windowsStorageActivationKey])
+      : process.platform === "darwin" && fstatSync(3).isSocket();
+    if (!hasNativeAuthority) return;
+    const activation = await loadPackagedCursorIsolation(__dirname, expectedDigest);
+    Object.defineProperty(globalThis, cursorIsolationActivationKey, { value: activation });
+  } catch {
+    console.error("The packaged Cursor isolation runtime could not be admitted.");
+  }
+}
 
 function guardedHandler(handler, host = "127.0.0.1:37541") {
   const origin = `http://${host}`;
@@ -64,11 +132,11 @@ async function start() {
   const hostname = "127.0.0.1";
   const port = 37541;
   const host = `${hostname}:${port}`;
+  await activatePackagedCursorIsolation();
   if (process.platform === "win32") {
     // Next can defer its production instrumentation hook until a request.
     // Run the compiled hook explicitly before starting the trusted listener.
-    const activationKey = Symbol.for("vdt-studio.packaged-windows-storage.activation.v1");
-    if (process.env.VDT_APP_MODE !== "desktop" || !globalThis[activationKey]) {
+    if (process.env.VDT_APP_MODE !== "desktop" || !globalThis[windowsStorageActivationKey]) {
       throw new Error("The packaged Windows web runtime has not been activated by its host.");
     }
     process.env.NEXT_RUNTIME = "nodejs";
@@ -104,7 +172,11 @@ async function start() {
   }
 }
 
-module.exports = { guardedHandler, start };
+module.exports = {
+  guardedHandler, loadPackagedCursorIsolation, start,
+  cursorIsolationResourceName, measurePackagedCursorIsolation, packagedCursorIsolationDigest,
+  packagedCursorIsolationEntry
+};
 if (require.main === module) {
   start().catch((error) => {
     console.error("VDT packaged web server failed to start", error);

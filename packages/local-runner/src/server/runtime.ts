@@ -1,4 +1,4 @@
-import { resolveSmartHarnessIdentity, listHarnessDefinitions, updateHarnessProfiles, getHarnessDefinition } from "@vdt-studio/model-bridge/local-runtime";
+import { probeCursorStatus, cursorLaunchTarget, isWindowsCursorPayload, WINDOWS_CURSOR_MODELS_TIMEOUT_MS, windowsCursorLaunchIssueMessage, resolveSmartHarnessIdentity, listHarnessDefinitions, updateHarnessProfiles, getHarnessDefinition } from "@vdt-studio/model-bridge/local-runtime";
 import { createHash, randomUUID } from "node:crypto";
 import { readLocalSmartReasoningCapabilities } from "./smart-suggestions";
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
@@ -180,7 +180,8 @@ export async function detectRuntimeSubscriptionClis(
         return;
       }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15_000);
+      const modelTimeout = agent.id === "cursor-agent" && isWindowsCursorPayload(agent.executable) ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 15_000;
+      const timer = setTimeout(() => controller.abort(), modelTimeout);
       try {
         modelsByAgent[agent.id] = [
           ...await listBackendModels(manifest, controller.signal, {
@@ -199,11 +200,20 @@ export async function detectRuntimeSubscriptionClis(
   return { statusCode: 200, payload: { ok: true, agents, modelsByAgent, harnesses: listHarnessDefinitions(context.config.executor?.env) } };
 }
 
+async function verifyRuntimeProviderAuth(context: LocalRuntimeContext, agentId: SubscriptionCliId): Promise<unknown> {
+  const verified = await detectRuntimeSubscriptionClis(context, agentId);
+  const verifiedPayload = isRecord(verified.payload) ? verified.payload : undefined;
+  const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
+  return agents.find((candidate) => isRecord(candidate) && candidate.id === agentId);
+}
+
 export async function listRuntimeModels(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const modelTimeout = process.platform === "win32" && backendId === "cursor_subscription"
+    ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 15_000;
+  const timeout = setTimeout(() => controller.abort(), modelTimeout);
   timeout.unref?.();
   try {
     const models = await listBackendModels(manifest, controller.signal, context.config.executor);
@@ -771,20 +781,26 @@ export async function openRuntimeProviderAuth(backendId: string, context: LocalR
         throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed.`);
       }
 
+      if (detection.cursorLaunchIssue) {
+        throw new LocalRuntimeError(409, "CURSOR_LAUNCH_UNAVAILABLE", windowsCursorLaunchIssueMessage(detection.cursorLaunchIssue));
+      }
       const execImpl = context.config.providerAuth?.execFile ?? execFileAsync;
-      await execImpl(detection.executable, [...manifest.cli.authArgs], {
+      const authEnvironment = context.config.providerAuth?.env ?? process.env;
+      const target = agentId === "cursor-agent"
+        ? cursorLaunchTarget(detection.executable, manifest.cli.authArgs, authEnvironment)
+        : { executable: detection.executable, args: [...manifest.cli.authArgs], env: authEnvironment, bundled: false };
+      await execImpl(target.executable, target.args, {
         encoding: "utf8",
         timeout: context.config.providerAuth?.timeoutMs ?? PROVIDER_AUTH_TIMEOUT_MS,
         maxBuffer: PROVIDER_AUTH_MAX_BUFFER_BYTES,
         windowsHide: true,
         shell: false,
-        env: context.config.providerAuth?.env ?? process.env
+        env: target.env
       });
 
-      const verified = await detectRuntimeSubscriptionClis(context, agentId);
-      const verifiedPayload = isRecord(verified.payload) ? verified.payload : undefined;
-      const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
-      const verifiedAgent = agents.find((candidate) => isRecord(candidate) && candidate.id === agentId);
+      const verifiedAgent = target.bundled
+        ? await probeCursorStatus(detection.executable, {})
+        : await verifyRuntimeProviderAuth(context, agentId);
       if (!isRecord(verifiedAgent) || verifiedAgent.status !== "ready") {
         throw new LocalRuntimeError(
           401,

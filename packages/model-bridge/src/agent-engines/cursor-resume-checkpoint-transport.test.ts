@@ -114,13 +114,14 @@ function nestedUserAskBatchResult(): string {
   });
 }
 
-function stream(input: { cwd: string; sessionId: string; result?: string; extra?: readonly unknown[] }): string {
+function stream(input: { cwd: string; sessionId: string; model?: string; result?: string; extra?: readonly unknown[] }): string {
   return [
     {
       type: "system",
       subtype: "init",
       cwd: input.cwd,
       session_id: input.sessionId,
+      model: input.model,
       permissionMode: "ask"
     },
     ...(input.extra ?? []),
@@ -227,6 +228,7 @@ describe("CursorResumeCheckpointTransport", () => {
     const isolated = await environment();
     const runner = new FakeRunner((request) => processResult(stream({
       cwd: request.cwd,
+      model,
       sessionId: "cursor-session-1"
     })));
     const transport = new CursorResumeCheckpointTransport({
@@ -314,11 +316,45 @@ describe("CursorResumeCheckpointTransport", () => {
     expect(runner.requests).toHaveLength(1);
   });
 
+  it.each([undefined, "auto"])("rejects an unconfirmed explicit checkpoint model (%j)", async model => {
+    const isolated = await environment();
+    const runner = new FakeRunner(request => processResult(stream({
+      cwd: request.cwd, sessionId: "cursor-session-1", ...(model === undefined ? {} : { model })
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent", validatedCliVersion: "2026.08.1", runner
+    });
+    await expect(transport.executeSegment({
+      mode: "open", environment: isolated, model: "composer-2.5", prompt: "open", signal: new AbortController().signal
+    }, ["vdt.echo"])).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_MODEL_UNVERIFIED" });
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  it.each(["unique", "duplicate", "other-slug", "reserved-auto"])(
+    "confirms only an unambiguous catalog label (%s)", async caseName => {
+    const isolated = await environment();
+    const label = caseName === "reserved-auto" ? "auto" : caseName === "other-slug" ? "other-model" : "GPT-5.6 Sol 272K Low";
+    const model = "gpt-5.6-sol-low";
+    const runner = new FakeRunner(request => processResult(stream({ cwd: request.cwd, sessionId: "cursor-session-1", model: label })));
+    const names = new Map([[model, label]]);
+    if (caseName === "duplicate") names.set("different-model", label);
+    if (caseName === "other-slug") names.set(label, "Different display name");
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent", validatedCliVersion: "2026.08.1", modelDisplayNames: names, runner
+    });
+    const run = transport.executeSegment({
+      mode: "open", environment: isolated, model, prompt: "open", signal: new AbortController().signal
+    }, ["vdt.echo"]);
+    if (caseName === "unique") await expect(run).resolves.toMatchObject({ sessionId: "cursor-session-1" });
+    else await expect(run).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_MODEL_UNVERIFIED" });
+  });
+
   it("corrects a plain-text terminal result once in the same session", async () => {
     const isolated = await environment();
     const runner = new FakeRunner((request, index) => processResult(stream({
       cwd: request.cwd,
       sessionId: "cursor-session-1",
+      model: "composer-2.5",
       ...(index === 0 ? { result: "I can outline the calculation for you." } : {})
     })));
     const transport = new CursorResumeCheckpointTransport({
@@ -472,6 +508,106 @@ describe("CursorResumeCheckpointTransport", () => {
     });
     await expect(transport.executeSegment({ ...common, mode: "resume", expectedSessionId: "cursor-session-thinking" }, ["vdt.echo"]))
       .rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH" });
+  });
+
+  describe("pinned Cursor print telemetry", () => {
+    const sessionId = "cursor-session-telemetry";
+    const telemetry = { session_id: sessionId, timestamp_ms: 1_795_000_000_000 };
+    const usage = {
+      ...telemetry,
+      type: "usage",
+      subtype: "model_call",
+      model_call_id: "model-call-1",
+      usage: { inputTokens: 0, outputTokens: 17, cacheReadTokens: 130, cacheWriteTokens: 22 }
+    };
+
+    async function execute(eventFrames: readonly unknown[], position: "before_init" | "after_init" | "after_result" = "after_init") {
+      const isolated = await environment();
+      const runner = new FakeRunner((request) => {
+        const standard = stream({ cwd: request.cwd, sessionId, model: "Grok 4.7 256K Low" });
+        const serialized = eventFrames.map((event) => JSON.stringify(event)).join("\n") + "\n";
+        if (position === "before_init") return processResult(serialized + standard);
+        if (position === "after_result") return processResult(standard + serialized);
+        return processResult(stream({
+          cwd: request.cwd, sessionId, model: "Grok 4.7 256K Low", extra: eventFrames
+        }));
+      });
+      return new CursorResumeCheckpointTransport({
+        executable: "/opt/cursor/cursor-agent",
+        validatedCliVersion: "2026.11.11-b912975",
+        modelDisplayNames: new Map([["grok-4.7-low", "Grok 4.7 256K Low"]]),
+        runner
+      }).executeSegment({
+        mode: "open", environment: isolated, model: "grok-4.7-low", prompt: "open",
+        signal: new AbortController().signal
+      }, ["vdt.echo"]);
+    }
+
+    it("ignores the five exact telemetry shapes while preserving only the verified action", async () => {
+      const result = await execute([
+        usage,
+        { ...usage, model_call_id: "model-call-2", usage: { ...usage.usage, reasoningTokens: 2 } },
+        { ...telemetry, type: "retry", subtype: "starting", attempt: 1, is_resume: false },
+        { ...telemetry, type: "retry", subtype: "resuming", attempt: 2, checkpoint_turn_count: 0 },
+        { ...telemetry, type: "connection", subtype: "reconnecting", attempt: 1, endpoint_url: "https://private-endpoint.invalid" },
+        { ...telemetry, type: "connection", subtype: "reconnecting", attempt: 2 },
+        { ...telemetry, type: "connection", subtype: "reconnected" }
+      ]);
+      expect(result).toMatchObject({ sessionId, turn: { action: { type: "action_batch" } } });
+      expect(result.nativeWebSearch).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("private-endpoint");
+      expect(JSON.stringify(result)).not.toContain("outputTokens");
+    });
+
+    it.each([
+      { ...usage, model_call_id: "" },
+      { ...usage, usage: { ...usage.usage, reasoningTokens: 0 } },
+      { ...usage, usage: { ...usage.usage, inputTokens: -1 } },
+      { ...usage, usage: { ...usage.usage, cacheReadTokens: "130" } },
+      { ...usage, usage: { ...usage.usage, extraCounter: 2 } },
+      { ...usage, tool_call: { shellToolCall: {} } },
+      { ...usage, timestamp_ms: 1.25 },
+      { ...telemetry, type: "retry", subtype: "starting", attempt: 1, is_resume: "false" },
+      { ...telemetry, type: "retry", subtype: "resuming", attempt: 1 },
+      { ...telemetry, type: "connection", subtype: "reconnected", endpoint_url: "https://private.invalid" },
+      { ...telemetry, type: "connection", subtype: "reconnecting", attempt: 1, endpoint_url: { shellToolCall: {} } },
+      { ...telemetry, type: "connection", subtype: "future" }
+    ])("rejects extra, missing, or ill-typed telemetry fields %#", async (event) => {
+      await expect(execute([event])).rejects.toMatchObject({
+        code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH",
+        eventType: event.type,
+        eventSubtype: event.subtype
+      });
+    });
+
+    it("requires telemetry after verified init, before the terminal result, and on the same session", async () => {
+      await expect(execute([usage], "before_init")).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_PROTOCOL_INVALID" });
+      await expect(execute([usage], "after_result")).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_PROTOCOL_INVALID" });
+      await expect(execute([{ ...usage, session_id: "foreign-session" }])).rejects.toMatchObject({
+        code: "CURSOR_CHECKPOINT_SESSION_MISMATCH", eventType: "usage"
+      });
+    });
+
+    it.each(["request", "response"])("blocks native provider interaction %s before exposing any payload", async (subtype) => {
+      await expect(execute([{ ...telemetry, type: "interaction_query", subtype, query: "internal interaction payload" }]))
+        .rejects.toMatchObject({
+          code: "SECURITY_BOUNDARY_BREACH", eventType: "interaction_query", eventSubtype: subtype,
+          message: `Cursor attempted a prohibited provider interaction (interaction_query:${subtype}).`
+        });
+    });
+
+    it("names bounded unknown discriminators and withholds unsafe strings", async () => {
+      await expect(execute([{ type: "task_notification", subtype: "completed", contents: "internal output" }]))
+        .rejects.toMatchObject({
+          code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", eventType: "task_notification", eventSubtype: "completed",
+          message: "Cursor stream contained an unknown event type (task_notification:completed)."
+        });
+      await expect(execute([{ type: "https://private-path.invalid", subtype: "X".repeat(200) }]))
+        .rejects.toMatchObject({
+          code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH",
+          message: "Cursor stream contained an unknown event type (unrecognized discriminator)."
+        });
+    });
   });
 
   it("normalizes Cursor's unambiguous direct calls action into an ActionBatch", async () => {

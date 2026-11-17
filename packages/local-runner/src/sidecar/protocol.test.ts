@@ -47,6 +47,23 @@ describe("sidecar protocol parser", () => {
     expect(tracker.isActive(requestId)).toBe(true);
   });
 
+  it.each(["executable", "argsPrefix", "environment", "trustedVersion"])(
+    "rejects caller-supplied Cursor launch field %s",
+    (field) => expectCode(() => parseSidecarFrame(frame({
+      protocolVersion: SIDECAR_PROTOCOL_VERSION,
+      type: "request",
+      requestId,
+      method: "complete",
+      payload: {
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { root: "Revenue" },
+        [field]: "untrusted"
+      }
+    })), "UNKNOWN_FIELD")
+  );
+
   it("rejects oversized frames before parsing JSON", () => {
     expectCode(() => parseSidecarFrame(frame({
       protocolVersion: SIDECAR_PROTOCOL_VERSION,

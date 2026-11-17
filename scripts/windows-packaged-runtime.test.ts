@@ -1,16 +1,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { createRequire } from "node:module";
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CURSOR_CHECKPOINT_PROTOCOL_VERSION } from "../packages/model-bridge/src/agent-engines/cursor-resume-checkpoint-transport";
 import { buildEnvironment, verifyResourceTree, WINDOWS_NODE } from "./package-windows-alpha.mjs";
 
 const require = createRequire(import.meta.url);
-const { guardedHandler } = require("../apps/desktop/packaged-web.cjs");
+const { guardedHandler, loadPackagedCursorIsolation } = require("../apps/desktop/packaged-web.cjs");
 const owned: string[] = [];
 const servers: Server[] = [];
 const children: ChildProcess[] = [];
@@ -73,6 +75,137 @@ describe("packaged web authority shared by Mac and Windows", () => {
     const { send, bootstrap } = await guardedServer();
     expect((await send(bootstrap, { origin: "https://attacker.example" })).status).toBe(403);
     expect((await send(bootstrap)).status).toBe(303);
+  });
+});
+
+describe("packaged Cursor isolation resource", () => {
+  it("loads only the exact bytes pinned by the bootstrap manifest", async () => {
+    const root = await temp();
+    const resource = path.join(root, "cursor-isolation.cjs");
+    const bundled = 'exports.createPackagedCursorActivation = () => ({ marker: require("node:path").basename(__filename) });';
+    await writeFile(resource, bundled);
+    const digest = createHash("sha256").update(bundled).digest("hex");
+    await expect(loadPackagedCursorIsolation(root, undefined)).resolves.toBeUndefined();
+    await expect(loadPackagedCursorIsolation(root, digest)).resolves.toEqual({ marker: "cursor-isolation.cjs" });
+    await writeFile(resource, "throw new Error('untrusted code was evaluated');");
+    await expect(loadPackagedCursorIsolation(root, digest)).rejects.toThrow("failed integrity verification");
+  });
+
+  it("stages only the target resource from the archived release manifest", async () => {
+    const root = await temp();
+    const source = path.join(root, "apps", "desktop");
+    const scripts = path.join(root, "scripts");
+    const resources = path.join(root, "resources");
+    await Promise.all([
+      mkdir(path.join(source, "cursor-isolation"), { recursive: true }),
+      mkdir(scripts),
+      mkdir(resources)
+    ]);
+    const bundled = "exports.createPackagedCursorActivation = () => ({ marker: true });";
+    const digest = createHash("sha256").update(bundled).digest("hex");
+    const bootstrap = (await readFile(path.resolve("apps/desktop/packaged-web.cjs"), "utf8"))
+      .replace(/const cursorIsolationResourceManifest = Object.freeze\([^;]*\);/,
+        `const cursorIsolationResourceManifest = Object.freeze({ "darwin-arm64": "${digest}" });`);
+    await Promise.all([
+      writeFile(path.join(source, "packaged-web.cjs"), bootstrap),
+      writeFile(path.join(source, "cursor-isolation", "darwin-arm64.cjs"), bundled),
+      cp(path.resolve("scripts/stage-packaged-cursor-isolation.cjs"), path.join(scripts, "stage-packaged-cursor-isolation.cjs"))
+    ]);
+    const { stagePackagedCursorIsolation } = require(path.join(scripts, "stage-packaged-cursor-isolation.cjs"));
+    expect(stagePackagedCursorIsolation(resources, "win32", "x64")).toEqual([]);
+    expect(await readdir(resources)).toEqual([]);
+    expect(stagePackagedCursorIsolation(resources, "darwin", "arm64")).toEqual(["cursor-isolation.cjs"]);
+    expect(await readFile(path.join(resources, "cursor-isolation.cjs"), "utf8")).toBe(bundled);
+  });
+
+  it("stages only the three measured Windows resources and rejects a modified worker", async () => {
+    const root = await temp();
+    const source = path.join(root, "apps", "desktop");
+    const activation = path.join(source, "cursor-isolation");
+    const workers = path.join(activation, "windows-cursor-worker");
+    const scripts = path.join(root, "scripts");
+    const resources = path.join(root, "resources");
+    await Promise.all([mkdir(workers, { recursive: true }), mkdir(scripts), mkdir(resources)]);
+    const assets = {
+      activation: ["win32-x64.cjs", "exports.createPackagedCursorActivation = () => ({});"],
+      worker: ["vdt-windows-cursor-worker.exe", "synthetic worker bytes"],
+      preload: ["proxy-preload.cjs", "synthetic preload bytes"]
+    } as const;
+    const entry = Object.fromEntries(Object.entries(assets).map(([key, [, bytes]]) =>
+      [key, createHash("sha256").update(bytes).digest("hex")]));
+    const bootstrap = (await readFile(path.resolve("apps/desktop/packaged-web.cjs"), "utf8"))
+      .replace(/const cursorIsolationResourceManifest = Object.freeze\([^;]*\);/,
+        `const cursorIsolationResourceManifest = Object.freeze(${JSON.stringify({ "win32-x64": entry })});`);
+    const worker = path.join(workers, assets.worker[0]);
+    await Promise.all([
+      writeFile(path.join(source, "packaged-web.cjs"), bootstrap),
+      writeFile(path.join(activation, assets.activation[0]), assets.activation[1]),
+      writeFile(worker, "modified worker"),
+      writeFile(path.join(workers, assets.preload[0]), assets.preload[1]),
+      writeFile(path.join(workers, "unlisted.cjs"), "private fixture"),
+      cp(path.resolve("scripts/stage-packaged-cursor-isolation.cjs"), path.join(scripts, "stage-packaged-cursor-isolation.cjs"))
+    ]);
+    const { stagePackagedCursorIsolation } = require(path.join(scripts, "stage-packaged-cursor-isolation.cjs"));
+    expect(() => stagePackagedCursorIsolation(resources, "win32", "x64")).toThrow("failed integrity verification");
+    expect(await readdir(resources)).toEqual([]);
+    await writeFile(worker, assets.worker[1]);
+    expect(stagePackagedCursorIsolation(resources, "win32", "x64")).toEqual([
+      "cursor-isolation.cjs", "windows-cursor-worker/vdt-windows-cursor-worker.exe",
+      "windows-cursor-worker/proxy-preload.cjs"
+    ]);
+    expect(await readdir(path.join(resources, "windows-cursor-worker"))).toEqual([
+      assets.preload[0], assets.worker[0]
+    ]);
+  });
+
+  it("builds a pinned Windows activation from exact reviewed model records", async () => {
+    const root = await temp();
+    const { buildWindowsCursorIsolation } = require(path.resolve("scripts/build-windows-cursor-isolation.cjs"));
+    const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+    const digest = `sha256:${hash("synthetic evidence")}`;
+    const evidence = {
+      evidenceHash: digest, testedAt: "2026-11-17T00:00:00.000Z", cliVersion: "2026.11.13-eacade1",
+      protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+      toolCatalogHash: digest, payloadHash: digest, policyHash: digest, vendorPolicyHash: digest,
+      platform: { os: "win32", arch: "x64", runtimeVersion: "v24.22.2" },
+      modelId: "grok-4.7-low", catalogModelDisplayName: "Grok 4.7 Low", runtimeModelDisplayName: "Grok 4.7 256K Low"
+    };
+    const profile = {
+      payloadRoot: String.raw`V:\Cursor\payload`, systemRoot: String.raw`C:\Windows`, privateRoot: String.raw`V:\Cursor\private`,
+      workerExecutableHash: `sha256:${hash("worker")}`, proxyPreloadHash: `sha256:${hash("preload")}`,
+      egressPolicyHash: digest, ignoredReviewNotes: "synthetic review note must remain outside the package"
+    };
+    const profilePath = path.join(root, "profile.json");
+    const bundlePath = path.join(root, "win32-x64.cjs");
+    await Promise.all([
+      writeFile(path.join(root, "vdt-windows-cursor-worker.exe"), "worker"),
+      writeFile(path.join(root, "proxy-preload.cjs"), "preload"),
+      writeFile(profilePath, JSON.stringify({ ...profile, evidences: [evidence, evidence] }))
+    ]);
+    await expect(buildWindowsCursorIsolation(profilePath, root, bundlePath)).rejects.toThrow("repeats a model identifier");
+    await writeFile(profilePath, JSON.stringify({ ...profile, evidence: { ...evidence, protocolVersion: 1 } }));
+    await expect(buildWindowsCursorIsolation(profilePath, root, bundlePath)).rejects.toThrow("exact x64 host and model");
+    await writeFile(profilePath, JSON.stringify({
+      ...profile, evidences: [evidence, {
+        ...evidence, modelId: "grok-4.7-xhigh",
+        catalogModelDisplayName: "Grok 4.7 Extra High", runtimeModelDisplayName: "Grok 4.7 256K Extra High"
+      }]
+    }));
+    const pins = await buildWindowsCursorIsolation(profilePath, root, bundlePath);
+    const bundled = await readFile(bundlePath, "utf8");
+    expect(pins).toEqual({ activation: hash(bundled), worker: hash("worker"), preload: hash("preload") });
+    expect(bundled).toContain(evidence.modelId);
+    expect(bundled).toContain("grok-4.7-xhigh");
+    expect(bundled).not.toContain(profile.ignoredReviewNotes);
+  });
+
+  it("rejects unmeasured relative dependencies even from the pinned module", async () => {
+    const root = await temp();
+    const bundled = 'exports.createPackagedCursorActivation = () => require("./unverified.cjs");';
+    await writeFile(path.join(root, "cursor-isolation.cjs"), bundled);
+    await writeFile(path.join(root, "unverified.cjs"), "module.exports = { marker: true };");
+    const digest = createHash("sha256").update(bundled).digest("hex");
+    await expect(loadPackagedCursorIsolation(root, digest)).rejects.toThrow("dependencies must be self-contained");
   });
 });
 

@@ -186,6 +186,21 @@ export async function resolveProviderTarget(
   provider: ProxyProvider,
   lookup: ProviderDnsLookup = dnsLookup
 ): Promise<ResolvedProviderTarget> {
+  return resolveNetworkTarget(rawUrl, provider === "ollama", lookup);
+}
+
+export async function resolvePublicProviderTarget(
+  rawUrl: string,
+  lookup: ProviderDnsLookup = dnsLookup
+): Promise<ResolvedProviderTarget> {
+  return resolveNetworkTarget(rawUrl, false, lookup);
+}
+
+async function resolveNetworkTarget(
+  rawUrl: string,
+  allowLoopback: boolean,
+  lookup: ProviderDnsLookup
+): Promise<ResolvedProviderTarget> {
   let target: URL;
   try {
     target = new URL(rawUrl);
@@ -200,7 +215,6 @@ export async function resolveProviderTarget(
     throw new Error("Provider base URL must not contain credentials.");
   }
 
-  const allowLoopback = provider === "ollama";
   const hostname = target.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
   if (isIP(hostname)) {
     if (isBlockedAddress(hostname, allowLoopback)) {

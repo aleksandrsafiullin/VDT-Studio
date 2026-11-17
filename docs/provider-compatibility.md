@@ -1,5 +1,14 @@
 # Provider Compatibility
 
+## Current desktop alpha qualification
+
+No real AI configuration is yet qualified for the current Mac or Windows
+installed alpha.2 candidate. Statuses and `liveVerified` in the certification
+manifest describe only their named evidence, including historical host runs;
+they do not establish native per-platform acceptance. The deterministic mock
+is a fixture. Follow the [current acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
+for the pending installed live matrix.
+
 Direct OpenAI Model Agent and OpenAI-compatible compatibility runs use structured argument objects for
 closed builder schemas in the admitted tool catalog. The response schema
 ties each tool name to its own fields and bounds. Smart recipe branches use
@@ -337,7 +346,23 @@ For a cheaper auth/connection-only check on the compatibility adapters, append `
 | Maintainer live verification | **2026-06-23:** version/auth/model-list probes passed on the maintainer machine. **2026-06-24:** Cursor was switched to the open-design-style adapter posture. **2026-08-26:** two real `agent-decision-v2` qualification attempts reached Cursor but produced no schema-valid terminal result (`BACKEND_PARSE_FAILED`), so the live gate remains open. |
 | OS sandbox | Not required for Cursor in the current manifest. Cursor is constrained by a fresh VDT temp workspace rather than an OS-specific wrapper. |
 | CLI tool mode | Cursor runs in `--mode ask` for direct schema-bound JSON responses. VDT does not claim all Cursor internals are disabled; certification depends on `ephemeralWorkspaceOnly`, reviewed args, no `--force`/`--yolo`, no repo cwd, no VDT MCP injection and no browser-supplied paths/env. |
-| Platform matrix | **Beta:** macOS, Linux and Windows when `agent`/`cursor-agent` is on PATH and Cursor account auth is ready. |
+| Platform matrix | **Beta:** macOS and Linux, with setup checks confirmed on the private Windows installed candidate below. Production Windows composer execution remains pending. |
+
+The historical Mac live flag covers a development composer canary and
+separate native Smart evidence. The private Windows installer at
+`467b9b43a0c776e5728c02e04731527585d695ee` passed Cursor CLI authentication,
+model listing and Settings **Test**. The normal composer had no matching
+production binding and kept **Send** disabled.
+
+A direct Windows Cursor CLI `2026.11.13-eacade1` diagnostic opened a print
+session and resumed that same session using a private configuration with
+sandboxing disabled. Cursor reported GPT-5.6 Sol 272K Low for the requested
+`gpt-5.6-sol-low`. The resume used a fresh private workspace, and the probe
+observed no tool calls. The Windows CLI refused
+print mode when its native sandbox was enabled. This leaves installed
+composer inference and enforceable Windows isolation open. The integration
+continues on the official CLI path. See the
+[release execution record](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md#ra-04-windows-cursor-cli-and-production-chat).
 
 ### Reviewed CLI flags (manifest static args)
 
@@ -604,6 +629,24 @@ Admission onto the Supervisor path still requires
 `allowUnqualifiedExternalCanary`, exactly as for Codex and Cursor. Claude is in
 `ADMITTED_CLI_SESSION_CANARIES` so the wiring exists; that is not a
 qualification claim and is not a CI live gate.
+
+### Packaged Cursor checkpoint admission — qualification pending
+
+The packaged Supervisor can register separate Grok bindings from a single
+native bootstrap. Each requires a release-pinned isolation runner and its
+own accepted platform evidence. The evidence records the exact vendor catalog
+label separately from the CLI initialization label. Each segment must report the selected model ID or its
+verified initialization label. The runner uses private session state
+and the VDT Gateway. Reported native tool activity, including native WebSearch,
+stops this profile. Usage, retry and connection stream records are ignored after their fields and
+session identity are checked. Provider interactions still stop the run.
+The development canary remains separately gated. On 17 November 2026, a
+private Developer ID signed Apple Silicon package and a private Windows
+x64 candidate both saved and reopened calculable trees on the exact
+`grok-4.7-low` and `grok-4.7-xhigh` bindings. Both used standalone web
+`f0cd622`. The Windows candidate used the verified `08966a5` NSIS native
+baseline in the Windows 11 ARM64 guest. The public bootstrap manifest
+has no accepted entry.
 
 ### Claude checkpoint session — unverified
 

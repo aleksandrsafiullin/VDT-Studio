@@ -250,3 +250,16 @@ The declarative registry/shared transport/profile pattern was studied in
 and [ACP integration contract](https://github.com/nexu-io/open-design/blob/12d970eacc8971150e3c76470d2a9afe16dc2ed1/docs/new-agent-runtime-acp.md).
 VDT retains its existing formula/storage/Gateway authority and qualification
 requirements. It does not inherit OpenDesign's auto-approval policy.
+
+
+On Windows, VDT resolves official Cursor command aliases on PATH to the bundled
+Node executable and entrypoint of the latest completed version under the
+per-user Cursor CLI installation. VDT launches the pair directly with separate
+arguments. Finish pending vendor updates in the official Cursor CLI and rescan
+in VDT. Ambiguous or incomplete installations require repair before rescan.
+Windows installed sign-in and agent execution require separate verification.
+Windows Cursor Suggested KPI metadata is currently unsupported. Supporting
+it requires host-owned executable freshness and authenticated account proof
+within the existing five-second metadata boundary. The optional checkpoint
+canary remains outside installed qualification. Restart VDT after a Cursor update
+before using an existing checkpoint canary binding for a new session.

@@ -349,6 +349,18 @@ function parseSessionId(value: unknown): string {
   return value.sessionId;
 }
 
+function assertSessionModel(response: unknown, expected: string | undefined): void {
+  if (!expected) return;
+  const models = isRecord(response) ? response.models : undefined;
+  const currentModelId = isRecord(models) ? models.currentModelId : undefined;
+  if (currentModelId !== expected) {
+    throw engineError(
+      "CURSOR_ACP_MODEL_UNVERIFIED",
+      "Cursor ACP did not confirm the model selected for this session."
+    );
+  }
+}
+
 function asMcpServerPayload(server: CursorAcpVdtMcpServer): Record<string, unknown> {
   return {
     name: server.name,
@@ -1108,6 +1120,7 @@ export class CursorAcpProtocolEngine {
         mcpServers: [asMcpServerPayload(start.vdtMcpServer)]
       }, { timeoutMs: this.#handshakeTimeoutMs });
       const externalSessionId = parseSessionId(sessionRaw);
+      assertSessionModel(sessionRaw, start.model);
       const session = this.#createSession({
         transport,
         start,
@@ -1189,6 +1202,7 @@ export class CursorAcpProtocolEngine {
         cwd: resume.privateWorkspacePath,
         mcpServers: [asMcpServerPayload(resume.vdtMcpServer)]
       }, { timeoutMs: this.#handshakeTimeoutMs });
+      assertSessionModel(resumeResult, checkpoint.model);
       session.markReplaying(false);
       session.emitSessionReady(true);
       if (initialized.resumeSession && resume.requireNativeResume === true) {

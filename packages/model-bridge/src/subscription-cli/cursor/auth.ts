@@ -1,3 +1,4 @@
+import { cursorLaunchTarget, WINDOWS_CURSOR_STATUS_TIMEOUT_MS } from "./windows-launch";
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { promisify } from "node:util";
 import type { ModelBackendDetectionResult, ModelBackendStatus } from "../../contract";
@@ -83,20 +84,21 @@ async function runExec(
   input?: string
 ): Promise<ExecResult> {
   const execImpl = options.execFileImpl ?? execFileAsync;
+  const target = cursorLaunchTarget(executable, args);
   const execOptions: ExecFileOptionsWithStringEncoding = {
     encoding: "utf8",
-    timeout: options.timeoutMs ?? 15_000,
+    timeout: options.timeoutMs ?? (target.bundled && args[0] === "status" ? WINDOWS_CURSOR_STATUS_TIMEOUT_MS : 15_000),
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false,
     signal: options.signal,
     ...(input === undefined ? {} : { input })
   };
-  const result = await execImpl(executable, [...args], execOptions);
+  const result = await execImpl(target.executable, target.args, { ...execOptions, env: target.env });
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-async function probeWithStatusCommand(executable: string, options: ProbeCursorAuthOptions): Promise<ModelBackendDetectionResult | null> {
+export async function probeCursorStatus(executable: string, options: ProbeCursorAuthOptions): Promise<ModelBackendDetectionResult | null> {
   try {
     const result = await runExec(executable, ["status", "--format", "json"], options);
     const mapped = parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "installed");
@@ -189,7 +191,7 @@ export async function probeCursorAuth(
     };
   }
 
-  const statusProbe = await probeWithStatusCommand(executable, options);
+  const statusProbe = await probeCursorStatus(executable, options);
   if (statusProbe) return statusProbe;
 
   return probeWithConnectionTest(executable, options);

@@ -63,6 +63,13 @@ The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, 
 
 Settings `ai_test_backend` checks subscription CLI/session readiness using the reviewed provider probe and succeeds only for an installed backend reporting `ready`. It does not submit an additional VDT completion. Adapters without a usable status command may still use their bounded minimal connection prompt. Local HTTP backends retain the registered schema connection probe. The frontend rejects missing, malformed or unsuccessful Test/Auth responses and preserves native IPC error messages as actionable errors instead of treating an empty response as success.
 
+Backend connection tests, model listing and provider sign-in dispatch their
+blocking sidecar calls through Tauri's async runtime. The native event loop can
+continue handling window input while those calls wait. Command arguments,
+results and sidecar serialization are unchanged by this dispatch change, which
+uses the existing probe deadlines for each backend. Installed
+responsiveness during Windows Cursor CLI startup remains to be checked.
+
 Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
 
 ## Windows packaged web host
@@ -94,6 +101,40 @@ does not modify signed resources. The desktop host passes its writable data path
 and its embedded Node executable to the private AI sidecar. The same approved
 pipes carry Smart metadata, completions and cancellations. The web server exits
 on loss of the host pipe. The Tauri exit event reaps both children.
+
+## Packaged Cursor Checkpoint Admission
+
+Before creating the Next server, the packaged web bootstrap can load a
+self-contained `cursor-isolation.cjs` resource from the app bundle. This
+requires the Windows native activation or the macOS inherited listener.
+The bootstrap uses its compiled platform and architecture manifest to
+verify the resource's digest and evaluates the same measured bytes. The
+native package scripts stage a matching, self-contained target module from
+the archived release source. The module can import Node built-ins. Renderer requests, user preferences and
+environment switches supply no admission evidence.
+
+The resource supplies a trusted native runner and per-run private environment
+to the server. The server compares the current complete vendor payload,
+isolation policy, CLI version, runtime and VDT tool catalog with the accepted
+evidence before registering an immutable binding for each matching Grok
+model. Each model has a separate runner and session scope. An evidence
+mismatch leaves that model unavailable. The native runner
+fences each launch to that identity so updates cannot replace the measured
+process. This profile retains Cursor's permission allowlist and disables its
+nested sandbox because the approved OS runner owns isolation enforcement.
+The runner verifies the exact vendor config before launch. Opaque Cursor
+state remains in one private profile across
+checkpoints. The bootstrap manifest currently has no accepted entry, so
+installed packages expose no qualified Cursor binding.
+
+The approved-host egress broker drains the final response and releases the
+local CONNECT socket once the upstream socket fully closes. The Windows
+worker gives each CLI process a bounded pool of single-use pipe endpoints
+behind the broker's concurrent connection cap. Its Node permission flags
+deny child process creation before the Windows-specific libuv pipe retry
+path. The Job and LPAC enforce process and resource isolation.
+The Windows activation converts Tauri's extended local drive spelling to
+the same canonical resource path used for worker and preload verification.
 
 ## Disabled Surfaces
 

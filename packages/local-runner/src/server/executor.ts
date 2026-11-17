@@ -19,7 +19,7 @@ import {
   type VdtSchemaId
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
-import { selectCodexExecutable } from "@vdt-studio/model-bridge/local-runtime";
+import { cursorLaunchTarget, isWindowsCursorPayload, detectSubscriptionCli, selectCodexExecutable, windowsCursorLaunchIssueMessage } from "@vdt-studio/model-bridge/local-runtime";
 import { executeSmartSuggestion } from "./smart-suggestions";
 import { executeHarnessCompletion } from "./harness-completion";
 import { probeHarnessModels } from "@vdt-studio/model-bridge/local-runtime";
@@ -506,6 +506,11 @@ async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.P
     if (selected) return selected.executable;
     throw Object.assign(new Error("Codex CLI executable was not found on a safe absolute PATH entry."), { code: "BACKEND_NOT_INSTALLED" });
   }
+  if (process.platform === "win32" && manifest.id === "cursor_subscription") {
+    const selection = await detectSubscriptionCli("cursor-agent", { path: pathValue, versionProbe: async () => ({ stdout: "", stderr: "" }) });
+    if (selection.executable && !selection.error) return selection.executable;
+    throw Object.assign(new Error(selection.cursorLaunchIssue ? windowsCursorLaunchIssueMessage(selection.cursorLaunchIssue) : selection.error ?? "Cursor CLI was not found on PATH."), { code: "BACKEND_NOT_INSTALLED" });
+  }
   for (const alias of cli.executableAliases) {
     if (alias.includes("\0") || path.basename(alias) !== alias || alias === "." || alias === "..") continue;
     for (const directory of pathValue.split(path.delimiter).filter((entry) => path.isAbsolute(entry))) {
@@ -824,6 +829,29 @@ async function executableHelpIncludesUncached(executable: string, needle: string
   }
 }
 
+const bundledCursorProbes = new Map<string, string>();
+
+async function probeBundledCursor(executable: string, args: readonly string[], signal: AbortSignal): Promise<string | undefined> {
+  const target = cursorLaunchTarget(executable, args);
+  const key = await executableProbeCacheKey(target.executable, await executableProbeCacheKey(executable, JSON.stringify(args)));
+  signal.throwIfAborted();
+  const cached = bundledCursorProbes.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const result = await promisify(execFile)(target.executable, target.args, {
+      env: target.env, encoding: "utf8", timeout: 25_000, maxBuffer: 256 * 1024,
+      windowsHide: true, shell: false, signal
+    });
+    const output = `${result.stdout}\n${result.stderr}`.trim();
+    if (bundledCursorProbes.size >= 64) bundledCursorProbes.clear();
+    bundledCursorProbes.set(key, output);
+    return output || undefined;
+  } catch {
+    signal.throwIfAborted();
+    return undefined;
+  }
+}
+
 export async function executeCli(
   manifest: BackendManifest,
   request: CompletionRequest,
@@ -835,7 +863,9 @@ export async function executeCli(
   const ownsProcessGroup = smart && process.platform !== "win32";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
-  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
+  const selected = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
+  const bundledCursor = manifest.id === "cursor_subscription" && isWindowsCursorPayload(selected);
+  const executable = bundledCursor ? selected : await normalizeResolvedExecutable(selected);
   const payload = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,
@@ -848,8 +878,10 @@ export async function executeCli(
   }
 
   const executableVersion =
-    manifest.cli?.versionArgs?.length && !isJavaScriptExecutable(executable)
-      ? await probeExecutableVersion(executable, manifest.cli.versionArgs)
+    manifest.cli?.versionArgs?.length && (bundledCursor || !isJavaScriptExecutable(executable))
+      ? bundledCursor
+        ? await probeBundledCursor(executable, manifest.cli.versionArgs, signal)
+        : await probeExecutableVersion(executable, manifest.cli.versionArgs)
       : undefined;
 
   async function runCliAttempt(prompt: string, timeoutMs: number, requestJson = payload): Promise<ExecutionResult> {
@@ -894,7 +926,9 @@ export async function executeCli(
           enableWorkspaceTrust:
             manifest.id === "cursor_subscription" &&
             manifest.safety.trustEphemeralWorkspace === true &&
-            await executableHelpIncludes(executable, "--trust")
+            (bundledCursor
+              ? Boolean((await probeBundledCursor(executable, ["--help"], signal))?.includes("--trust"))
+              : await executableHelpIncludes(executable, "--trust"))
         })
       : [];
     let command = executable;
@@ -903,7 +937,18 @@ export async function executeCli(
       allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true
     });
 
-    if (isJavaScriptExecutable(executable)) {
+    const childEnv = safeEnvironment(envSource);
+    if (manifest.id === "cursor_subscription") childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
+    if (bundledCursor) {
+      for (const key of ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "SystemRoot"] as const) {
+        if (envSource[key]) childEnv[key] = envSource[key];
+      }
+    }
+    const cursorTarget = manifest.id === "cursor_subscription" ? cursorLaunchTarget(executable, spawnArgs, childEnv) : undefined;
+    if (cursorTarget?.bundled) {
+      command = cursorTarget.executable;
+      spawnArgs = cursorTarget.args;
+    } else if (isJavaScriptExecutable(executable)) {
       let scriptPath = executable;
       if (shouldLocalizeJavaScriptExecutable(executable, options)) {
         scriptPath = path.join(cwd, path.basename(executable));
@@ -916,19 +961,16 @@ export async function executeCli(
 
     let finalArgs = spawnArgs;
 
-    const childEnv = safeEnvironment(envSource);
-    if (manifest.id === "cursor_subscription") {
-      childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
-    }
     if (manifest.id === "codex_subscription") {
       const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
       if (codexHome) childEnv.CODEX_HOME = codexHome;
     }
+    signal.throwIfAborted();
     const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
       command,
       finalArgs,
-      { cwd, env: childEnv, shell: false, windowsHide: true, ...(smart ? { detached: ownsProcessGroup } : {}), stdio: ["pipe", "pipe", "pipe"] }
+      { cwd, env: cursorTarget?.env ?? childEnv, shell: false, windowsHide: true, ...(smart ? { detached: ownsProcessGroup } : {}), stdio: ["pipe", "pipe", "pipe"] }
     );
     processStarted = true;
 
@@ -1624,10 +1666,12 @@ export async function listBackendModels(
   if (!adapter?.listModels) return [];
 
   const envSource = options.env ?? process.env;
-  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
+  const selected = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
+  const bundledCursor = manifest.id === "cursor_subscription" && isWindowsCursorPayload(selected);
+  const executable = bundledCursor ? selected : await normalizeResolvedExecutable(selected);
 
   const fixtureExecFile =
-    isJavaScriptExecutable(executable)
+    isJavaScriptExecutable(executable) && !bundledCursor
       ? (async (_executable, args, execOptions) => {
           const result = await promisify(execFile)(process.execPath, [executable, ...args], execOptions);
           return { stdout: result.stdout, stderr: result.stderr };

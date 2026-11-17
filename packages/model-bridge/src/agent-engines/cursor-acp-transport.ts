@@ -1,3 +1,4 @@
+import { cursorLaunchTarget } from "../subscription-cli/cursor/windows-launch";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -115,9 +116,10 @@ export class CursorAcpStdioTransport implements CursorAcpTransport {
     // Next.js ambient ProcessEnv augmentation that makes NODE_ENV required;
     // the spawned process still receives exactly the server-owned entries.
     const explicitEnvironment = { ...(this.#options.environment ?? {}) } as NodeJS.ProcessEnv;
-    const child = spawn(this.#options.executable, args, {
+    const target = cursorLaunchTarget(this.#options.executable, args, explicitEnvironment);
+    const child = spawn(target.executable, target.args, {
       cwd: this.#options.cwd,
-      env: explicitEnvironment,
+      env: target.env,
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
       windowsHide: true

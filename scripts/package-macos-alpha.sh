@@ -115,9 +115,13 @@ cargo fetch --locked --target aarch64-apple-darwin --manifest-path apps/desktop/
 node scripts/collect-third-party-notices.mjs "$contents/Resources/THIRD-PARTY-NOTICES" aarch64-apple-darwin
 mkdir "$contents/Helpers"
 install -m 755 "$stage/$node_archive/bin/node" "$contents/Helpers/node"
+clang -arch arm64 -mmacosx-version-min=14.0 -O2 -Wall -Wextra -Werror \
+  apps/desktop/native-checks/src/cursor-macos-supervisor.c \
+  -o "$contents/Helpers/vdt-cursor-macos-supervisor"
 install -m 644 "$stage/$node_archive/LICENSE" "$contents/Resources/LICENSE-Node.txt"
 install -m 644 LICENSE "$contents/Resources/LICENSE-VDT-Studio.txt"
 install -m 644 apps/desktop/packaged-web.cjs "$contents/Resources/packaged-web.cjs"
+node scripts/stage-packaged-cursor-isolation.cjs "$contents/Resources" darwin arm64
 install -m 644 packages/data-harness/src/parser-worker.manifest.json "$contents/Resources/parser-worker.manifest.json"
 node --input-type=module - "$contents/Resources/build-info.json" <<'JS'
 import { writeFileSync } from "node:fs";
@@ -149,6 +153,7 @@ while IFS= read -r -d '' code; do
 done < <(find "$contents/Resources/web" -type f \( -name '*.node' -o -name '*.dylib' \) -print0)
 sign_code --identifier com.vdtstudio.desktop.node \
   --entitlements apps/desktop/src-tauri/NodeEntitlements.plist "$contents/Helpers/node"
+sign_code --identifier com.vdtstudio.desktop.cursor-supervisor "$contents/Helpers/vdt-cursor-macos-supervisor"
 "$contents/Helpers/node" --version
 sign_code \
   --entitlements apps/desktop/src-tauri/Entitlements.plist "$app"

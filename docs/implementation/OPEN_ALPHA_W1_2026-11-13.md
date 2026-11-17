@@ -8,7 +8,7 @@ An epoch records a locally generated process identity (hashed host and boot iden
 
 The recovery transaction uses `BEGIN IMMEDIATE`, compares current owner/epoch and event head, then rechecks admission. The exact successor checkpoint and one terminal event commit together with the cancelled compatibility snapshot. The action does not open a model session, replay a tool, update a project or rewrite a revision. A retry returns the same terminal outcome. Normalized late writes encounter the new epoch or terminal guard, and the legacy persistence adapter checks the durable fence before graph or artifact writes. No schema, feature flag or general durable controller lease was added.
 
-Old owner-less runs, runs with unverified ownership, and external sessions remain outside this recovery path. Verified finish, final event, and ambiguous in-flight tool outcomes are refused rather than relabelled cancelled. There is no automatic inference resumption. Windows owner discovery and installed desktop crash/restart, native upgrade, and the live provider matrix remain unverified. This document records implementation evidence; the coordinator owns readiness, product and normative documentation integration.
+Old owner-less runs, runs with unverified ownership, and external sessions remain outside this recovery path. Verified finish, final event, and ambiguous in-flight tool outcomes are refused rather than relabelled cancelled. There is no automatic inference resumption. Later Windows owner/native/compiled and installed recovery evidence is scoped below; the live provider matrix remains unverified. This document records implementation evidence; the coordinator owns readiness, product and normative documentation integration.
 
 ## Verification
 
@@ -78,7 +78,7 @@ editor Home observation; normal clean editor Home later passed there.
 
 Installed Windows 7a failed End interrupted run after controller termination. The read-only diagnostic reported an owner-less epoch-one token, a five-second PowerShell identity lookup that returned ETIMEDOUT, and ESRCH for the terminated controller PID. A PID alone cannot attach identity to that stored run. The owner-less run retains the saved-copy path.
 
-New Windows runs use version 2 owner evidence from the admitted native addon. The Windows path validates the machine and boot GUIDs and hashes them before persistence. It avoids the PowerShell subprocess. Reboot proof compares equal token versions only, so a native boot GUID cannot be mistaken for a reboot when compared to an older CIM timestamp. Four portable identity tests passed, and the Windows-only test awaits the verified native addon in the standard-user lane.
+New Windows runs use version 2 owner evidence from the admitted native addon. The Windows path validates the machine and boot GUIDs and hashes them before persistence. It avoids the PowerShell subprocess. Reboot proof compares equal token versions only, so a native boot GUID cannot be mistaken for a reboot when compared to an older CIM timestamp. Four portable identity tests passed. Later d4 and `08966a5` standard-user native gates passed 34 tests including native owner/death proof; compiled Windows startup issued v2 evidence matching the real web PID.
 
 ## Transient saved-copy progress follow-up
 
@@ -99,6 +99,16 @@ only the fixed store replaces the old source. Both use the same test in isolated
 Node 24 archives. Independent review accepted all 11 focused cancellation/copy
 tests, including history reselection, duplicate suppression and scope-change
 cleanup. [Red/green evidence](../../output/release/audits/w1-progress-before-after.3vYJjPH5/)
-retains logs and source hashes; temporary stages were removed. The next candidate
-requires the unchanged full source gate and refreshed installed checks on both
-platforms. Ordinary Windows dirty-copy behavior remains unverified.
+retains logs and source hashes; temporary stages were removed. Exact `08966a5` passed the unchanged full source
+gate and both package checks. Scoped Tahoe history/cold-reopen/copy/Home
+acceptance passed; Windows stale-progress migration passed; actual copy latency remains a failure. Ordinary Windows dirty-copy behavior remains unverified.
+
+Exact08966 Windows migration cleared old copy progress before the new action,
+then a fresh copy remained pending about two minutes during a private Node
+no-byte timeout. A separate trace measured copy POST17.934s, snapshot30.540s and
+VDT load2.176s, with only9ms between POST completion and GET start. Closed head
+and graph digests matched the earlier baseline; a subsequent200 save did not
+create a new active revision. Ordinary dirty-copy and new Running checks were
+deferred. CPU capture did not start because target validation rejected the
+endpoint; its exact predicate remains unknown. No underlying cause or further
+product correction is claimed.

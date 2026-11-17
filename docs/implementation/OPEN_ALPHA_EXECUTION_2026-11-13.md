@@ -54,69 +54,61 @@ Acceptance requires focused before/after regressions, independent review, integr
 - Coordinator build identity: eight focused tests passed, and independent review found no blocking issue. Exact Git root/commit/dirty-state checks prevent source archives inheriting an enclosing checkout's identity. The only public fields are version, commit, dirty state and build time. Native packagers must record actual packaging start time.
 - W9 preparation: coordinator reviewed the README, contributor correction, issue forms, delivery guide and local prerelease template. The source-onboarding/reporting preparation is accepted; RA-11 remains open until accepted installers, exact hashes and public evidence exist. No release was published.
 
-This ledger will be updated with implementation and integrated acceptance evidence. No full native release package has been accepted yet.
+Implementation and bounded validation evidence are recorded below. Broad release acceptance remains HOLD.
 
 ## Current consolidated finding ledger
 
-The original assessment remains historical. This table is the current closure
-record, including defects found during installed acceptance. The preceding
-packaged source was `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`. Its test/docs-only
-successor `9ca6733c3b194495365a0e5ee625891f41ad30c4` had unchanged product code and
-an independently accepted complete source gate: 3,816 tests (45 skips), all 166
-browser cases and both saved-copy cases. Its Windows native gate passed 34 tests
-and all 65 frozen cases with independent raw-evidence verification. The failed
-`7a08fff` Home-fixture run, failed `261741e` concurrency run and `8e30359`
-compiler timeout remain recorded. Installed backend availability remains open.
-An implemented fix is not automatically an accepted installed workflow.
+The original assessment and dated checkpoints remain historical. The current
+packaged validation source is `08966a5861fe4f3b2e9e5214af8ed19c072843fc`, alpha.2.
+Independent verification accepted 3,826 source tests (45 skips), all 166 browser
+cases with zero unexpected/flaky/skipped outcomes, both saved-copy cases,
+34 Windows native tests and all 65 frozen cases. Both packages passed exact-source
+resource/integrity checks and the Windows compiled standard-user runtime smoke.
+Mac remains signed but unnotarized; Windows remains unsigned. No public release
+or main-branch push was performed.
 
-The current immutable source snapshot for both packages is
-`d4d29484ba2a2293328a5b562b16efa78041d076`. It replaces Windows PowerShell owner
-discovery with the admitted native machine/boot-GUID getter and a separate
-version-2 owner token. Independent source review accepted the change, the
-cross-version refusal and the correction preserving POSIX failed-probe caching.
-The compiled Windows smoke now checks real route issuance of a v2 owner for the
-actual server PID and confirmed terminal cleanup. Independent verification
-accepted the complete source gate (3,818 tests, 45 skips, 166 expected browser
-outcomes and two saved-copy passes) and native gate (34 tests and all 65 frozen
-cases). Both packages passed verification. The focused installed Tahoe upgrade,
-Help/diagnostic and fresh question/End/reopen checks passed. Installed Windows
-also passed fresh question/controller-death/End/reopen with v2 ownership on
-both epochs and the 42-tonne model intact; its older legacy run remains intact.
-The question receipt is a post-operation hash baseline, not a before/after
-comparison. Running/Approval also reached durable cancellation and matched their
-pre/post active revision/graph digests. Approval was cancelled by the
-5.603-second observation; Running was still Cancelling at 56.353 seconds and
-first observed Cancelled at 59.805 seconds. This is unresolved latency, not
-accepted responsiveness. A repeated legacy saved-copy action did not complete
-in the UI during about two minutes. The copy is idempotent, so an unchanged
-head count is not proof of failed creation. Exact hashes and evidence are in
-the candidate acceptance matrix.
+Reviewed corrections include native Windows v2 controller identity, the Home
+metadata-refresh guard and transient saved-copy progress. All preserve the
+existing recovery/storage authority. Exact `08966a5` Tahoe passed history/cold-reopen
+progress, idempotent copy completion notice, Home, unchanged revisions/graphs/run
+states and fresh original CSV bytes. Windows exact `08966a5` upgrade and stale-progress migration passed; fresh-copy
+responsiveness failed with an observed private Node outage. Earlier `4001c2e` Home/draft refresh and d4 interruption checks retain their
+own scopes. A source acceptance does not establish all installed behavior.
 
-A later source-only Home fix has independent review and 12 focused passes.
-It replaces the overbroad workspace-wrapper identity with the saved draft's
-scope/graph/base/journal identity, allowing metadata-only refresh between save
-and Home mount. It is not yet in the d4 packages; refreshed source/package and
-focused installed checks are required. It is not established as the cause of
-the isolated cancelled-editor Home observation.
+Windows d4 reached durable cancellation in question, approval and generation
+states. Approval/Running pre/post revision and graph digests matched; the question
+receipt is only a post-operation baseline. Running End remained pending at
+56.353 seconds and was first observed Cancelled at 59.805 seconds. The earlier
+unmeasured copy wait is not proof of a server hang: `4001c2e` exposed stale progress
+before a real click, then its actual POST/GET completed in 1,210/262 ms. The stale
+progress defect has a failing-old/passing-new regression and is fixed in `08966a5`.
+Running latency and RA-16 backend unavailability remain separate findings.
+
+The failed `4001c2e` source aggregate remains failed:164/166 browser cases, saved-copy
+stage unexecuted. Local exact-source one/two-worker comparisons passed without
+changed limits, establishing no Linux-CI cause. The new `08966a5` product snapshot
+passed the unchanged aggregate. Earlier failed checkpoints are retained below.
+Post-freeze changes are documentation and certification-evidence scope only;
+provider statuses and executable behavior are unchanged.
 
 | Finding | Current implementation and evidence | Remaining acceptance |
 | --- | --- | --- |
 | RA-01 Unbounded upload/workbook parsing | Bounded admission and isolated parsing are reviewed. Sonoma 14.0 installed `261741e` imported the CSV oracle and rejected an extreme workbook without changing the graph. Windows installed `7a08fff` rejected the extreme workbook with the corrected 25,000-row/80-column explanation and disabled staging, through normal local analysis without AI. | Remaining valid formats, cancellation and installed resource-boundary cases. |
-| RA-02 Interrupted agent cannot terminate | Installed 7a Tahoe passed all three interruption states and clean/dirty copies. Reviewed d4 native identity replaced Windows' timed-out PowerShell probe and passed native/compiled gates. Exact d4 question recovery passed on both OS families. Windows Running/Approval also retained v2 cancellation after reopen, with equal pre/post graph/revision digests. | Windows Running End completed between the 56.353-second still-pending and 59.805-second cancelled observations; cause unresolved. The earlier unmeasured legacy-copy UI wait is retained. Exact 4001 actual copy POST/GET passed in 1,210/262 ms; stale historical progress is independently corrected at source. New packages and ordinary dirty-copy refresh remain unverified. Legacy runs remain preserved with no fabricated identity. Live-provider cases are separate. |
-| RA-03 Current Mac distribution | Exact `7a08fff` Developer-ID DMG/resources verified. Sonoma 14.0 restored an unsaved label edit and named version after native Quit. A separate Tahoe 26.6.2 comparison passed retained-model/Files reopen, Home and question-state recovery. Earlier import, scenarios, restore, export and clean/upgrade evidence remains scoped to its candidate. | Resolve RA-16 and the environment-blocked Sonoma 14.0 minimum-OS qualification; complete remaining installed checks, notarization and public-download trust. Excel formulas were not recalculated by a spreadsheet engine. |
+| RA-02 Interrupted agent cannot terminate | Installed 7a Tahoe passed all three interruption states and clean/dirty copies. Reviewed d4 native identity replaced Windows' timed-out PowerShell probe and passed native/compiled gates. Exact d4 question recovery passed on both OS families. Windows Running/Approval also retained v2 cancellation after reopen, with equal pre/post graph/revision digests. | Windows Running End completed between the 56.353-second still-pending and 59.805-second cancelled observations; cause unresolved. The earlier unmeasured legacy-copy UI wait is retained. Exact 4001 actual copy POST/GET passed in 1,210/262 ms; stale historical progress is independently corrected at source. Exact08966 packages/source gates passed and stale-progress migration passed on both OS families. Windows actual copy still suffered a new measured backend delay; ordinary dirty-copy refresh was deferred. Legacy runs remain preserved with no fabricated identity. Live-provider cases are separate. |
+| RA-03 Current Mac distribution | Latest exact `08966a5` Developer-ID DMG/resources verified; scoped Tahoe history/copy/Home/CSV refresh preserved all active revisions and run states. Sonoma 14.0 restored an unsaved label edit and named version after native Quit. A separate Tahoe 26.6.2 comparison passed retained-model/Files reopen, Home and question-state recovery. Earlier import, scenarios, restore, export and clean/upgrade evidence remains scoped to its candidate. | Resolve RA-16 and the environment-blocked Sonoma 14.0 minimum-OS qualification; complete remaining installed checks, notarization and public-download trust. Excel formulas were not recalculated by a spreadsheet engine. |
 | RA-04 Live AI reliability | Historical evidence retained without promoting providers. New guests have no real provider credentials. | User-selected access and fresh installed per-provider attempts, including failures. |
 | RA-05 Hosted containment | Explicitly outside the agreed GitHub/source/desktop scope; local-only guidance retained. | A separate hosted-service task if requested. |
 | RA-06 Feedback/diagnostics | Safe local preview/export implemented and reviewed. Exact d4 Help identity and local downloads observed on both OS families. Windows downloaded a 1,460-byte file with model names off and parsed `vdt_support_report.v1`, reporting only schema/top-level field names; Mac also validated its local JSON. | Remaining keyboard, sizing/scaling, clipboard and exact preview/download comparison checks. |
-| RA-07 Reproducible release verification | Exact `d4d2948` passed the complete source gate: 3,818 tests, 45 skips, all 166 browser cases and both saved-copy cases, with independent archive/source verification. The narrow Home fixture correction retains all navigation assertions. | Exact 4001 passed 3,824 source tests but failed two WebKit timing cases (164/166); saved-copy stage did not execute. Local one/two-worker comparison passed without changed limits, not an explanation or waiver. Repeat the unchanged full gate for the reviewed transient-progress source delta. Historical failures remain failed. |
+| RA-07 Reproducible release verification | Exact `08966a5` passed the complete source gate: 3,826 tests, 45 skips, all 166 browser cases and both saved-copy cases, with independent archive/source verification. Assertions, workers and timeouts were unchanged. | Exact 4001 passed 3,824 source tests but failed two WebKit timing cases (164/166); saved-copy stage did not execute. Local one/two-worker comparison passed without changed limits, not an explanation or waiver. The new `08966a5` gate passed; repeat only for a further product delta or a justified unresolved failure investigation. Historical failures remain failed. |
 | RA-08 Documentation/support claims | Current execution/acceptance/support ledgers and contributor corrections implemented; historical claims retained with scope. | Final reconciliation against the exact accepted artifacts and remaining limits. |
-| RA-09 Windows storage | The latest exact `d4d2948` standard-user native gate passed 34 tests and all 65 frozen cases; independent review recomputed its raw evidence and verified the native v2 owner/death case. Migration acquisition preserves deadlines/frozen assets and the retained fence. The prior `8e30359` compiler timeout remains historical. | Installed fault acceptance is separate. Direct Windows source development remains outside packaged admission; no power-loss qualification is claimed. |
+| RA-09 Windows storage | The latest exact `08966a5` standard-user native gate passed 34 tests and all 65 frozen cases; independent review recomputed its raw evidence and verified the native v2 owner/death case. Migration acquisition preserves deadlines/frozen assets and the retained fence. The prior `8e30359` compiler timeout remains historical. | Installed fault acceptance is separate. Direct Windows source development remains outside packaged admission; no power-loss qualification is claimed. |
 | RA-10 Windows application | Exact `7a08fff` per-user reinstall and shortcut launch passed on Windows Arm x64 emulation: window at 13.8 seconds and Projects shell at 18.1 seconds. Prior data and a new unsaved value 73/milestone survived reopen. The d4 in-place upgrade passed question recovery, exact Help identity, local diagnostic download and ordinary process cleanup. | Finish installed import/navigation/recovery checks and signing/trust. The first `8c60019` cold-start timeout remains a failed attempt; this guest is not native x64 UI evidence. |
 | RA-11 GitHub delivery | First-use docs, issue forms, release template and asset-verification procedure prepared. Only dedicated validation branches were pushed. | Accepted same-source installers, final checksums/support summary and owner-directed publication. |
 | RA-12 Offline file analysis (new P1) | Explicit local analysis plus separate AI action implemented. Installed Sonoma `261741e` imported all ten CSV rows, applied 2.75 h/day and retained provenance after reopen. Windows `7a08fff` rejected an incompatible tonnes target, then applied the compatible CSV oracle at 2.75 h/day on retry with full ten-row coverage and event-ID checking; Back committed the result. | The first compatible Windows analysis timed out during backend unavailability (RA-16). Preserve that failed attempt; remaining formats and refreshed post-fix acceptance are open. |
 | RA-13 Unused native image resources/notices (new packaging gap) | Both actual `261741e` packages exclude Sharp/libvips with image optimization disabled. Windows compiled smoke returned 200 for the authenticated static favicon and 404 for the unused optimizer. Supplemental upstream notices are retained conservatively. | Preserve these artifact gates on the final candidate. No blanket legal-clearance claim. |
 | RA-14 Unsaved manual draft on default launch (new P1) | Scoped restoration and identity-bound Home intent have independent source acceptance; all nine new cold-restoration cases and the complete corrected `9ca6733` source gate passed. Installed Windows retained an unsaved Baseline value 73 and named milestone after full process close/shortcut reopen. Installed Sonoma retained an unsaved label edit and named version after native Quit/reopen. Loss of a committed revision was not established. | Final native evidence reconciliation remains separate. Mac's check changed a label, not a numeric value. Named versions remain distinct from ordinary revision saves. |
-| RA-15 Windows navigation/save observations | Earlier Back warning did not prevent the 64-tonne commit and did not repeat in later 73/77 saves. At d4, normal project Home and explicitly keyboard-focused clean-editor Home passed. The isolated cancelled-editor Home remained visible for about ten seconds after focused Return. A separate source-reproduced metadata-refresh/Home-intent race is fixed and independently reviewed, with 12 focused passes. | Rebuild/package the new source delta and repeat focused Home/cold-draft checks. Neither the old Back warning nor cancelled-editor observation is proven to have this source cause. Pointer-only Windows clicks were unreliable and are not product-failure evidence. |
-| RA-16 Native backend availability (new P1) | Exact `7a08fff` repeatedly stalled on Files in Sonoma; a live Node sample showed HTTP-entered promise execution. Complete copied storage answered sequential/concurrent requests with the exact packaged server on host and guest. A later native launch kernel-panicked in `MTLCompilerServi` before inspector attachment. Tahoe 26.6.2 with 4 vCPUs, 6 GiB and fresh WebView state passed copied-model/Files reopen. Windows compatible CSV analysis separately timed out while both public and private Node listeners gave five-second no-byte timeouts, then recovered; a retry applied 2.75 h/day. | Cause remains unconfirmed. Sonoma 14.0 is environment-blocked; the Tahoe comparison changes multiple variables and does not close the failure. A later Windows 4-vCPU/6-GiB session passed focused copy/Home checks but does not establish a resource cause. Preserve failed attempts and original profiles; no guard or deadline is relaxed. |
+| RA-15 Windows navigation/save observations | Earlier Back warning did not prevent the 64-tonne commit and did not repeat in later 73/77 saves. At d4, normal project Home and explicitly keyboard-focused clean-editor Home passed. The isolated cancelled-editor Home remained visible for about ten seconds after focused Return. A separate source-reproduced metadata-refresh/Home-intent race is fixed and independently reviewed, with 12 focused passes. | Both packages include the fix; focused `4001c2e` Home/cold-draft checks passed on both OS families and `08966a5` Tahoe refreshed Home. Remaining historical cause attribution is unproven. Neither the old Back warning nor cancelled-editor observation is proven to have this source cause. Pointer-only Windows clicks were unreliable and are not product-failure evidence. |
+| RA-16 Native backend availability (new P1) | Exact `7a08fff` repeatedly stalled on Files in Sonoma; a live Node sample showed HTTP-entered promise execution. Complete copied storage answered sequential/concurrent requests with the exact packaged server on host and guest. A later native launch kernel-panicked in `MTLCompilerServi` before inspector attachment. Tahoe 26.6.2 with 4 vCPUs, 6 GiB and fresh WebView state passed copied-model/Files reopen. Windows compatible CSV analysis separately timed out while both public and private Node listeners gave five-second no-byte timeouts, then recovered; a retry applied 2.75 h/day. | Cause remains unconfirmed. Sonoma 14.0 is environment-blocked; the Tahoe comparison changes multiple variables and does not close the failure. Exact08966 on Windows 4-vCPU/6-GiB reproduced about2min copy delay and a5s no-byte private Node probe. Separate trace: copy POST17.934s, snapshot30.540s, follow-up GET2.176s after9ms. Closed graph/revision digests matched. CPU preflight failed target validation; no cause was established. Preserve failed attempts and original profiles; no guard or deadline is relaxed. |
 
 ## Sol continuation and independent review
 
@@ -364,3 +356,112 @@ with only the store correction; independent focused tests pass 11/11. The next
 source freeze must include only this reviewed store/test change plus docs and
 repeat source/native/package and focused installed acceptance. Windows Running
 End latency and RA-16 are separate unresolved findings.
+
+## Current acceptance disposition
+
+Broad GitHub/Mac/Windows release remains **HOLD** after exact08966 source,
+native and package acceptance. Current Windows upgrade and stale-progress
+migration passed, but fresh saved-copy responsiveness failed with backend
+unavailability. Data-integrity receipts matched. Ordinary dirty-copy and new
+Running checks were deferred; prior Running latency remains open. Profiler
+preflight failure is explicitly a diagnostic limitation, not an application
+cause. Both VMs are stopped. The consolidated checkpoint, exact artifacts,
+cleanup record and ordered remaining assignments are in
+[the acceptance handoff](../../output/release/audits/2026-11-14-alpha2-integration.ovcmf2lk/ACCEPTANCE-HANDOFF-08966a5.md).
+
+
+### RA-04 Windows Cursor CLI and production chat
+
+Private Windows candidate `467b9b43a0c776e5728c02e04731527585d695ee` verified
+the shell-free launcher, existing subscription authentication, a populated
+live model list, and a passing Settings connection test. The separate direct
+vendor probe returned 280 unique model IDs. All visible Cursor model choices
+were marked **Unavailable for chat** in the installed composer. Send stayed
+disabled with a populated prompt, so the installed check ran no inference.
+The packaged runtime excludes the development-only native Cursor canary and
+the composer requires a matching production binding. [Installed receipt](../../output/release/audits/2026-11-13-windows-environment.uuz9l83v/windows-cursor-467b9-receipt.json)
+
+Windows remains running with its Cursor and Edge sign-ins preserved; Mac VMs
+remain stopped. This supersedes the earlier stopped-VM checkpoint. Chrome was
+canceled before download and was not installed. Normal VDT quit removed its
+runtime processes and listener. The five disposable Windows platform assertions
+passed; their helper's automatic cleanup failed, and the exact owned fixture was
+then removed and its absence verified separately.
+
+The ACP investigation and the development checkpoint smoke preceded the
+isolated CLI work below. The checkpoint smoke demonstrated tree generation
+in the development application. Cursor's run-mode documentation lists native
+sandboxing for macOS and Linux. [Cursor run modes](https://cursor.com/docs/agent/security/run-modes)
+
+| Order and owner | Pending acceptance |
+|---|---|
+| 1. Windows QA and model bridge | With the exact installed vendor payload, verify subscription auth, print initialization, prompt, cancel and same-session resume under the Windows process boundary. |
+| 2. Model bridge and independent review | Show that the chosen isolation prevents access to host files, shell, Git, WebFetch, foreign MCP, project instructions, and subagents. Use synthetic owned fixtures, confirm only the VDT gateway is available, and exercise controller death and recovery. Review exact build, runtime, and policy evidence before production registration. |
+| 3. Web runtime | Register the CLI checkpoint binding only for the exact reviewed payload, platform, runtime, tool policy and admitted model. Reject missing or stale evidence and unmatched models. Keep the development canary separate. |
+| 4. Mac and Windows installed QA | Build the 2,400 USD/month revenue tree separately with Grok 4.7 Low (`grok-4.7-low`) and Extra High (`grok-4.7-xhigh`) through the ordinary composer on both installed platforms. Verify each durable revision and reopened tree. Check cancellation and recovery separately. |
+
+RA-04 Windows Cursor production chat remains pending. Broad release remains
+**HOLD**.
+
+The Windows ACP follow-up established isolated subscription sign-in, session
+creation, and a bounded live response outside the installed composer. The
+requested model and reported session model differed. That evidence did not
+qualify the Windows OS boundary. The user selected CLI on both platforms and
+explicitly chose enforceable Windows isolation and Grok for live acceptance.
+[Earlier ACP and checkpoint evidence](../../output/release/audits/cursor-acp-probe.yw5oon5g/REPORT.md)
+
+On 16 November, both authenticated CLI catalogs listed `grok-4.7-low`.
+On macOS the pinned CLI returned one synthetic Grok response under the VDT
+Seatbelt launcher, using a separately authorized test login and the VDT
+Cursor-only egress broker. The CLI's init label was `Grok 4.7 256K Low`.
+This was a direct CLI proof. Mac installed acceptance is pending. On Windows,
+the guest confirmed a restricted AppContainer token with only the
+`registryRead` compatibility capability and a bounded inherited pipe. The
+exact Windows Cursor payload has not yet passed its isolated version and
+inference gates. The source route and package resource gate keep unqualified
+profiles absent.
+
+The latest Windows worker compiled and passed ownership, measurement and
+private-scope open/close checks on the Windows ARM64 guest. LPAC file,
+registry, child-process and direct TCP checks and the Cursor-only HTTPS
+relay passed their scoped fixtures. The exact vendor CLI still timed out
+during isolated startup, including from a normal owned staging root.
+The Windows production binding remains unavailable and no installed tree
+was generated.
+
+The installed private Mac candidate used the signed native shell from
+`5122edf` and archived standalone web from `5ce34ee`. Its explicit
+`grok-4.7-low` run completed two segments across one verified
+same-session resume. The following resume failed with `ECONNRESET`, and
+the original root-only revision was retained without a finish receipt.
+A complete calculated tree and cold reopen remain pending. The release
+decision stays **HOLD**.
+
+On 17 November, a private Developer ID signed Mac candidate with the same
+native baseline and packaged web `f0cd622` passed ordinary installed chat
+for both Grok variants. Each run completed seven segments in one vendor
+session, saved a three-node revenue tree with two original inputs and a
+2,400 USD/month calculation, and reopened the same revision after a full
+application restart. Before the fix, nine locally retained CONNECT sockets
+waited 90 seconds after upstream closure. The broker now drains the response
+and releases the socket, with observed final-candidate closure in 0–4 ms.
+The QA application was launched from its signed bundle executable with an
+SSD-only private profile. Public distribution remains on hold.
+
+In the Windows ARM64 QA guest, the stock CLI `2026.11.13-eacade1` recovered
+startup under LPAC after adding Node's child-process denial ahead of libuv
+stdio setup. Scoped identity, config metadata and persistence handling then
+allowed both exact Grok models to complete a direct response and resume the
+same CLI session. The native worker retained the pinned config, dedicated
+authentication and host-only relay. The final cleanup build passed a physical
+long-path deletion test on both model scopes.
+
+The installed Windows x64 candidate combined the verified `08966a5` NSIS
+native base, guest-built `f0cd622` standalone web and the measured LPAC worker.
+Both exact Grok bindings passed ordinary chat, generated a 2,400 USD/month
+tree and persisted the verified finish. Low completed six segments and
+Extra High seven, each on one Cursor session. After complete app shutdown
+and cold reopen, the same graph revision and calculation were visible and
+the before/after receipts were byte-identical. This completes the scoped
+Mac and Windows installed Cursor/Grok tree cases. Public release stays
+on **HOLD**.

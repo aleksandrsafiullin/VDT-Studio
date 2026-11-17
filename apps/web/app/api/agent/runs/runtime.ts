@@ -51,6 +51,7 @@ import { cliSessionModelBindingId } from "./cli-session-model-binding";
 import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from "./local-model-bindings";
 import { retainedDatasetProvider } from "./dataset-provider";
 import { resolveSessionAwareResearch } from "./session-research";
+import { createPackagedCursorBinding, packagedCursorActivations } from "./packaged-cursor-binding";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -109,11 +110,13 @@ export const agentRuntime =
 registerModelAgentSchemaTool(agentRuntime.tools);
 
 const cliSessionCanaryEnabled = isCliSessionCanaryEnabled();
+const cursorDesktopActivations = packagedCursorActivations();
+let cursorDesktopBindingProbe: Promise<void[]> | undefined;
 
 export const agentExecutionBindingRegistry =
   runtimeGlobal.__vdtAgentExecutionBindingRegistry ?? new AgentExecutionBindingRegistry([], {
-    externalProfilesEnabled: cliSessionCanaryEnabled,
-    externalEngineWired: cliSessionCanaryEnabled,
+    externalProfilesEnabled: cliSessionCanaryEnabled || cursorDesktopActivations.length > 0,
+    externalEngineWired: cliSessionCanaryEnabled || cursorDesktopActivations.length > 0,
     allowUnverifiedExternalCanary: cliSessionCanaryEnabled
   });
 
@@ -139,6 +142,32 @@ export const CLAUDE_SESSION_EXECUTION_BINDING_ID = "claude_session_canary";
 
 export async function ensureServerManagedExecutionBindings(): Promise<void> {
   if (localModelAgentBindingsEnabled()) await localModelBindingRegistrar.refresh();
+  if (cursorDesktopActivations.length > 0) {
+    cursorDesktopBindingProbe ??= Promise.all(cursorDesktopActivations.map(async (activation) => {
+      try {
+        const binding = await createPackagedCursorBinding({
+          activation,
+          toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools),
+          allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+          forbiddenRoots: resolveCliSessionForbiddenRoots(),
+          resolveBinding: async ({ runId }) => {
+            const durable = await createAgentSupervisorReadPersistence().load(runId);
+            if (!durable?.binding) {
+              throw Object.assign(new Error("The durable Cursor session binding was not found."), {
+                code: "CLI_SESSION_BINDING_NOT_FOUND"
+              });
+            }
+            return durable.binding;
+          }
+        });
+        registerCliSessionBinding(binding);
+      } catch {
+        // A model remains unavailable when its evidence or trusted launcher
+        // fails, even if another exact model from the same package can run.
+      }
+    }));
+    await cursorDesktopBindingProbe;
+  }
   if (!cliSessionCanaryEnabled) return;
   await registerHarnessSessionBindings({ toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools), allowedToolNames: TARGET_MODEL_AGENT_TOOLS, forbiddenRoots: resolveCliSessionForbiddenRoots(), register: registerCliSessionBinding, resolveBinding: resolveDurableSessionBinding });
   if (!cliSessionRegistrationProbeNeeded()) return;
@@ -436,9 +465,14 @@ async function registerCursorSessionCanary(
   });
   try {
     const adapter = getSubscriptionCliAdapter("cursor_subscription");
-    const signal = AbortSignal.timeout(10_000);
-    if ((await adapter?.probeAuth?.(detection.executable, signal))?.status === "ready") {
-      for (const modelId of new Set((await adapter?.listModels?.(detection.executable, { signal }) ?? []).slice(0, 100))) {
+    const bundled = bridge.isWindowsCursorPayload(detection.executable);
+    const signal = AbortSignal.timeout(bundled ? bridge.WINDOWS_CURSOR_STATUS_TIMEOUT_MS : 10_000);
+    const auth = bundled
+      ? await bridge.probeCursorAuth(detection.executable, { signal })
+      : await adapter?.probeAuth?.(detection.executable, signal);
+    if (auth?.status === "ready") {
+      const modelSignal = bundled ? AbortSignal.timeout(bridge.WINDOWS_CURSOR_MODELS_TIMEOUT_MS) : signal;
+      for (const modelId of new Set((await adapter?.listModels?.(detection.executable, { signal: modelSignal }) ?? []).slice(0, 100))) {
         if (!isSafeCliModelId(modelId)) continue;
         registerCliSessionBinding({ bindingId: cliSessionModelBindingId(CURSOR_SESSION_EXECUTION_BINDING_ID, modelId), engine, modelId });
       }

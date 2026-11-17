@@ -60,7 +60,7 @@
       "id": "cursor_subscription",
       "status": "beta",
       "liveVerified": true,
-      "evidence": "Auth and model probes passed; Cursor now runs in open-design-style ephemeral workspace mode without the VDT darwin wrapper; 2026-11-01 host: tree/branch/review and composer-2.5 Smart proposal passed; full session qualification remains unverified (docs/HARNESS_CONNECTIONS.md)"
+      "evidence": "Historical Mac host live evidence: development tree/branch/review canary and separate composer-2.5 Smart proposal. Windows installed 467b9b4 verified CLI authentication, model listing and Settings Test only. A separate Windows Cursor CLI 2026.11.13-eacade1 diagnostic opened and resumed the same session with sandbox disabled. Production composer binding, Windows hard isolation and current Mac/Windows installed live qualification remain unverified (docs/provider-compatibility.md)."
     },
     {
       "id": "codex_subscription",
@@ -140,5 +140,6 @@
       "liveVerified": false,
       "evidence": "Shared Pi RPC session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
     }
-  ]
+  ],
+  "qualificationScope": "Statuses and liveVerified describe only the evidence named in each record, including historical host runs and deterministic mock fixtures. No real provider is qualified for the current Mac or Windows installed alpha.2 candidate; the per-platform live matrix is pending."
 }

@@ -376,6 +376,24 @@ Local voice input adds microphone audio and downloaded recognition assets to thi
   print mode still contains built-in tools and no credentialed adversarial
   sandbox evidence exists, this is an unverified default-off canary, not a
   hard-isolation or public-capability claim.
+- Packaged Cursor checkpoint admission requires a native bootstrap and a
+  release-pinned isolation resource whose measured bytes execute in the web
+  host. The server checks the vendor payload and effective isolation policy
+  against accepted per-model evidence, while the runner fences each vendor launch
+  to that identity. The runner verifies the private vendor allowlist config
+  with the nested vendor sandbox disabled under the qualified OS boundary.
+  Development still enables Cursor's own sandbox. Packaged sessions use
+  private state with runner-owned authentication. The stream rejects all reported native
+  tools, including native WebSearch. This stream check supplements the OS
+  boundary. Credentialed adversarial proof and installed product acceptance
+  are still required for each platform.
+  Private macOS QA profiles can record bounded broker lifecycle events for
+  each segment. This records phases, elapsed time, allowlisted hosts and
+  recognized socket error codes without prompts, tokens or vendor session IDs.
+  On the Windows worker, the reviewed Cursor config remains on disk under a
+  read-only ACL. An exact atomic config transaction can update only the
+  CLI process's in-memory metadata view after all pinned policy fields
+  match. The runner supplies the exact model on every launch.
 - Codex checkpoint/resume is executable only through the explicitly unverified
   trusted-local canary. Development launchers enable it by default; production
   still rejects it. Model-specific bindings come from the authenticated host
@@ -456,3 +474,10 @@ OpenAI HTTP diagnostics admit only a small allowlist of protocol error codes and
 `mining.load_and_haul` supplies an annual joint excavation/truck-haulage topology: both fleet counts, separate annual repair/shift/unplanned losses, bucket loading productivity, payload-dependent loading time, loaded and empty travel over one route, dumping/positioning/queue time, and the minimum of both capacities. It is a steady-state draft model with continuous equivalent bucket loading, not dispatch simulation. Its numeric reference values are illustrative estimates accepted explicitly by the actor. Site fleet counts, distance, both speeds and truck planned repair have no reference defaults. Formula and sensitivity unit tests do not certify arbitrary model-authored trees or production readiness.
 
 Native transport retains all tool names/purposes and the immutable catalog hash while avoiding a second textual copy of schemas already enforced by `format`. Original literal quantities are sent once in the current observation. The semantic checkpoint allows 512 characters. Construction search asks for 3–6 candidates; additional unread discovered skills can be read before building so the actor can cover a broader process scope. Complete topology/default choices are constrained to successful public skill-read evidence; generic builder tools remain available. Canonical tool arguments, provenance, receipts, approval and scope authority are unchanged.
+
+The Windows Cursor launcher admits the official per-user install from a
+fully qualified PATH entry outside the workspace and checks the selected
+Node executable and entrypoint before launch. VDT supplies the entrypoint as
+a fixed argument and passes request arguments separately with shell execution
+disabled. Isolated Cursor transports retain their explicit environment and
+receive only the fixed invocation marker from launch handling.

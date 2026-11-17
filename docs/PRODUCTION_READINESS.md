@@ -11,7 +11,15 @@ separate source, native fixture, compiled-package and installed evidence. The
 [baseline audit](implementation/OPEN_ALPHA_READINESS_2026-11-13.md) retains the
 original findings. No public release has been made.
 
-The latest packaged checkpoint is `4001c2e5d3e47fa036b4b53f533fe8003e6e4a0c`,
+On 17 November, private macOS and Windows Cursor checkpoint candidates with
+standalone web `f0cd622` passed installed-chat generation and persisted
+cold reopen on `grok-4.7-low` and `grok-4.7-xhigh`. Each exact model saved a
+2,400 USD/month calculation with the two original driver values. macOS
+used the signed Apple Silicon app. Windows used a verified `08966a5` NSIS
+x64 native baseline and measured LPAC worker in an ARM64 QA guest. The
+public activation manifest is empty, and public release stays on hold.
+
+The latest packaged checkpoint is `08966a5861fe4f3b2e9e5214af8ed19c072843fc`,
 version `0.1.0-alpha.2`. Both packages passed resource/integrity checks. The Mac
 DMG is Developer-ID signed but unnotarized; the Windows installer is unsigned.
 SCP and read-only local media transfers do not qualify public-download trust.
@@ -21,7 +29,14 @@ session bootstrap, native v2 owner issuance matching the server PID, terminal
 cleanup and bundled sidecar activation/EOF. This is not installed native x64 UI
 or power-loss qualification.
 
-The exact `4001c2e` source gate failed. Release verification passed 3,824 tests
+The exact `08966a5` source gate independently passed 3,826 tests (45 skips), all
+166 browser cases and both saved-copy cases, without retries or changed limits.
+Both artifacts identify the same source. Exact `08966a5` Tahoe additionally passed
+old-history/cold-reopen progress, idempotent copy notice, Home, unchanged
+revisions/graphs/run states and fresh CSV bytes. Windows exact-source upgrade and stale-progress migration passed, but an actual
+fresh copy exposed prolonged backend unavailability; see the scoped results below.
+
+The earlier exact `4001c2e` source gate failed. Release verification passed 3,824 tests
 with 45 skips and production build passed; browser results were 164 expected,
 two unexpected, zero flaky/skipped. WebKit BYOK timed out before reload while
 its real revision save took 11.438 seconds. Versions exhausted its test budget;
@@ -47,8 +62,9 @@ UI observation lacks request timing and does not establish a backend copy hang.
 The reviewed source now makes progress transient, sanitizes persisted/history
 state, retains live same-run progress, and clears it after scope changes without
 clearing errors or stop markers. The same regression fails on 4001 and passes
-with the fixed store alone; independent focused tests passed 11/11. A new exact
-snapshot, full gate, both packages and installed refresh are still required.
+with the fixed store alone; independent focused tests passed 11/11. The exact `08966a5` full gate and both packages passed; scoped Tahoe acceptance
+also passed. Windows upgrade/stale-progress migration passed, but actual copy responsiveness
+failed. Root cause remains unresolved.
 
 Recovery remains partial. Mac Tahoe `7a08fff` passed question, generation and
 approval controller-loss recovery plus clean/dirty copies; d4 refreshed question
@@ -59,6 +75,16 @@ at 59.805 seconds. Its cause is unresolved. Legacy owner-less runs keep their
 history and safe saved-copy path; no PID-only identity is fabricated. Ordinary
 Windows dirty-copy behavior is still unverified. Controlled loopback fixtures
 do not qualify a live AI provider.
+
+At exact `08966a5`, Windows Arm/x64-emulation testing reproduced a fresh real
+copy delay of about two minutes, with a five-second no-byte private Node probe.
+A separate passive trace measured a 17.934-second copy POST and 30.540-second
+concurrent run snapshot; the VDT GET began 9 ms after POST completion and took
+2.176 seconds. Closed receipts retained both prior revision/graph digests, with
+no active-head change from a subsequent HTTP200 no-op save. Dirty-copy and new
+Running checks were deferred. CPU diagnostics produced no profile: the revised
+preflight rejected target identity before profiling. That failure cannot identify
+the application's cause. Both VMs are stopped and app/inspector listeners cleared.
 
 RA-16 remains an open P1: Sonoma 14.0 repeatedly stalled on Files/backend routes;
 Windows first compatible CSV analysis separately timed out while public/private

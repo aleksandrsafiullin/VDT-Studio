@@ -1,3 +1,6 @@
+import { probeCursorAuth } from "./subscription-cli/cursor/auth";
+import { evaluateCursorVersion } from "./subscription-cli/cursor/version";
+import { isWindowsCursorPayload, windowsCursorLaunchIssueMessage, WINDOWS_CURSOR_STATUS_TIMEOUT_MS } from "./subscription-cli/cursor/windows-launch";
 import type { ModelBackendStatus } from "./contract";
 import type { SubscriptionCliDetectionResult } from "./detection";
 import { getSubscriptionCliAdapter } from "./subscription-cli/registry";
@@ -14,7 +17,8 @@ export interface EnrichedSubscriptionCliDetection extends SubscriptionCliDetecti
 
 function publicDetection(agent: SubscriptionCliDetectionResult): SubscriptionCliDetectionResult {
   // execFile errors can embed full command lines, environment guidance and credential output.
-  return agent.error ? { ...agent, error: "CLI version probe failed." } : agent;
+  const { cursorLaunchIssue: _cursorLaunchIssue, ...display } = agent;
+  return display.error ? { ...display, error: "CLI version probe failed." } : display;
 }
 
 function probeDiagnostics(status: ModelBackendStatus): string[] {
@@ -46,6 +50,11 @@ export async function enrichSubscriptionCliDetection(
     };
   }
 
+  if (agent.cursorLaunchIssue) {
+    const message = windowsCursorLaunchIssueMessage(agent.cursorLaunchIssue);
+    return { ...publicDetection(agent), status: "error", authSummary: message, diagnostics: [message] };
+  }
+
   const harness = getHarnessDefinition(agent.backendId);
   if (harness && harness.transport !== "native") {
     try {
@@ -66,7 +75,9 @@ export async function enrichSubscriptionCliDetection(
   const adapter = getSubscriptionCliAdapter(agent.backendId);
   if (adapter?.probeAuth) {
     try {
-      const probe = await adapter.probeAuth(agent.executable, options.signal);
+      const probe = agent.id === "cursor-agent" && isWindowsCursorPayload(agent.executable) && agent.version
+        ? await probeCursorAuth(agent.executable, { signal: options.signal, versionStatus: evaluateCursorVersion(agent.version) })
+        : await adapter.probeAuth(agent.executable, options.signal);
       return {
         ...publicDetection(agent),
         status: probe.status,
@@ -111,7 +122,9 @@ export async function enrichSubscriptionCliDetections(
   return Promise.all(
     agents.map(async (agent) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
+      const bundledCursor = agent.id === "cursor-agent" && agent.executable && isWindowsCursorPayload(agent.executable);
+      const timeout = bundledCursor ? Math.max(probeTimeoutMs, WINDOWS_CURSOR_STATUS_TIMEOUT_MS) : probeTimeoutMs;
+      const timer = setTimeout(() => controller.abort(), timeout);
       try {
         return await enrichSubscriptionCliDetection(agent, { signal: controller.signal });
       } finally {

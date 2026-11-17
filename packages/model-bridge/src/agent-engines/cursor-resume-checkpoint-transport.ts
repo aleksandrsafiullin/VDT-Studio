@@ -1,8 +1,11 @@
+import { cursorLaunchTarget } from "../subscription-cli/cursor/windows-launch";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type CheckpointActionBatch } from "./action-batch";
+import { cursorCheckpointPolicyJson, type CursorCheckpointVendorSandboxMode } from "./cursor-checkpoint-vendor-policy";
+export { assertCursorCheckpointVendorConfig, cursorCheckpointVendorPolicyHash, type CursorCheckpointVendorSandboxMode } from "./cursor-checkpoint-vendor-policy";
 import { omittedCheckpointStreamEvidence, recordCheckpointEventType } from "./checkpoint-protocol-reporting";
 import {
   invokeCountedCheckpointRunner,
@@ -88,6 +91,10 @@ const ALLOWED_CURSOR_EVENT_TYPES = new Set([
   "thinking",
   "user"
 ]);
+const CURSOR_TELEMETRY_TYPES = new Set(["usage", "retry", "connection"]);
+const CURSOR_TELEMETRY_KEYS = ["type", "subtype", "session_id", "timestamp_ms"];
+const CURSOR_USAGE_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"];
+const SAFE_EVENT_DISCRIMINATOR = /^[a-z][a-z_]{0,31}$/;
 const CURSOR_NATIVE_TOOL_LABELS = new Map([
   ["globToolCall", "Glob"],
   ["grepToolCall", "Grep"],
@@ -201,12 +208,19 @@ export interface CursorResumeCheckpointSegmentResult {
   readonly envelopeRepaired?: true;
 }
 
+
 export interface CursorResumeCheckpointTransportOptions {
   /** Absolute server-resolved path. PATH lookup is deliberately unsupported. */
   readonly executable: string;
   /** Exact result of a trusted one-time capability probe; unknown versions are rejected. */
   readonly validatedCliVersion: string;
+  /** Exact model labels from the same authenticated vendor catalog as the selected CLI. */
+  readonly modelDisplayNames?: ReadonlyMap<string, string>;
   readonly runner?: CursorResumeProcessRunner;
+  /** Desktop host supplies the OS isolation runner. The private HOME remains
+   * mandatory even when the empty workspace is preauthorized. */
+  readonly isolatedWorkspace?: boolean;
+  readonly vendorSandboxMode?: CursorCheckpointVendorSandboxMode;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
   readonly maxPromptBytes?: number;
@@ -284,7 +298,8 @@ async function canonicalDirectory(value: string, field: string): Promise<string>
 
 async function assertPrivateEnvironment(
   environment: CursorResumeCheckpointEnvironment,
-  open: boolean
+  open: boolean,
+  isolatedWorkspace: boolean
 ): Promise<{ workspace: string; state: string; authHome?: string }> {
   if (!SAFE_ID.test(environment.environmentId)) {
     throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "environmentId is invalid.");
@@ -297,7 +312,10 @@ async function assertPrivateEnvironment(
   const authHome = environment.trustedSubscriptionAuthHomePath
     ? await canonicalDirectory(environment.trustedSubscriptionAuthHomePath, "trustedSubscriptionAuthHomePath")
     : undefined;
-  if (environment.preauthorizeEmptyWorkspace && !authHome) {
+  if (isolatedWorkspace && (authHome || environment.credentialEnvironment?.length)) {
+    throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "Qualified Cursor execution requires authentication owned by the isolation runner.");
+  }
+  if (environment.preauthorizeEmptyWorkspace && !authHome && !isolatedWorkspace) {
     throw checkpointError(
       "CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT",
       "Preauthorizing a private workspace requires an explicit trusted subscription auth home."
@@ -365,20 +383,14 @@ function buildEnvironment(
   return Object.freeze(output);
 }
 
-async function writeCursorCheckpointPolicy(state: string): Promise<void> {
+async function writeCursorCheckpointPolicy(state: string, mode: CursorCheckpointVendorSandboxMode): Promise<void> {
   const configDir = path.join(state, "cursor-config");
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   if (await canonicalDirectory(configDir, "Cursor checkpoint config directory") !== configDir) {
     throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "Cursor checkpoint config directory escaped private state.");
   }
   const staged = path.join(configDir, `cli-config-${randomUUID()}.json`);
-  await writeFile(staged, JSON.stringify({
-    version: 1,
-    editor: { vimMode: false },
-    approvalMode: "allowlist",
-    permissions: { allow: [], deny: ["Shell(*)", "Read(**)", "Read(/**)", "Write(**)", "Write(/**)", "Mcp(*:*)", "WebFetch(*)"] },
-    sandbox: { mode: "enabled", readBoundary: "workspace" }
-  }), { flag: "wx", mode: 0o600 });
+  await writeFile(staged, cursorCheckpointPolicyJson(mode), { flag: "wx", mode: 0o600 });
   try {
     await rename(staged, path.join(configDir, "cli-config.json"));
   } finally {
@@ -393,13 +405,90 @@ function containsCredentialLeak(
   return entries.some((entry) => entry.value.length >= 8 && value.includes(entry.value));
 }
 
+function streamEventError(code: string, message: string, event: unknown): Error {
+  const discriminator = (value: unknown) =>
+    typeof value === "string" && SAFE_EVENT_DISCRIMINATOR.test(value) ? value : undefined;
+  const eventType = isRecord(event) ? discriminator(event.type) : undefined;
+  const eventSubtype = isRecord(event) ? discriminator(event.subtype) : undefined;
+  const label = eventType ? (eventSubtype ? `${eventType}:${eventSubtype}` : eventType) : "unrecognized discriminator";
+  return checkpointError(code, `${message} (${label}).`, {
+    ...(eventType ? { eventType } : {}),
+    ...(eventSubtype ? { eventSubtype } : {})
+  });
+}
+
+function hasTelemetryFields(
+  record: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = []
+): boolean {
+  return required.every((key) => Object.hasOwn(record, key))
+    && Object.keys(record).every((key) => required.includes(key) || optional.includes(key));
+}
+
+function isCounter(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isCursorTelemetryBody(event: Record<string, unknown>): boolean {
+  switch (event.type) {
+    case "usage": {
+      if (event.subtype !== "model_call"
+        || !hasTelemetryFields(event, [...CURSOR_TELEMETRY_KEYS, "model_call_id", "usage"])
+        || typeof event.model_call_id !== "string" || !SAFE_ID.test(event.model_call_id)
+        || !isRecord(event.usage)) return false;
+      const usage = event.usage;
+      return hasTelemetryFields(usage, CURSOR_USAGE_KEYS, ["reasoningTokens"])
+        && CURSOR_USAGE_KEYS.every((key) => isCounter(usage[key]))
+        && (!Object.hasOwn(usage, "reasoningTokens") || isCounter(usage.reasoningTokens) && usage.reasoningTokens > 0);
+    }
+    case "retry":
+      if (!isCounter(event.attempt)) return false;
+      if (event.subtype === "starting") {
+        return hasTelemetryFields(event, [...CURSOR_TELEMETRY_KEYS, "attempt", "is_resume"])
+          && typeof event.is_resume === "boolean";
+      }
+      return event.subtype === "resuming"
+        && hasTelemetryFields(event, [...CURSOR_TELEMETRY_KEYS, "attempt", "checkpoint_turn_count"])
+        && isCounter(event.checkpoint_turn_count);
+    case "connection":
+      if (event.subtype === "reconnected") return hasTelemetryFields(event, CURSOR_TELEMETRY_KEYS);
+      return event.subtype === "reconnecting"
+        && hasTelemetryFields(event, [...CURSOR_TELEMETRY_KEYS, "attempt"], ["endpoint_url"])
+        && isCounter(event.attempt)
+        && (!Object.hasOwn(event, "endpoint_url")
+          || typeof event.endpoint_url === "string" && event.endpoint_url.length > 0
+            && event.endpoint_url.length <= 2_048 && !/[\x00-\x1f\x7f]/.test(event.endpoint_url));
+    default:
+      return false;
+  }
+}
+
+function validateCursorTelemetry(event: Record<string, unknown>, initializedSession: string | undefined): void {
+  if (!initializedSession) {
+    throw streamEventError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor telemetry preceded session initialization", event);
+  }
+  if (typeof event.session_id !== "string") {
+    throw streamEventError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor telemetry lacks a session discriminator", event);
+  }
+  if (event.session_id !== initializedSession) {
+    throw streamEventError("CURSOR_CHECKPOINT_SESSION_MISMATCH", "Cursor telemetry belongs to a different session", event);
+  }
+  if (!isCounter(event.timestamp_ms) || !isCursorTelemetryBody(event)) {
+    throw streamEventError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained unsupported telemetry fields", event);
+  }
+}
+
 function parseCursorOutput(input: {
   result: CursorResumeProcessResult;
   workspace: string;
+  requestedModel: string;
+  modelDisplayName?: string;
   expectedSessionId?: string;
   maxBytes: number;
   maxLines: number;
   allowedToolNames: readonly string[];
+  allowNativeWebSearch: boolean;
   credentials: readonly CursorCheckpointCredentialEnvironmentEntry[];
 }): { sessionId: string; turn: CursorCheckpointTurn; nativeWebSearch?: NativeWebSearchRecord } {
   const { result } = input;
@@ -442,7 +531,7 @@ function parseCursorOutput(input: {
     }
     if (isRecord(event) && event.type === "tool_call") {
       const inspection = inspectCursorStreamToolCall(event);
-      if (inspection.kind === "native_web_search") {
+      if (inspection.kind === "native_web_search" && input.allowNativeWebSearch) {
         webSearches.observe({
           id: inspection.id,
           query: inspection.query ?? extractSearchQuery(event),
@@ -459,8 +548,16 @@ function parseCursorOutput(input: {
           : "Cursor attempted a built-in or foreign tool during checkpoint execution."
       );
     }
+    if (isRecord(event) && event.type === "interaction_query") {
+      throw streamEventError("SECURITY_BOUNDARY_BREACH", "Cursor attempted a prohibited provider interaction", event);
+    }
+    if (isRecord(event) && typeof event.type === "string" && CURSOR_TELEMETRY_TYPES.has(event.type)) {
+      validateCursorTelemetry(event, sawInit ? sessionId : undefined);
+      recordCheckpointEventType(eventTypeSequence, event);
+      continue;
+    }
     if (!isRecord(event) || typeof event.type !== "string" || !ALLOWED_CURSOR_EVENT_TYPES.has(event.type)) {
-      throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown event type.");
+      throw streamEventError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown event type", event);
     }
     recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "error") {
@@ -474,6 +571,9 @@ function parseCursorOutput(input: {
         throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor stream has an invalid system initialization event.");
       }
       sawInit = true;
+      if (input.requestedModel !== "auto" && event.model !== input.requestedModel && (input.modelDisplayName === undefined || event.model !== input.modelDisplayName)) {
+        throw checkpointError("CURSOR_CHECKPOINT_MODEL_UNVERIFIED", "Cursor did not confirm the requested checkpoint model.");
+      }
       if (!sameCanonicalWorkspacePath(event.cwd, input.workspace)) {
         throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor reported execution outside the private checkpoint workspace.");
       }
@@ -488,7 +588,7 @@ function parseCursorOutput(input: {
       event.type === "thinking"
       && !new Set(["delta", "completed"]).has(typeof event.subtype === "string" ? event.subtype : "")
     ) {
-      throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown thinking event subtype.");
+      throw streamEventError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown thinking event subtype", event);
     }
     if (
       event.type === "assistant"
@@ -562,9 +662,10 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
     return new Promise<CursorResumeProcessResult>((resolve, reject) => {
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(request.executable, [...request.args], {
+        const target = cursorLaunchTarget(request.executable, request.args, { ...request.environment } as NodeJS.ProcessEnv);
+        child = spawn(target.executable, target.args, {
           cwd: request.cwd,
-          env: { ...request.environment } as NodeJS.ProcessEnv,
+          env: target.env,
           stdio: ["pipe", "pipe", "pipe"],
           shell: false,
           windowsHide: true
@@ -639,6 +740,9 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
 export class CursorResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
+  readonly #modelDisplayNames: ReadonlyMap<string, string>;
+  readonly #isolatedWorkspace: boolean;
+  readonly #vendorSandboxMode: CursorCheckpointVendorSandboxMode;
   readonly #runner: SpawnCountableRunner<CursorResumeProcessRequest, CursorResumeProcessResult>;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
@@ -652,13 +756,32 @@ export class CursorResumeCheckpointTransport {
     if (!options.validatedCliVersion.trim() || options.validatedCliVersion.length > 120) {
       throw checkpointError("CURSOR_CHECKPOINT_VERSION_UNKNOWN", "An exact trusted Cursor CLI version probe is required.");
     }
+    if (options.vendorSandboxMode === "disabled" && !options.isolatedWorkspace) {
+      throw checkpointError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "Disabling the Cursor vendor sandbox requires a separate qualified host runner.");
+    }
+    if (options.isolatedWorkspace && !options.runner) {
+      throw checkpointError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "Isolated checkpoint execution requires a host process runner.");
+    }
+    this.#isolatedWorkspace = options.isolatedWorkspace === true;
+    this.#vendorSandboxMode = options.vendorSandboxMode ?? "enabled";
     this.#executable = options.executable;
+    const names = new Map(options.modelDisplayNames);
+    const counts = new Map<string, number>();
+    for (const label of names.values()) counts.set(label, (counts.get(label) ?? 0) + 1);
+    this.#modelDisplayNames = new Map([...names].filter(([id, label]) =>
+      SAFE_ID.test(id) && typeof label === "string" && label.length > 0 && label.length <= 160 &&
+      !/[\x00-\x1f\x7f]/.test(label) && counts.get(label) === 1 && label !== "auto" && (label === id || !names.has(label))
+    ));
     this.validatedCliVersion = options.validatedCliVersion;
     this.#runner = wrapSpawnCountingRunner(options.runner ?? new NodeCursorResumeProcessRunner());
     this.#timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs");
     this.#maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "maxOutputBytes");
     this.#maxPromptBytes = positiveInteger(options.maxPromptBytes, DEFAULT_MAX_PROMPT_BYTES, "maxPromptBytes");
     this.#maxLines = positiveInteger(options.maxLines, DEFAULT_MAX_LINES, "maxLines");
+  }
+
+  get allowsNativeWebSearch(): boolean {
+    return !this.#isolatedWorkspace;
   }
 
   get processSpawnCount(): number {
@@ -690,10 +813,10 @@ export class CursorResumeCheckpointTransport {
     }
     if (input.mode === "resume") assertSessionId(input.expectedSessionId, "expectedSessionId");
 
-    const resolved = await assertPrivateEnvironment(input.environment, input.mode === "open");
+    const resolved = await assertPrivateEnvironment(input.environment, input.mode === "open", this.#isolatedWorkspace);
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildEnvironment(resolved.state, resolved.authHome, credentials);
-    await writeCursorCheckpointPolicy(resolved.state);
+    await writeCursorCheckpointPolicy(resolved.state, this.#vendorSandboxMode);
     const args = [
       "--print",
       "--output-format",
@@ -728,15 +851,19 @@ export class CursorResumeCheckpointTransport {
         "Cursor wrote to the private checkpoint workspace; the run was stopped."
       );
     }
+    const modelDisplayName = this.#modelDisplayNames.get(input.model);
     let parsed: ReturnType<typeof parseCursorOutput>;
     try {
       parsed = parseCursorOutput({
         result,
         workspace: resolved.workspace,
+        requestedModel: input.model,
+        ...(modelDisplayName ? { modelDisplayName } : {}),
         ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
         maxBytes: this.#maxOutputBytes,
         maxLines: this.#maxLines,
         allowedToolNames,
+        allowNativeWebSearch: this.allowsNativeWebSearch,
         credentials
       });
     } catch (error) {

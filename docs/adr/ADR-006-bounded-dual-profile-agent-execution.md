@@ -113,6 +113,26 @@ until adversarial qualification proves the boundary. A resume/checkpoint
 adapter may be used only if it independently reaches `hard_verified`; otherwise
 the Cursor external profile stays unavailable.
 
+The canonical Cursor ACP adapter requires the accepted evidence to name the exact
+CLI version, ACP protocol, VDT tool catalog, host OS, architecture and runtime.
+The trusted host must independently measure the pinned vendor payload and the
+isolation policy and compare their hashes with the evidence before admitting a
+binding. A matching record is an admission requirement. It does not establish
+that the qualification trials took place.
+
+The packaged Cursor checkpoint admission path requires a release-pinned
+desktop bootstrap module with a separate accepted evidence record for each
+exact Grok model ID, its catalog label and its independently observed CLI
+initialization label. Each record pins the
+complete CLI payload, OS isolation policy, exact CLI and protocol versions,
+host runtime and VDT tool catalog. The native runner must fence each
+process launch to that identity and retain the same private per-run profile
+on continuation. Every reported native tool event stops the packaged run,
+including native WebSearch. Research can use the VDT Gateway as permitted by
+the run. This profile-specific restriction leaves the development canary and
+its native web-search behavior intact. No packaged platform has accepted
+evidence in the bootstrap manifest yet.
+
 ### Agent prose and runtime facts are separate
 
 The durable outbox uses strict `AgentRunEventV2` envelopes with a contiguous

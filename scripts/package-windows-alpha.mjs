@@ -207,6 +207,11 @@ export async function packageWindows(args = process.argv.slice(2)) {
     const storageDependents = stageStorageAddon({ source, stage, native, env: storageEnv, thumbprint, unsigned });
     cpSync(join(source, "LICENSE"), join(native, "LICENSE-VDT-Studio.txt"));
     cpSync(join(source, "apps/desktop/packaged-web.cjs"), join(native, "packaged-web.cjs"));
+    const cursorIsolationStage = run(process.execPath, [
+      join(source, "scripts/stage-packaged-cursor-isolation.cjs"), native, "win32", "x64"
+    ], { cwd: source, env, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" }).trim();
+    const cursorIsolationResources = cursorIsolationStage ? JSON.parse(cursorIsolationStage) : [];
+    resources.push(...cursorIsolationResources);
     cpSync(join(source, "apps/desktop/windows-runtime.cjs"), join(native, "windows-runtime.cjs"));
     cpSync(join(source, "packages/data-harness/src/parser-worker.manifest.json"), join(native, "parser-worker.manifest.json"));
     // Materialize only the already checked internal links, avoiding Windows
@@ -214,7 +219,9 @@ export async function packageWindows(args = process.argv.slice(2)) {
     cpSync(join(web, ".next/standalone"), join(native, "web"), { recursive: true, dereference: true });
     writeFileSync(join(native, "build-info.json"), JSON.stringify(buildInfo, null, 2) + "\n");
     const signingConfig = join(stage, "windows-signing.json");
-    writeFileSync(signingConfig, JSON.stringify({ bundle: { windows: unsigned
+    writeFileSync(signingConfig, JSON.stringify({ bundle: {
+      ...(cursorIsolationResources.length ? { resources } : {}),
+      windows: unsigned
       ? { certificateThumbprint: null, signCommand: null }
       : { certificateThumbprint: thumbprint, digestAlgorithm: "sha256", tsp: true,
           timestampUrl: "http://timestamp.digicert.com" } } }));
