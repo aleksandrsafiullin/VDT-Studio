@@ -465,3 +465,15 @@ and cold reopen, the same graph revision and calculation were visible and
 the before/after receipts were byte-identical. This completes the scoped
 Mac and Windows installed Cursor/Grok tree cases. Public release stays
 on **HOLD**.
+
+### Release snapshot cancellation correction
+
+The `bc6b79e` source-verification run exposed a cancellation race during CLI
+setup. When the request was cancelled before spawn, a native abort exception
+produced error code `20` and a failed Local Runner record. The test now pauses
+executable resolution, cancels through the agent route, resumes setup and checks
+the settled record. The runtime records `CANCELLED` before spawn and during the
+bundled Cursor preflight. The controlled regression failed before the correction
+and passed after it with zero child launches. The focused route and executor suite
+passed 60 tests. The corrected sidecar and exact source snapshot require fresh
+installer and source verification. [Initial source run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/44096667230)

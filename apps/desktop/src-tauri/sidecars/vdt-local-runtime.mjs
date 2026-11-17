@@ -7639,7 +7639,7 @@ var bundledCursorProbes = /* @__PURE__ */ new Map();
 async function probeBundledCursor(executable, args, signal) {
   const target = cursorLaunchTarget(executable, args);
   const key2 = await executableProbeCacheKey(target.executable, await executableProbeCacheKey(executable, JSON.stringify(args)));
-  signal.throwIfAborted();
+  if (signal.aborted) throw abortError();
   const cached2 = bundledCursorProbes.get(key2);
   if (cached2 !== void 0) return cached2;
   try {
@@ -7658,7 +7658,7 @@ ${result.stderr}`.trim();
     bundledCursorProbes.set(key2, output2);
     return output2 || void 0;
   } catch {
-    signal.throwIfAborted();
+    if (signal.aborted) throw abortError();
     return void 0;
   }
 }
@@ -7749,7 +7749,7 @@ async function executeCli(manifest, request, signal, options) {
         const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
         if (codexHome) childEnv.CODEX_HOME = codexHome;
       }
-      signal.throwIfAborted();
+      if (signal.aborted) throw abortError();
       const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) => nodeSpawn(spawnCommand, [...args], spawnOptions)))(
         command,
         finalArgs,

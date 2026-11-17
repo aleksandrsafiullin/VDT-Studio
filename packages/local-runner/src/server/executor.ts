@@ -834,7 +834,7 @@ const bundledCursorProbes = new Map<string, string>();
 async function probeBundledCursor(executable: string, args: readonly string[], signal: AbortSignal): Promise<string | undefined> {
   const target = cursorLaunchTarget(executable, args);
   const key = await executableProbeCacheKey(target.executable, await executableProbeCacheKey(executable, JSON.stringify(args)));
-  signal.throwIfAborted();
+  if (signal.aborted) throw abortError();
   const cached = bundledCursorProbes.get(key);
   if (cached !== undefined) return cached;
   try {
@@ -847,7 +847,7 @@ async function probeBundledCursor(executable: string, args: readonly string[], s
     bundledCursorProbes.set(key, output);
     return output || undefined;
   } catch {
-    signal.throwIfAborted();
+    if (signal.aborted) throw abortError();
     return undefined;
   }
 }
@@ -965,7 +965,7 @@ export async function executeCli(
       const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
       if (codexHome) childEnv.CODEX_HOME = codexHome;
     }
-    signal.throwIfAborted();
+    if (signal.aborted) throw abortError();
     const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
       command,
