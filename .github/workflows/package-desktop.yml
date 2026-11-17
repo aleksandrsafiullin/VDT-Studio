@@ -58,6 +58,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Verify Windows native socket and process behavior
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/release/native/logs | Out-Null
+          node scripts/verify-windows-native-runtime.mjs 2>&1 | Tee-Object output/release/native/logs/windows-native-runtime.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build archived Windows candidate
         shell: pwsh
         run: |

@@ -9,6 +9,7 @@ use std::{
     path::Path,
     process::{Child, Command},
     ptr::{null, null_mut},
+    time::Duration,
 };
 use windows_sys::Win32::{
     Foundation::ERROR_INSUFFICIENT_BUFFER,
@@ -32,6 +33,13 @@ pub fn owned_listener(port: u16) -> io::Result<TcpListener> {
     socket.listen(64)?;
     socket.set_nonblocking(true)?;
     Ok(socket.into())
+}
+
+pub fn configure_proxy_client(client: &TcpStream) -> io::Result<()> {
+    // Winsock accept inherits nonblocking mode from the listener.
+    client.set_nonblocking(false)?;
+    client.set_read_timeout(Some(Duration::from_secs(1)))?;
+    client.set_write_timeout(Some(Duration::from_secs(5)))
 }
 
 pub struct ProcessJob {
@@ -157,6 +165,28 @@ mod tests {
         let mut byte = [0];
         assert!(matches!(std::io::Read::read(&mut server, &mut byte).unwrap_err().kind(),
             io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn idle_proxy_client_waits_for_its_receive_timeout() {
+        use windows_sys::Win32::Networking::WinSock::{WSAETIMEDOUT, WSAEWOULDBLOCK};
+
+        let listener = owned_listener(0).unwrap();
+        let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut client, _) = listener.accept().unwrap();
+        // The prior timeout-only setup inherited nonblocking mode from accept.
+        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let mut byte = [0];
+        let before = std::io::Read::read(&mut client, &mut byte).unwrap_err();
+        assert_eq!(before.raw_os_error(), Some(WSAEWOULDBLOCK));
+
+        configure_proxy_client(&client).unwrap();
+        assert_eq!(listener.accept().unwrap_err().raw_os_error(), Some(WSAEWOULDBLOCK));
+        let after = std::io::Read::read(&mut client, &mut byte).unwrap_err();
+        assert_eq!(after.raw_os_error(), Some(WSAETIMEDOUT));
+        peer.write_all(b"x").unwrap();
+        std::io::Read::read_exact(&mut client, &mut byte).unwrap();
+        assert_eq!(byte, *b"x");
     }
 
     #[test]

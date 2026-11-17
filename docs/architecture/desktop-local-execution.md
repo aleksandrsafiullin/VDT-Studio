@@ -78,6 +78,9 @@ The Windows x64 build path bundles Node and the production Next server. The
 Tauri host reserves its WebView origin with an exclusive IPv4 loopback listener,
 retains the listener independently of its proxy thread, and verifies the
 private server's process on each connected socket before forwarding data.
+The listener uses nonblocking accepts. Each admitted client stream switches
+to blocking I/O before the proxy applies bounded read and write timeouts, so
+idle WebView connections wait for bytes or time out.
 The origin and one-use bootstrap are checked by the shared HTTP guard. The
 Windows host uses a private activation pipe and kill-on-close Job Objects for
 the web runtime and sidecar. This implementation is not an installed-platform

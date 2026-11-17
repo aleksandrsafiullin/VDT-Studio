@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tauri::{webview::NewWindowResponse, Manager, Url, WebviewUrl, WebviewWindowBuilder};
-use crate::windows_process::{owned_listener, runtime_command, verify_backend_peer, ProcessJob};
+use crate::windows_process::{configure_proxy_client, owned_listener, runtime_command, verify_backend_peer, ProcessJob};
 
 const WEB_PORT: u16 = 37541;
 const START_TIMEOUT: Duration = Duration::from_secs(20);
@@ -221,8 +221,7 @@ impl Drop for Proxy {
 fn forward(client: TcpStream, port: u16, pid: u32, stop: Arc<AtomicBool>) -> io::Result<()> {
     // Ownership is validated before the first request byte, including bootstrap.
     let backend = connect_backend(port, pid)?;
-    client.set_read_timeout(Some(Duration::from_secs(1)))?;
-    client.set_write_timeout(Some(Duration::from_secs(5)))?;
+    configure_proxy_client(&client)?;
     let upload_client = client.try_clone()?;
     let upload_backend = backend.try_clone()?;
     let close_client = client.try_clone()?;

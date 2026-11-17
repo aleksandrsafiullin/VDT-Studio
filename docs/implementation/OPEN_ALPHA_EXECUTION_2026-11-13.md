@@ -490,3 +490,20 @@ retry controls remain on live runs that await user input. Focused timeout
 and step-limit tests reproduced the inappropriate controls on the prior code
 and passed with the corrected presentation. This change addresses the user
 interface after interruption. The specific provider timeout remains recorded.
+
+### Windows native proxy idle reads
+
+The standard-user Windows ARM64 guest startup sample for the installed f071a0e
+x64 package recorded 63.6 CPU seconds in the desktop host over about 54 elapsed
+seconds. The private Node process had accumulated about 6.2 CPU seconds at the
+same point. The source review found that the proxy configured receive timeouts
+on connections accepted from a nonblocking Windows listener. Winsock inherits
+socket mode on accept. A nonblocking read can immediately return WouldBlock,
+which the forwarding loop treated like an elapsed read timeout.
+
+The Windows host now switches each accepted client to blocking mode before
+configuring its existing bounded timeouts. The native regression distinguishes
+the original WouldBlock response from the corrected Winsock timeout and tests
+traffic after the timeout. The Windows package gate executes the same native
+fixture used by desktop foundation CI. Installed resource and live checks
+remain separate. [Winsock accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept)
