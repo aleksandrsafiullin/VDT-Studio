@@ -83,7 +83,11 @@ to blocking I/O before the proxy applies bounded read and write timeouts, so
 idle WebView connections wait for bytes or time out.
 The origin and one-use bootstrap are checked by the shared HTTP guard. The
 Windows host uses a private activation pipe and kill-on-close Job Objects for
-the web runtime and sidecar. This implementation is not an installed-platform
+the web runtime and sidecar. After activation, the host waits up to 60 seconds
+for the web runtime's private readiness frame. This gives cold starts more
+time under x64 emulation or filesystem contention. If the deadline expires,
+the host stops the runtime and reports startup failure.
+This implementation is not an installed-platform
 support claim; Windows project storage admission and native qualification are
 tracked in [W7](../implementation/OPEN_ALPHA_W7_2026-11-13.md) and
 [W8](../implementation/OPEN_ALPHA_W8_2026-11-13.md).

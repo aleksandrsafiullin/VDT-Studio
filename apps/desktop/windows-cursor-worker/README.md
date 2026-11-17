@@ -86,7 +86,8 @@ can enter the model picker through this managed connection. The prior private
 Windows x64 app ran both exact models in an ARM64 Windows guest. Its policy
 and credential provisioning differ from the standard workflow. The standard
 Windows x64 installer requires fresh sign-in, live exact-model checkpoint
-and saved-tree reopen evidence before adding the v2 model records.
+and saved-tree reopen evidence for installed-app qualification of its v2
+model records.
 
 ## Prior private packages
 

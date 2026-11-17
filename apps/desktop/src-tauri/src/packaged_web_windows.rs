@@ -12,7 +12,7 @@ use crate::windows_process::{configure_proxy_client, owned_listener, runtime_com
 
 const WEB_PORT: u16 = 37541;
 const STOP_TIMEOUT: Duration = Duration::from_secs(12);
-const START_TIMEOUT: Duration = Duration::from_secs(20);
+const START_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_CONNECTIONS: usize = 64;
 
 pub(crate) struct PackagedWeb { process: Mutex<Option<WebProcess>> }
@@ -140,7 +140,12 @@ fn setup_inner(app: &tauri::App, resource_dir: &Path, runtime: &crate::sidecar_h
             .map(|_| bytes);
         let _ = sender.send(result);
     });
-    let bytes = receiver.recv_timeout(START_TIMEOUT).map_err(|_| "The local runtime startup timed out.")??;
+    let bytes = receiver.recv_timeout(START_TIMEOUT).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout =>
+            "The local runtime did not become ready within 60 seconds. Close other resource-intensive apps and retry.",
+        mpsc::RecvTimeoutError::Disconnected =>
+            "The local runtime startup reader stopped unexpectedly. Restart VDT Studio and retry.",
+    })??;
     if bytes.len() > 256 || bytes.last() != Some(&b'\n') { return Err("Invalid local runtime startup frame.".into()); }
     let startup: Startup = serde_json::from_slice(&bytes)?;
     if startup.backend_port < 1024 || startup.backend_port == WEB_PORT || startup.bootstrap.len() != 64
