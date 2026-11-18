@@ -130,6 +130,8 @@ output/release/v0.1.0-alpha.2/
 
 `package:alpha` refuses a nonempty output directory, preserving prior artifacts. It builds in a unique temporary package stage, strips development-only workspace dependencies and scripts from the published manifest, and removes only that owned stage after its synchronous children finish. The checked-out CLI `dist` directory is not cleaned or replaced by packaging. The SBOM includes every workspace package and resolves URL tarballs such as SheetJS to their actual package name/version.
 
+Archive-entry validation accepts both LF and Windows CRLF output from `tar`. The Package workflow exercises packaging and clean installation on Linux, macOS and Windows. Desktop foundation tests run through the `pnpm test` lifecycle so nested packaging checks retain the package manager's JavaScript entrypoint on Windows. CLI discovery fixtures use a temporary native Windows launcher around the existing Node fixtures; they do not relax executable discovery or authentication checks in the product.
+
 The clean-install verifier installs the dependency-free tarball offline with pnpm into a unique temporary directory and checks the installed `vdt` command, help/doctor, project validation, public exports, runner startup and `/v1/health`. Failure to listen on loopback fails verification. Child shutdown completes before removing that owned directory, including on an error. `release:bundle:verify` validates checksum/manifest/SBOM linkage and recursively scans CLI/desktop resources for secret-like material, rejecting symbolic links.
 
 The generic assignment rule recognizes JavaScript property assignments that

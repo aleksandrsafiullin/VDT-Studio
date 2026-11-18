@@ -23,7 +23,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm desktop:verify
-      - run: pnpm vitest run scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts packages/local-runner/src/server/runtime.test.ts
+      - run: pnpm test scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts packages/local-runner/src/server/runtime.test.ts
       - name: Verify Windows native process and loopback ownership
         if: runner.os == 'Windows'
         shell: pwsh

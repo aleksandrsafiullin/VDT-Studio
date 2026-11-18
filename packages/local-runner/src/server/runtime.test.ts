@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { chmod, copyFile, mkdtemp, rm, symlink } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
+import { chmod, copyFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import type { AuditEvent } from "../cli/types";
 import {
@@ -20,13 +22,43 @@ import {
 
 const fakeCodex = fileURLToPath(new URL("./fixtures/fake-codex.cjs", import.meta.url));
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
+let windowsProxyDir: string | undefined;
+
+beforeAll(async () => {
+  if (process.platform !== "win32") return;
+  windowsProxyDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cli-fixture-proxy-"));
+  const framework = process.arch === "arm64" ? "FrameworkArm64" : "Framework64";
+  const compiler = path.join(process.env.SystemRoot ?? "C:\\Windows", "Microsoft.NET", framework, "v4.0.30319", "csc.exe");
+  await promisify(execFile)(compiler, [
+    "/nologo", "/target:exe",
+    `/out:${path.join(windowsProxyDir, "cli-proxy.exe")}`,
+    fileURLToPath(new URL("./fixtures/node-cli-proxy.cs", import.meta.url))
+  ], { timeout: 15_000, windowsHide: true });
+}, 20_000);
+
+afterAll(async () => {
+  if (windowsProxyDir) await rm(windowsProxyDir, { recursive: true, force: true });
+});
+
+async function writeCliFixture(directory: string, alias: string, source: string): Promise<string> {
+  const executable = path.join(directory, process.platform === "win32" ? `${alias}.exe` : alias);
+  if (process.platform === "win32") {
+    if (!windowsProxyDir) throw new Error("Windows CLI fixture proxy has not been compiled.");
+    await copyFile(path.join(windowsProxyDir, "cli-proxy.exe"), executable);
+    await copyFile(source, `${executable}.cjs`);
+    await writeFile(`${executable}.node`, process.execPath);
+  } else {
+    await copyFile(source, executable);
+    await chmod(executable, 0o700);
+  }
+  return executable;
+}
 
 describe("local runtime contract", { timeout: 30_000 }, () => {
   it("checks subscription readiness without creating a model completion run", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-readiness-"));
     try {
-      await copyFile(fakeCodex, path.join(tempDir, "codex"));
-      await chmod(path.join(tempDir, "codex"), 0o700);
+      await writeCliFixture(tempDir, "codex", fakeCodex);
       const resolveExecutable = vi.fn(async () => { throw new Error("Completion execution must not start."); });
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
@@ -48,7 +80,7 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
   it("does not report an unverified Cursor session as a successful test", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-unverified-readiness-"));
     try {
-      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      await writeCliFixture(tempDir, "agent", fakeCursor);
       vi.stubEnv("VDT_FAKE_CURSOR_MODE", "status-unverified");
       const context = createLocalRuntimeContext({ auditSink: () => undefined, detection: { path: tempDir } });
 
@@ -110,7 +142,7 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
   it("runs the fixed Cursor CLI login command and verifies protected access", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cursor-auth-"));
     try {
-      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const agent = await writeCliFixture(tempDir, "agent", fakeCursor);
       const calls: Array<{ executable: string; args: readonly string[] }> = [];
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
@@ -133,7 +165,7 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
           label: "Cursor Agent authenticated."
         }
       });
-      expect(calls).toEqual([{ executable: path.join(tempDir, "agent"), args: ["login"] }]);
+      expect(calls).toEqual([{ executable: agent, args: ["login"] }]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -142,7 +174,7 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
   it("sanitizes Cursor CLI login failures", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cursor-auth-fail-"));
     try {
-      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      await writeCliFixture(tempDir, "agent", fakeCursor);
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
         detection: { path: tempDir, probeTimeoutMs: 5_000 },
@@ -172,7 +204,7 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
       unblockLogin = resolve;
     });
     try {
-      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      await writeCliFixture(tempDir, "agent", fakeCursor);
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
         detection: { path: tempDir, probeTimeoutMs: 5_000 },
@@ -203,9 +235,8 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
   it("detects installed subscription CLIs and provider-owned models", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-detect-clis-"));
     try {
-      await copyFile(fakeCodex, path.join(tempDir, "codex"));
-      await chmod(path.join(tempDir, "codex"), 0o700);
-      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      await writeCliFixture(tempDir, "codex", fakeCodex);
+      await writeCliFixture(tempDir, "agent", fakeCursor);
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
         detection: { path: tempDir, probeTimeoutMs: 5_000 }

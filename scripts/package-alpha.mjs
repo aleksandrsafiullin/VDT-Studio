@@ -44,7 +44,7 @@ export function packageAlpha(root = DEFAULT_ROOT, { releaseDir: override } = {})
     const tarballs = readdirSync(releaseDir).filter((name) => name.endsWith(".tgz"));
     if (tarballs.length !== 1) throw new Error(`Expected one CLI tarball, found ${tarballs.length}.`);
     const tarball = join(releaseDir, tarballs[0]);
-    const entries = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split("\n");
+    const entries = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split(/\r?\n/);
     const forbidden = entries.filter((entry) =>
       /(^|\/)(src|skills|node_modules)(\/|$)|\.DS_Store$/.test(entry)
     );
