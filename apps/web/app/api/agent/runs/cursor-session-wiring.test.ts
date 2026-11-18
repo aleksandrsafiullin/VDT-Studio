@@ -120,6 +120,12 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
         expect((await unrelatedCatalog.json()).bindings).not.toContainEqual(expect.objectContaining({ backendId: "cursor_subscription" }));
         expect(authStatus).not.toHaveBeenCalled();
         expect(getActivations).not.toHaveBeenCalled();
+        expect(() => runtime.resolveAgentStartRequest({
+          mode: "generate_vdt",
+          providerId: "local_runner",
+          providerConfig: { backendId: " cursor_subscription " },
+          input: { prompt: "Prepare a tree." }
+        })).toThrow("Packaged Cursor Agent runs require an exact managed profile binding.");
         expect(await runtime.refreshPackagedCursorConnection()).toEqual({ status: "sign_in_required", models: [] });
         expect(getActivations).not.toHaveBeenCalled();
         const [connected, duplicate] = await Promise.all([runtime.signInPackagedCursor(), runtime.signInPackagedCursor()]);

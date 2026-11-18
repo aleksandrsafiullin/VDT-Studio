@@ -94,7 +94,7 @@ describe("Windows Cursor worker control pipe", () => {
       const chunk = Buffer.alloc(27 * 1024 * 1024, 0x20);
       process.stdout.write(chunk);
     `);
-    await expect(client.request({ op: "measure" }, signal())).rejects.toMatchObject({
+    await expect(client.request({ op: "measure" }, AbortSignal.timeout(10_000))).rejects.toMatchObject({
       code: "CURSOR_CHECKPOINT_OUTPUT_TOO_LARGE"
     });
   });
