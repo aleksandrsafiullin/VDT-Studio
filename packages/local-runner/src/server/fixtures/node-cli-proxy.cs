@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 
 internal static class NodeCliProxy
 {
@@ -48,11 +49,16 @@ internal static class NodeCliProxy
             FileName = File.ReadAllText(executable + ".node").Trim(),
             Arguments = arguments.ToString(),
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
         using (var child = Process.Start(start))
         {
+            var stdout = child.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput());
+            var stderr = child.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError());
             child.WaitForExit();
+            Task.WaitAll(stdout, stderr);
             return child.ExitCode;
         }
     }
