@@ -13,12 +13,11 @@ Same as chat; choosing another model never changes the conversation model.
 Preferences belong to the connection source, including its endpoint or runner,
 and reasoning choices belong to the selected Smart model.
 
-Reasoning is explicitly Off by default. It is not inherited from chat. Available
-levels come from the selected model's actual capabilities. Off is a request to
-disable reasoning, not an absent override or an alias for Low. When a provider
-cannot establish or accept an explicit Off control, preparation must explain
-the limitation before inference. The user may explicitly choose Provider
-default or a supported model/level. There is no hidden reasoning fallback.
+CLI suggestions start with Provider default when a model has no saved reasoning
+choice. API and local HTTP suggestions start Off. These choices are independent
+of chat. Available levels come from the selected model’s capabilities. A saved
+Off requests explicit disablement, and VDT reports unsupported choices before
+inference. The user can choose Provider default or another supported level.
 
 The resolved model and reasoning choice participate in the prepared execution
 identity. Metadata admission, completion and action-time revalidation use the

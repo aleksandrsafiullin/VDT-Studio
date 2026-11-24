@@ -58,7 +58,7 @@ export interface AgentEventHandlers {
 }
 
 export interface AgentClient {
-  getExecutionBindings(options?: { includePackagedCursor?: boolean }): Promise<AgentExecutionBindingSelection>;
+  getExecutionBindings(options?: { includePackagedCursor?: boolean; signal?: AbortSignal }): Promise<AgentExecutionBindingSelection>;
   startRun(request: VdtAgentPublicStartRequest): Promise<StartAgentRunResponse>;
   getRun(runId: string): Promise<VdtAgentRunSnapshot>;
   subscribe(runId: string, handlers: AgentEventHandlers): () => void;
@@ -71,6 +71,7 @@ export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
     async getExecutionBindings(options) {
       const response = await fetcher("/api/agent/runs", {
         cache: "no-store",
+        ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.includePackagedCursor === false ? { headers: { "x-vdt-skip-packaged-cursor-discovery": "1" } } : {})
       });
       return readJsonResponse<AgentExecutionBindingSelection>(

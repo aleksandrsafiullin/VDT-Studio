@@ -48,9 +48,9 @@ describe.skipIf(process.platform === "win32")("Smart version probes own descenda
   });
   it("probe timeout kills the owned process group and never starts a completion", async () => {
     const { dir, pidPath } = await fixture();
-    const pending = selectCodexExecutable({ path: dir, env: { PATH: dir }, requireConfirmedCleanup: true });
-    const pid = await waitPid(pidPath); await expect(pending).resolves.toMatchObject({ version: null, error: "Codex CLI version probe failed." }); expect(alive(pid)).toBe(false);
-  });
+    const pending = selectCodexExecutable({ path: dir, env: { PATH: dir }, requireConfirmedCleanup: true }); void pending.catch(() => {});
+    const pid = await waitPid(pidPath); await expect(pending).rejects.toMatchObject({ code: "METADATA_TIMEOUT" }); expect(alive(pid)).toBe(false);
+  }, 10_000);
   it("bounds escaped descendant pipes, retains the exact owned directory, and returns quarantine", async () => {
     const { dir, pidPath } = await fixture(true), controller = new AbortController();
     const started = Date.now(), pending = selectCodexExecutable({ path: dir, env: { PATH: dir }, signal: controller.signal, requireConfirmedCleanup: true }); void pending.catch(() => {});

@@ -243,6 +243,7 @@ export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = 
     ],
     ...advisory
   },
+  "suggest-chat-starters-v1": { prompts: ["Which inputs are missing?", "How is output calculated?", "Where can we validate the model?"] },
   "explain-node-v1": {
     nodeId: "production_volume",
     explanation: "Production volume equals time times productivity.",
@@ -335,6 +336,7 @@ export const INVALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> 
   "check-units-v1": { unitFindings: "bad", ...advisory },
   "identify-missing-drivers-v1": { missingDrivers: "bad", ...advisory },
   "identify-duplicate-drivers-v1": { duplicateClusters: "bad", ...advisory },
+  "suggest-chat-starters-v1": { prompts: ["Which inputs are missing?"] },
   "explain-node-v1": { nodeId: "a", explanation: "x", keyDrivers: "bad", assumptions: [], questionsForUser: [] },
   "explain-scenario-v1": { scenarioId: "a", narrative: "x", impactHighlights: "bad", assumptions: [], questionsForUser: [] },
   "generate-executive-summary-v1": { headline: "x", keyDrivers: "bad", risks: [], recommendations: [] }

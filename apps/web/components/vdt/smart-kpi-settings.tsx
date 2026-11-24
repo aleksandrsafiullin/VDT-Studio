@@ -84,7 +84,7 @@ export function SmartKpiSettings() {
         </SelectInput>
       </Field>
     </div>
-    <p className="text-xs leading-5 text-muted">Reasoning is requested off by default for faster suggestions. Changes apply to new preparations.</p>
+    <p className="text-xs leading-5 text-muted">{source.source.category === "cli_subscriptions" ? "CLI suggestions use the provider’s default reasoning until you choose a level." : "Reasoning is requested off by default."} Changes apply to new preparations.</p>
     {selectedReasoning === false && offUnsupported ? <p className="text-xs leading-5 text-amber-700" role="status">This model does not advertise a way to disable reasoning. Choose another model or explicitly select Provider default.</p> : null}
     {current?.loading ? <p className="text-xs text-muted" role="status">Checking model options…</p> : null}
     {needsKey ? <p className="text-xs text-muted" role="status">Add an API key in provider settings above to load models and reasoning options.</p> : null}

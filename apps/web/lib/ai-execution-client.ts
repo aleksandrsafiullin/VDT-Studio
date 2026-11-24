@@ -10,7 +10,7 @@ import {
   type GenerateVdtInput,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness/browser";
-import { validateIncomingKpiChangeSet, validateKpiSuggestionModelOutput, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
+import { validateChatStarterOutput, validateIncomingKpiChangeSet, validateKpiSuggestionModelOutput, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { CLI_CATALOG, type CliAgentId } from "./execution-mode-catalog";
@@ -253,6 +253,11 @@ export interface ProviderAuthActionResult {
   docsUrl?: string;
 }
 
+export interface CliDetectionOptions {
+  fresh?: boolean | undefined;
+  onProvider?: ((agent: CliAgentDetectionSnapshot, models: string[]) => void) | undefined;
+}
+
 export interface AiExecutionClient {
   getEnvironment(): Promise<VdtAppMode>;
   listBackends(): Promise<PublicBackendStatus[]>;
@@ -260,7 +265,7 @@ export interface AiExecutionClient {
   listModels(backendId: string): Promise<ModelOption[]>;
   complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult>;
   cancel(requestId: string): Promise<void>;
-  detectSubscriptionClis(agentId?: CliAgentId, options?: { fresh?: boolean | undefined }): Promise<DetectSubscriptionClisResult>;
+  detectSubscriptionClis(agentId?: CliAgentId, options?: CliDetectionOptions): Promise<DetectSubscriptionClisResult>;
   openProviderAuth(backendId: string): Promise<ProviderAuthActionResult>;
   generateTree(request: GenerateTreeRequest, options?: AbortSignal | AiExecutionOptions): Promise<VdtProject>;
   pairStandaloneRunner(runnerUrl: string, code: string): Promise<StandaloneRunnerPairResult>;
@@ -301,6 +306,7 @@ const TASK_SCHEMA_IDS = {
   generate_tree: "generate-tree-v1",
   deepen_node: "deepen-node-v2",
   suggest_incoming_kpis: "suggest-incoming-kpis-v1",
+  suggest_chat_starters: "suggest-chat-starters-v1",
   simplify_branch: "simplify-branch-v1",
   suggest_alternative: "suggest-alternative-v1",
   suggest_formula: "suggest-formula-v1",
@@ -718,6 +724,7 @@ function runResultFromRuntimeOutput(
     return value;
   }
   if (request.taskType === "suggest_incoming_kpis") return { kind: "suggestions", result: validateKpiSuggestionModelOutput(value) };
+  if (request.taskType === "suggest_chat_starters") return { kind: "chat_starters", prompts: validateChatStarterOutput(value).prompts };
   if (request.taskType !== "deepen_node") return undefined;
   const input = asRecord(request.input);
   const project = input?.project;
@@ -1062,6 +1069,42 @@ export class HostedApiExecutionClient extends BaseWebAiExecutionClient {
   }
 }
 
+async function readProgressiveCliScan(
+  response: Response,
+  onProvider: NonNullable<CliDetectionOptions["onProvider"]>
+): Promise<DetectSubscriptionClisResult> {
+  if (!response.body) throw new Error("Provider scan returned no data. Try Rescan.");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const result: DetectSubscriptionClisResult = { agents: [], modelsByAgent: {} };
+  let pending = "";
+  let length = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error("Provider scan ended early. Try Rescan.");
+      length += chunk.value.length;
+      if (length > 2_000_000) throw new Error("Provider scan exceeded its response limit.");
+      pending += chunk.value;
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const frame = JSON.parse(line) as Partial<DetectSubscriptionClisResult> & { done?: boolean };
+        if (frame.harnesses) registerHarnessCatalog(frame.harnesses);
+        for (const agent of frame.agents ?? []) {
+          const models = frame.modelsByAgent?.[agent.id] ?? [];
+          result.agents.push(agent);
+          result.modelsByAgent[agent.id] = models;
+          onProvider(agent, models);
+        }
+        if (frame.done) return result;
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   constructor(fetcher: Fetcher = createDefaultFetcher()) {
     super("development_web", fetcher);
@@ -1074,18 +1117,31 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
     ];
   }
 
-  async detectSubscriptionClis(agentId?: CliAgentId): Promise<DetectSubscriptionClisResult> {
+  async detectSubscriptionClis(agentId?: CliAgentId, options?: CliDetectionOptions): Promise<DetectSubscriptionClisResult> {
     const url = agentId ? `/api/ai/detect-clis?id=${encodeURIComponent(agentId)}` : "/api/ai/detect-clis";
-    const response = await this.fetcher(url);
-    const payload = await readJsonResponse<{
-      harnesses?: HarnessDefinition[];
-      agents?: CliAgentDetectionSnapshot[];
-      modelsByAgent?: Partial<Record<CliAgentId, string[]>>;
-      error?: string;
-    }>(response, "CLI detection failed.");
-    if (!payload.agents) throw new Error(payload.error ?? "CLI detection failed.");
-    if (payload.harnesses) registerHarnessCatalog(payload.harnesses);
-    return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
+    // The bundled Windows Cursor probe has longer version, auth and model deadlines.
+    const isWindows = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+    const signal = AbortSignal.timeout(isWindows ? 100_000 : 35_000);
+    try {
+      const onProvider = !agentId ? options?.onProvider : undefined;
+      const response = await this.fetcher(url, { signal, ...(onProvider ? { headers: { accept: "application/x-ndjson" } } : {}) });
+      if (onProvider && response.ok && response.headers?.get("content-type")?.startsWith("application/x-ndjson")) {
+        return await readProgressiveCliScan(response, onProvider);
+      }
+      const payload = await readJsonResponse<{
+        harnesses?: HarnessDefinition[];
+        agents?: CliAgentDetectionSnapshot[];
+        modelsByAgent?: Partial<Record<CliAgentId, string[]>>;
+        error?: string;
+      }>(response, "CLI detection failed.");
+      signal.throwIfAborted();
+      if (!payload.agents) throw new Error(payload.error ?? "CLI detection failed.");
+      if (payload.harnesses) registerHarnessCatalog(payload.harnesses);
+      return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
+    } catch (error) {
+      if (signal.aborted) throw new Error("The provider scan timed out. Try Rescan.");
+      throw error;
+    }
   }
 
   override async listModels(backendId: string): Promise<ModelOption[]> {
@@ -1122,7 +1178,8 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   }
 
   override async complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult> {
-    if (isApiBackendId(request.providerId) || request.taskType === "suggest_incoming_kpis") return super.complete(request, options);
+    if (isApiBackendId(request.providerId) || request.taskType === "suggest_incoming_kpis"
+      || (request.taskType === "suggest_chat_starters" && request.providerConfig?.pairingToken)) return super.complete(request, options);
     const execution = normalizeExecutionOptions(options);
     const completion = buildRuntimeCompletionRequest(request.taskType, request.input, request.providerId, request.providerConfig);
     const result = await this.invokeDevelopmentRuntimeCompletion(
@@ -1740,6 +1797,21 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
   override async complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult> {
     if (isApiBackendId(request.providerId)) return super.complete(request, options);
     const execution = normalizeExecutionOptions(options);
+    if (request.taskType === "suggest_chat_starters" && request.providerConfig?.backendId === managedCursorBackendId) {
+      const response = await this.fetcher("/api/ai/packaged-cursor", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(execution.signal ? { signal: execution.signal } : {}),
+        body: JSON.stringify({ operation: "chat_starters", model: request.providerConfig.model, input: request.input }),
+        cache: "no-store"
+      });
+      const payload = asRecord(await response.json());
+      if (!(response.status === 404 && payload?.legacy === true)) {
+        if (!response.ok || payload?.ok !== true) throw new Error("The managed Cursor connection could not generate questions.");
+        const result = asRecord(payload.result);
+        return { kind: "chat_starters", prompts: validateChatStarterOutput({ prompts: result?.prompts }).prompts };
+      }
+    }
     const completion = this.buildDesktopCompletionRequest(request.taskType, request.input, request.providerId, request.providerConfig);
     const result = await this.invokeDesktopCompletion(completion, execution);
     const runResult = unwrapDesktopRunResult(result, completion);
@@ -1762,7 +1834,7 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
     await this.requireInvoke()("ai_cancel", { requestId });
   }
 
-  async detectSubscriptionClis(agentId?: CliAgentId, options?: { fresh?: boolean | undefined }): Promise<DetectSubscriptionClisResult> {
+  async detectSubscriptionClis(agentId?: CliAgentId, options?: CliDetectionOptions): Promise<DetectSubscriptionClisResult> {
     if (!this.invoke) return { agents: placeholderAgents(DESKTOP_LOCAL_AI_PLACEHOLDER_MESSAGE, agentId), modelsByAgent: {} };
     const cursorOperation = options?.fresh ? "recheck" : "status";
     const cursor = agentId === "cursor-agent"

@@ -1,4 +1,4 @@
-import { OpenAiWebResearchProvider, resolveResearchProviderFromEnv, type ResearchProvider, type ResearchProviderEnv, type ResearchProviderResolverOptions } from "@vdt-studio/vdt-agent-runtime";
+import { OpenAiWebResearchProvider, researchProviderStatus, resolveResearchProviderFromEnv, type ResearchProviderStatus, type ResearchProvider, type ResearchProviderEnv, type ResearchProviderResolverOptions } from "@vdt-studio/vdt-agent-runtime";
 
 const state=globalThis as typeof globalThis & {__vdtSessionWebResearch?:{provider:ResearchProvider;expiresAt:number;timer:ReturnType<typeof setTimeout>}};
 /** Trusted-local, explicitly enabled research session. No env/file/persistence writes. */
@@ -16,4 +16,11 @@ export function resolveSessionAwareResearch(env:ResearchProviderEnv=process.env,
   const configured=resolveResearchProviderFromEnv(env,options);
   const selected=()=>(env.VDT_RESEARCH_PROVIDER?.trim()||configured.id!=="noop")?configured:currentSession()??configured;
   return {get id(){return selected().id;},search(query,searchOptions){return selected().search(query,searchOptions);}};
+}
+
+export function resolveAgentResearchStatusFromEnv(
+  env: ResearchProviderEnv = process.env,
+  options: ResearchProviderResolverOptions = {}
+): ResearchProviderStatus {
+  return researchProviderStatus(resolveSessionAwareResearch(env, options));
 }

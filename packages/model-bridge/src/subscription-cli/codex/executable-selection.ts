@@ -120,29 +120,45 @@ function versionEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 /** Owned, bounded version subprocess. Extra argv comes only from a saved host
  * profile, never from an AI completion request. */
 export async function probeOwnedCliVersion(executable: string, cwd: string, env: NodeJS.ProcessEnv, options: CodexExecutableSelectionOptions, versionArgs: readonly string[] = ["--version"], timeoutMs: number = CODEX_SELECTION_LIMITS.versionTimeoutMs): Promise<{ stdout: string; stderr: string }> {
+  return probeOwnedCliOutput(executable, cwd, env, options, versionArgs, timeoutMs);
+}
+
+/** Runs a bounded host-owned metadata command, optionally stopping at a response on stdout. */
+export async function probeOwnedCliOutput(
+  executable: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  options: Pick<CodexExecutableSelectionOptions, "signal" | "requireConfirmedCleanup">,
+  args: readonly string[],
+  timeoutMs: number,
+  conversation?: { input: string; responseComplete: (stdout: string) => boolean }
+): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [...versionArgs], {
-      cwd, env, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"]
+    const child = spawn(executable, [...args], {
+      cwd, env, shell: false, windowsHide: true, detached: process.platform !== "win32",
+      stdio: [conversation ? "pipe" : "ignore", "pipe", "pipe"]
     });
     let stdout = "";
     let stderr = "";
     let bytes = 0;
     let failure: Error | undefined;
+    let responseReceived = false;
     let settled = false;
     let terminating = false;
     let termination: Promise<void> = Promise.resolve();
     let terminationDeadline: NodeJS.Timeout | undefined;
     const stdoutDecoder = new StringDecoder("utf8"), stderrDecoder = new StringDecoder("utf8");
-    const abort = () => { failure ??= Object.assign(new Error("Codex CLI version probe cancelled."), { code: "CANCELLED", name: "AbortError" }); terminate(); };
+    const abort = () => { failure ??= Object.assign(new Error("CLI metadata probe cancelled."), { code: "CANCELLED", name: "AbortError" }); terminate(); };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       options.signal?.removeEventListener("abort", abort);
       if (terminationDeadline) clearTimeout(terminationDeadline);
-      child.stdout.destroy();
-      child.stderr.destroy();
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       child.unref();
       if (error) reject(error);
       else resolve({ stdout: stdout + stdoutDecoder.end(), stderr: stderr + stderrDecoder.end() });
@@ -154,8 +170,8 @@ export async function probeOwnedCliVersion(executable: string, cwd: string, env:
       // Settlement must therefore be independent of both exit and close events.
       terminationDeadline = setTimeout(() => {
         finish(options.requireConfirmedCleanup
-          ? Object.assign(new Error("Codex CLI probe cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED", retainedDirectory: cwd })
-          : failure ?? new Error("Codex CLI version probe cleanup timed out."));
+          ? Object.assign(new Error("CLI metadata probe cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED", retainedDirectory: cwd })
+          : failure ?? new Error("CLI metadata probe cleanup timed out."));
       }, CODEX_SELECTION_LIMITS.terminationGraceMs);
       if (!child.pid) return;
       if (process.platform === "win32") {
@@ -188,32 +204,51 @@ export async function probeOwnedCliVersion(executable: string, cwd: string, env:
       }
     };
     const timeout = setTimeout(() => {
-      failure ??= new Error("Codex CLI version probe timed out.");
+      failure ??= Object.assign(new Error("CLI metadata probe timed out."), { code: "METADATA_TIMEOUT" });
       terminate();
     }, timeoutMs);
     const collect = (chunk: Buffer, stream: "stdout" | "stderr") => {
-      if (failure || settled) return;
+      if (failure || settled || responseReceived) return;
       bytes += chunk.length;
       if (bytes > CODEX_SELECTION_LIMITS.maxVersionBytes) {
-        failure = new Error("Codex CLI version output exceeded the limit.");
+        failure = new Error("CLI metadata output exceeded the limit.");
         terminate();
-      } else if (stream === "stdout") stdout += stdoutDecoder.write(chunk);
-      else stderr += stderrDecoder.write(chunk);
+        return;
+      }
+      if (stream === "stderr") {
+        stderr += stderrDecoder.write(chunk);
+        return;
+      }
+      stdout += stdoutDecoder.write(chunk);
+      if (conversation?.responseComplete(stdout)) {
+        responseReceived = true;
+        clearTimeout(timeout);
+        terminate();
+      }
     };
-    child.stdout.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
-    child.stderr.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
+    child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
+    child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
     child.once("error", () => {
-      failure ??= new Error("Codex CLI version probe failed.");
+      failure ??= new Error("CLI metadata probe failed.");
       terminate();
     });
     child.once("close", (code) => {
       clearTimeout(timeout);
       // Version wrappers may fork: clean the owned POSIX group even after a successful parent exits.
       if (process.platform !== "win32") terminate();
-      void termination.then(() => finish(failure ?? (code !== 0 ? new Error("Codex CLI version probe failed.") : undefined)));
+      void termination.then(() => finish(failure ?? (!responseReceived && (code !== 0 || conversation) ? new Error("CLI metadata probe failed.") : undefined)));
     });
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) abort();
+    if (conversation && child.stdin && !failure) {
+      child.stdin.on("error", () => {
+        if (responseReceived) return;
+        failure ??= new Error("CLI metadata probe input failed.");
+        terminate();
+      });
+      // Interactive metadata protocols can close when they see EOF.
+      child.stdin.write(conversation.input, "utf8");
+    }
   });
 }
 
@@ -227,6 +262,7 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
   try {
     const env = versionEnvironment(options.env ?? process.env);
     const results: SelectedCodexExecutable[] = [];
+    let timedOut = false;
     let next = 0;
     const probes = await Promise.allSettled(Array.from({ length: Math.min(candidates.length, CODEX_SELECTION_LIMITS.concurrency) }, async () => {
       while (next < candidates.length) {
@@ -236,7 +272,7 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
         try {
           const result = options.versionProbe
             ? await options.versionProbe(executable, ["--version"])
-            : await probeOwnedCliVersion(executable, cwd, env, options);
+            : await probeOwnedCliVersion(executable, cwd, env, options, ["--version"], options.requireConfirmedCleanup ? 4_000 : undefined);
           const raw = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
           const version = versionOf(raw) ? raw : null;
           results[index] = {
@@ -246,6 +282,7 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
         } catch (error) {
           if (options.requireConfirmedCleanup && error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") { retained = true; throw error; }
           if (options.signal?.aborted) throw error;
+          if ((error as { code?: string })?.code === "METADATA_TIMEOUT") timedOut = true;
           results[index] = { executable, alias: "codex", version: null, error: "Codex CLI version probe failed." };
         }
       }
@@ -257,6 +294,9 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
       const version = versionOf(result.version);
       const current = versionOf(selected.version);
       if (version && (!current || compareVersions(version, current) > 0)) selected = result;
+    }
+    if (options.requireConfirmedCleanup && !selected.version && timedOut) {
+      throw Object.assign(new Error("Codex CLI version could not be verified before the deadline."), { code: "METADATA_TIMEOUT" });
     }
     return selected;
   } finally {

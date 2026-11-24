@@ -11,6 +11,7 @@ import type { SmartHarnessHostIdentity } from "./smart-kpi-host-identity";
 import type { SmartKpiSchedulerOptions } from "./smart-kpi-scheduler";
 import { resolveSmartKpiSettings } from "./smart-kpi-settings";
 import { SMART_KPI_FAILURE_REASONS } from "./smart-kpi-errors";
+import { SMART_METADATA_RESPONSE_GRACE_MS, SMART_RUNNER_METADATA_TIMEOUT_MS, SMART_WEB_METADATA_TIMEOUT_MS, SMART_WEB_ROUTE_GRACE_MS } from "./smart-kpi-metadata";
 
 const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Preparation transport cleanup is unconfirmed."
   : code === "STALE_SKILL" ? "The selected modelling skill changed. Refresh Suggested KPI to use the current Context selection."
@@ -19,7 +20,7 @@ const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONF
   : SMART_KPI_FAILURE_REASONS[code] ?? "Smart preparation could not complete."), { code });
 export interface SmartKpiClientOptions {
   vault?: ApiKeyVault; fetch?: typeof fetch; appMode?: VdtAppMode; executionClient?: Pick<AiExecutionClient, "complete">;
-  pairingToken?: string; now?: () => number;
+  pairingToken?: string; now?: () => number; signal?: AbortSignal;
   /** A stable descriptor admitted by the selected host/runner, never a model. */
   cliBinding?: SmartHarnessHostIdentity;
 }
@@ -34,6 +35,7 @@ export interface SmartKpiPreparedSelection {
 /** Resolve once per selected settings/credential change, before hover. Secrets
  * stay in this closure and the existing vault; scheduler/cache see only identity. */
 export async function createSmartKpiPreparedSelection(settings: ExecutionSettings, options: SmartKpiClientOptions = {}): Promise<SmartKpiPreparedSelection> {
+  options.signal?.throwIfAborted();
   const smartSettings = resolveSmartKpiSettings(settings);
   const resolved = resolveExecutionSettings(smartSettings), config = { ...resolved.providerConfig }, fetcher = options.fetch ?? globalThis.fetch;
   const local = resolved.providerId === "local_runner", backendId = local ? String(config.backendId ?? "") : resolved.providerId;
@@ -52,16 +54,33 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
       let binding = options.cliBinding;
       if (!binding) {
         if (mode === "desktop" && !options.pairingToken) {
-          binding = await resolveDesktopSmartExecution({ backendId, timeoutMs: Math.min(timeoutMs, 5000), ...(config.model ? { model: String(config.model) } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning as boolean | string | number } : {}) });
+          binding = await resolveDesktopSmartExecution({ backendId, timeoutMs: Math.min(timeoutMs, 5000), ...(config.model ? { model: String(config.model) } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning as boolean | string | number } : {}) }, options.signal ? { signal: options.signal } : {});
         } else {
-        // Native/paired hosts may supply their existing admitted binding. The
-        // development host has a separate bounded metadata-only admission API.
-        const admissionMs = Math.min(timeoutMs, 5_000), signal = AbortSignal.timeout(admissionMs + 1_500);
-        const destination = options.pairingToken ? `${String(config.runnerUrl).replace(/\/$/, "")}/v1/smart-execution` : "/api/ai/suggestions/execution";
-        const response = await awaitProviderSettlement(fetcher(destination, { method: "POST", redirect: "error", headers: { "content-type": "application/json", ...(options.pairingToken ? { authorization: `Bearer ${options.pairingToken}` } : {}) }, body: JSON.stringify({ backendId, timeoutMs: admissionMs, ...(config.model ? { model: config.model } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning } : {}) }), signal }), signal);
-        const payload = JSON.parse(await readBoundedText(response, 8 * 1024, "Smart identity", signal, true));
-        if (!response.ok || !payload.ok) throw error(["CLEANUP_UNCONFIRMED", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"].includes(payload.error?.code) ? payload.error.code : "SUGGESTIONS_UNAVAILABLE");
-        binding = payload.identity;
+          const metadataLimit = options.pairingToken ? SMART_RUNNER_METADATA_TIMEOUT_MS : SMART_WEB_METADATA_TIMEOUT_MS;
+          const admissionMs = Math.min(timeoutMs, metadataLimit);
+          const grace = mode === "development_web" && !options.pairingToken ? SMART_WEB_ROUTE_GRACE_MS : SMART_METADATA_RESPONSE_GRACE_MS;
+          const deadline = AbortSignal.timeout(admissionMs + grace);
+          const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+          const destination = options.pairingToken ? `${String(config.runnerUrl).replace(/\/$/, "")}/v1/smart-execution` : "/api/ai/suggestions/execution";
+          try {
+            const response = await awaitProviderSettlement(fetcher(destination, {
+              method: "POST", redirect: "error",
+              headers: { "content-type": "application/json", ...(options.pairingToken ? { authorization: `Bearer ${options.pairingToken}` } : {}) },
+              body: JSON.stringify({ backendId, timeoutMs: admissionMs, ...(config.model ? { model: config.model } : {}),
+                ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning } : {}) }),
+              signal
+            }), signal);
+            const payload = JSON.parse(await readBoundedText(response, 8 * 1024, "Smart identity", signal, true));
+            if (!response.ok || !payload.ok) throw error(
+              ["CLEANUP_UNCONFIRMED", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED", "METADATA_TIMEOUT"].includes(payload.error?.code)
+                ? payload.error.code : "SUGGESTIONS_UNAVAILABLE"
+            );
+            binding = payload.identity;
+          } catch (failure) {
+            options.signal?.throwIfAborted();
+            if (deadline.aborted && (failure as { code?: string })?.code !== "CLEANUP_UNCONFIRMED") throw error("METADATA_TIMEOUT");
+            throw failure;
+          }
         }
       }
       if (!binding || binding.backendId !== backendId || !binding.modelId || !binding.requestModel || !binding.bindingVersion || !binding.credentialEpoch
@@ -83,9 +102,9 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
       bindingVersion: await kpiContentHash(["smart-api-protocol.v1", scope, config.apiVersion ?? null, config.anthropicVersion ?? null, config.modelReasoning ?? null]) };
   }
   const execution = Object.freeze(identity), key = kpiCanonicalJson(execution);
-  const readmitOptions = { ...options }; delete readmitOptions.cliBinding;
+  const readmitOptions = { ...options }; delete readmitOptions.cliBinding; delete readmitOptions.signal;
   return { execution, modelResolution: resolution, revalidate: async current => {
-    try { return kpiCanonicalJson((await createSmartKpiPreparedSelection(current, cli ? readmitOptions : options)).execution) === key; }
+    try { return kpiCanonicalJson((await createSmartKpiPreparedSelection(current, readmitOptions)).execution) === key; }
     catch { return false; }
   }, prepare: async ({ context, execution: expected, signal }) => {
     if (kpiCanonicalJson(expected) !== key) throw error("STALE_EXECUTION");
@@ -97,16 +116,17 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
       const client = options.executionClient ?? createAiExecutionClient("desktop", fetcher);
       const result = await client.complete({ taskType: "suggest_incoming_kpis", input, providerId: "local_runner", providerConfig: config }, { signal });
       if (result.kind !== "suggestions") throw error("INVALID_RESPONSE"); output = result.result;
-    } else output = await prepareSmartThroughHttp(fetcher, { input, providerId: resolved.providerId, providerConfig: config, timeoutMs }, signal);
+    } else output = await prepareSmartThroughHttp(fetcher, { input, providerId: resolved.providerId, providerConfig: config, timeoutMs }, signal,
+      mode === "development_web" && cli && !options.pairingToken ? SMART_WEB_ROUTE_GRACE_MS : 0);
     signal.throwIfAborted(); const validated = validateKpiSuggestionModelOutput(output);
     if (validated.status === "empty") return { status: "empty", reason: validated.rationale, limitations: validated.limitations };
     return materializeKpiSuggestion(output, context, { requestId: crypto.randomUUID(), proposalId: crypto.randomUUID(), now: new Date((options.now ?? Date.now)()).toISOString(), execution });
   } };
 }
 
-export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Record<string, unknown>, caller: AbortSignal): Promise<unknown> {
+export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Record<string, unknown>, caller: AbortSignal, responseGraceMs = 0): Promise<unknown> {
   caller.throwIfAborted(); const requestId = crypto.randomUUID(), controller = new AbortController();
-  const duration = Number(body.timeoutMs), endGrace = 2_500;
+  const duration = Number(body.timeoutMs) + responseGraceMs, endGrace = 2_500;
   let terminal = false, timedOut = false, cancellation: Promise<void> | undefined;
   const reconcile = async () => {
     const end = Date.now() + endGrace;
@@ -135,7 +155,7 @@ export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Recor
     if (payload.error?.code === "CLEANUP_UNCONFIRMED") throw error("CLEANUP_UNCONFIRMED");
     terminal = true; if (cancellation) await cancellation;
     if (caller.aborted || timedOut) throw error(timedOut ? "TIMEOUT" : "CANCELLED");
-    if (!response.ok || !payload.ok) throw error(["STALE_SKILL", "SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED", ...Object.keys(SMART_KPI_FAILURE_REASONS)].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
+    if (!response.ok || !payload.ok) throw error(["STALE_SKILL", "SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION", "TIMEOUT", "CREDENTIAL_IDENTITY_UNVERIFIED", ...Object.keys(SMART_KPI_FAILURE_REASONS)].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
     return validateKpiSuggestionModelOutput(payload.result);
   } catch (failure) {
     if ((failure as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw failure;

@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { isClaudeReasoningEffort, type ClaudeReasoningEffort } from "../subscription-cli/reasoning";
 import { omittedCheckpointStreamEvidence, recordCheckpointEventType } from "./checkpoint-protocol-reporting";
 import { parseCheckpointTurn } from "./checkpoint-turn";
 import {
@@ -73,6 +74,7 @@ export type ClaudeResumeCheckpointEnvironment = CheckpointPrivateEnvironment;
 
 export interface ClaudeResumeCheckpointTransportOptions {
   readonly executable: string;
+  readonly reasoningEffort?: ClaudeReasoningEffort;
   readonly validatedCliVersion: string;
   readonly runner?: CheckpointProcessRunner;
   readonly timeoutMs?: number;
@@ -205,8 +207,9 @@ function buildClaudeEnvironment(
   const output: Record<string, string> = Object.create(null) as Record<string, string>;
   output.HOME = authHome ?? state;
   output.USERPROFILE = authHome ?? state;
-  // Unverified against a real Claude CLI — convention is $HOME/.claude, not $HOME.
-  output.CLAUDE_CONFIG_DIR = authHome ? path.join(authHome, ".claude") : state;
+  // An explicit override relocates the global .claude.json as well as the
+  // settings directory. Let Claude resolve its default layout for a trusted home.
+  if (!authHome) output.CLAUDE_CONFIG_DIR = state;
   const names = new Set<string>();
   for (const entry of entries) {
     if (
@@ -229,6 +232,7 @@ function buildClaudeEnvironment(
 export class ClaudeResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
+  readonly #reasoningEffort: ClaudeReasoningEffort | undefined;
   readonly #runner: SpawnCountableRunner<CheckpointProcessRequest, CheckpointProcessResult>;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
@@ -242,6 +246,10 @@ export class ClaudeResumeCheckpointTransport {
     if (!options.validatedCliVersion.trim() || options.validatedCliVersion.length > 120) {
       throw checkpointTransportError(`${ERROR_PREFIX}_VERSION_UNKNOWN`, "An exact trusted Claude CLI version probe is required.");
     }
+    if (options.reasoningEffort !== undefined && !isClaudeReasoningEffort(options.reasoningEffort)) {
+      throw checkpointTransportError(`${ERROR_PREFIX}_CONFIGURATION_INVALID`, "Claude effort is invalid.");
+    }
+    this.#reasoningEffort = options.reasoningEffort;
     this.#executable = options.executable;
     this.validatedCliVersion = options.validatedCliVersion;
     this.#runner = wrapSpawnCountingRunner(options.runner ?? new NodeCheckpointProcessRunner(ERROR_PREFIX, CLI_LABEL));
@@ -285,6 +293,7 @@ export class ClaudeResumeCheckpointTransport {
       "dontAsk",
       "--no-chrome",
       ...(input.model === "auto" ? [] : ["--model", input.model]),
+      ...(this.#reasoningEffort ? ["--effort", this.#reasoningEffort] : []),
       ...(input.mode === "resume" ? ["--resume", input.expectedSessionId!] : [])
     ];
     assertClaudeCheckpointArgumentsAllowed(args);
@@ -306,9 +315,12 @@ export class ClaudeResumeCheckpointTransport {
       throw checkpointTransportError(`${ERROR_PREFIX}_OUTPUT_TOO_LARGE`, "Claude checkpoint process output exceeded its limit.");
     }
     if (result.exitCode !== 0 || result.signal !== null) {
+      const message = /Claude configuration file not found at:/i.test(result.stderr)
+        ? "Claude Code could not load its configuration. Open Claude Code to verify the signed-in profile, then retry in VDT Studio."
+        : sanitizeProcessMessage(result.stderr, "Claude checkpoint process failed before a valid terminal result.");
       throw checkpointTransportError(
         `${ERROR_PREFIX}_PROCESS_FAILED`,
-        sanitizeProcessMessage(result.stderr, "Claude checkpoint process failed before a valid terminal result."),
+        message,
         { exitCode: result.exitCode, signal: result.signal }
       );
     }

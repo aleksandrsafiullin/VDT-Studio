@@ -334,9 +334,11 @@ function normalizeDefinition(
     );
   }
   if ("currentQualification" in definition) {
-    if (definition.reasoningEffort !== undefined &&
-      (definition.capability.backendId !== "codex_subscription" || !isCheckpointReasoningEffort(definition.reasoningEffort))) {
-      throw new AgentExecutionBindingError("BINDING_INVALID", "Reasoning effort requires a supported Codex checkpoint binding.");
+    if (definition.reasoningEffort !== undefined) {
+      const backend = definition.capability.backendId;
+      const valid = backend === "codex_subscription" && isCheckpointReasoningEffort(definition.reasoningEffort)
+        || backend === "claude_subscription" && definition.modelId !== "auto" && isClaudeReasoningEffort(definition.reasoningEffort);
+      if (!valid) throw new AgentExecutionBindingError("BINDING_INVALID", "Reasoning effort requires a supported CLI checkpoint binding.");
     }
     return cloneDefinition(definition);
   }
@@ -600,4 +602,4 @@ function toSummary(definition: AgentExecutionBindingDefinition): AgentExecutionB
     ...("reasoningEffort" in definition && definition.reasoningEffort ? { reasoningEffort: definition.reasoningEffort } : {})
   };
 }
-import { isCheckpointReasoningEffort, type ReasoningEffort } from "@vdt-studio/model-bridge";
+import { isCheckpointReasoningEffort, isClaudeReasoningEffort, type ReasoningEffort } from "@vdt-studio/model-bridge";

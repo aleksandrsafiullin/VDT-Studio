@@ -44,7 +44,10 @@ const nextConfig = {
       "**/node_modules/@img/sharp-*", "**/node_modules/@img/sharp-*/**/*"
     ]
   },
-  webpack(config, { isServer }) {
+  webpack(config, { isServer, dev }) {
+    // Keep cold route compilations from competing with provider processes at
+    // Webpack's default module concurrency in the local development app.
+    if (dev && process.env.VDT_APP_MODE === "development_web") config.parallelism ??= 16;
     if (isServer) config.plugins.push(new PreserveParserWorkerAsset());
     return config;
   },

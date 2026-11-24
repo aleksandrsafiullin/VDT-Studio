@@ -7,5 +7,5 @@ export * from "./detection";
 export * from "./enrich-detection";
 export * from "./subscription-cli/codex/executable-selection";
 export * from "./subscription-cli/codex/smart-policy";
-export { WINDOWS_CURSOR_MODELS_TIMEOUT_MS, cursorLaunchTarget, isWindowsCursorPayload, windowsCursorLaunchIssueMessage } from "./subscription-cli/cursor/windows-launch";
+export { WINDOWS_CURSOR_MODELS_TIMEOUT_MS, cursorLaunchTarget, isWindowsCursorPayload, windowsCursorLaunchIssueMessage, WINDOWS_CURSOR_STATUS_TIMEOUT_MS } from "./subscription-cli/cursor/windows-launch";
 export { probeCursorStatus } from "./subscription-cli/cursor/auth";

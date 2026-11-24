@@ -18,7 +18,11 @@ export interface SubscriptionCliBuildArgsInput {
   cwd?: string;
   promptPath?: string;
   promptText?: string;
+  schemaJson?: string;
   schemaPath?: string;
+  singleTurn?: boolean;
+  /** Host-owned one-turn starter profile. */
+  chatStarters?: boolean;
   outputPath?: string;
   enableWorkspaceTrust?: boolean;
 }

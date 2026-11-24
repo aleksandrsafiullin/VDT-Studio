@@ -1,3 +1,4 @@
+import { CHAT_STARTER_LIMITS, validateChatStarterOutput, type ChatStarterOutput } from "@vdt-studio/vdt-core";
 import { cursorLaunchTarget } from "../subscription-cli/cursor/windows-launch";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -481,7 +482,7 @@ function validateCursorTelemetry(event: Record<string, unknown>, initializedSess
   }
 }
 
-function parseCursorOutput(input: {
+function parseCursorOutput<T>(input: {
   result: CursorResumeProcessResult;
   workspace: string;
   requestedModel: string;
@@ -490,10 +491,10 @@ function parseCursorOutput(input: {
   expectedSessionId?: string;
   maxBytes: number;
   maxLines: number;
-  allowedToolNames: readonly string[];
+  parseResponse: (text: string) => T;
   allowNativeWebSearch: boolean;
   credentials: readonly CursorCheckpointCredentialEnvironmentEntry[];
-}): { sessionId: string; turn: CursorCheckpointTurn; nativeWebSearch?: NativeWebSearchRecord } {
+}): { sessionId: string; turn: T; nativeWebSearch?: NativeWebSearchRecord } {
   const { result } = input;
   if (containsCredentialLeak(`${result.stdout}\n${result.stderr}`, input.credentials)) {
     throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor checkpoint output exposed a server-owned credential.");
@@ -639,9 +640,9 @@ function parseCursorOutput(input: {
     });
     throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", omitted.message, omitted.details);
   }
-  let turn: CursorCheckpointTurn;
+  let turn: T;
   try {
-    turn = parseTurn(terminal.result as string, input.allowedToolNames);
+    turn = input.parseResponse(terminal.result as string);
   } catch (error) {
     const code = errorCodeOf(error);
     if (typeof error === "object" && error !== null && code === "CURSOR_CHECKPOINT_PROTOCOL_INVALID") {
@@ -808,15 +809,27 @@ export class CursorResumeCheckpointTransport {
     input: CursorResumeCheckpointSegmentInput,
     allowedToolNames: readonly string[]
   ): Promise<CursorResumeCheckpointSegmentResult> {
-    return this.#executeSegment(input, allowedToolNames, this.#timeoutMs, true);
+    return this.#executeSegment(input, allowedToolNames, this.#timeoutMs, true, (text) => parseTurn(text, allowedToolNames));
   }
 
-  async #executeSegment(
+  async completeChatStarters(input: Omit<CursorResumeCheckpointSegmentInput, "mode" | "expectedSessionId" | "verifiedFinishReceiptId">): Promise<ChatStarterOutput> {
+    if (!this.#isolatedWorkspace) {
+      throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor chat starters require the qualified desktop runner.");
+    }
+    const result = await this.#executeSegment(
+      { ...input, mode: "open" }, [], CHAT_STARTER_LIMITS.timeoutMs, false,
+      (text) => validateChatStarterOutput(JSON.parse(text))
+    );
+    return result.turn;
+  }
+
+  async #executeSegment<T>(
     input: CursorResumeCheckpointSegmentInput,
     allowedToolNames: readonly string[],
     timeoutMs: number,
-    allowEnvelopeRepair: boolean
-  ): Promise<CursorResumeCheckpointSegmentResult> {
+    allowEnvelopeRepair: boolean,
+    parseResponse: (text: string) => T
+  ): Promise<Omit<CursorResumeCheckpointSegmentResult, "turn"> & { turn: T }> {
     input.signal.throwIfAborted();
     if (!input.model.trim() || input.model.startsWith("-") || input.model.includes("\0") || input.model.length > 160) {
       throw checkpointError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "Cursor model is invalid.");
@@ -868,7 +881,7 @@ export class CursorResumeCheckpointTransport {
       );
     }
     const modelDisplayName = this.#modelDisplayNames.get(input.model);
-    let parsed: ReturnType<typeof parseCursorOutput>;
+    let parsed: ReturnType<typeof parseCursorOutput<T>>;
     try {
       parsed = parseCursorOutput({
         result,
@@ -881,7 +894,7 @@ export class CursorResumeCheckpointTransport {
         ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
         maxBytes: this.#maxOutputBytes,
         maxLines: this.#maxLines,
-        allowedToolNames,
+        parseResponse,
         allowNativeWebSearch: this.allowsNativeWebSearch,
         credentials
       });
@@ -905,7 +918,7 @@ export class CursorResumeCheckpointTransport {
             : cursorCheckpointBatchExample(allowedToolNames),
           allowedToolNames
         }))
-      }, allowedToolNames, remainingMs, false);
+      }, allowedToolNames, remainingMs, false, parseResponse);
       const firstSearch = nativeWebSearchFromError(error);
       return Object.freeze({
         ...repaired,

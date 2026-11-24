@@ -57,9 +57,9 @@ async function writeStaticFixture(options: { readme?: string; runTaskParser?: st
   await writeFile(
     path.join(root, "README.md"),
     options.readme ??
-      `The schema registry contains 19 task contracts. Eighteen are exposed product tasks.\n${["orchestrator_first_response", "agent_decision", ...CANONICAL_DATA_TASK_TYPES, ...CANONICAL_RUN_TASK_TYPES].map((taskType) => `\`${taskType}\``).join("\n")}\n`
+      `The schema registry contains 20 task contracts. Nineteen are exposed product tasks.\n${["orchestrator_first_response", "agent_decision", ...CANONICAL_DATA_TASK_TYPES, ...CANONICAL_RUN_TASK_TYPES].map((taskType) => `\`${taskType}\``).join("\n")}\n`
   );
-  await writeFile(path.join(root, "docs/ROADMAP.md"), "19 registered task schemas, 18 exposed product tasks.\n");
+  await writeFile(path.join(root, "docs/ROADMAP.md"), "20 registered task schemas, 19 exposed product tasks.\n");
   return root;
 }
 
@@ -70,9 +70,9 @@ afterEach(async () => {
 describe("verify-phase7-gate", () => {
   it("passes the current repository and runs all mock tasks", async () => {
     await expect(verifyPhase7Gate()).resolves.toMatchObject({
-      taskCount: 19,
-      schemaCount: 19,
-      mockTaskCount: 13
+      taskCount: 20,
+      schemaCount: 20,
+      mockTaskCount: 14
     });
   });
 

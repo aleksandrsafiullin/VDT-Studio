@@ -64,7 +64,7 @@ describe("Suggested KPI metadata discovery", () => {
     await expect(loadSmartKpiReasoningValues(settings, new AbortController().signal, { appMode: "development_web", fetcher })).resolves.toEqual(["low", "high"]);
     const [url, init] = fetcher.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe("/api/ai/suggestions/execution");
-    expect(JSON.parse(String(init.body))).toEqual({ backendId: "codex_subscription", model: "smart-cli", timeoutMs: 5000 });
+    expect(JSON.parse(String(init.body))).toEqual({ backendId: "codex_subscription", model: "smart-cli", timeoutMs: 12000 });
   });
 
   it("rejects a catalog returned for a different CLI model", async () => {

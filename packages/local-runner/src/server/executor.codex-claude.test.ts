@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildChatStarterInput, buildKpiSuggestionContext, buildKpiSuggestionTaskInput, createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
 import { createManifestRegistry } from "./manifests";
 import { executeCompletion } from "./executor";
 
@@ -151,6 +152,51 @@ describe("codex subscription executor", { timeout: 45_000 }, () => {
 });
 
 describe("claude subscription executor", { timeout: 45_000 }, () => {
+  it("asks Claude for chat starters in one turn and validates the text result", async () => {
+    const result = await executeCompletion(
+      claudeManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "claude_subscription",
+        taskType: "suggest_chat_starters",
+        schemaId: "suggest-chat-starters-v1",
+        input: buildChatStarterInput(createSmartKpiMeasuredFixture(), "en"),
+        model: "claude-haiku-5-5"
+      },
+      new AbortController().signal,
+      fakeClaudeExecutor()
+    );
+    expect(result.schemaValid).toBe(true);
+    expect(result.output).toEqual({
+      prompts: ["Check the root formula.", "Which inputs are missing?", "Review the main drivers."]
+    });
+  });
+
+  it("validates a single-turn Suggested KPI text result against the host schema", async () => {
+    const context = await buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), {
+      workspaceId: "claude-smart-test",
+      vdtId: null,
+      targetNodeId: "measured_output",
+      period: { key: "2026-11", grain: "month" }
+    });
+    const result = await executeCompletion(
+      claudeManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "claude_subscription",
+        taskType: "suggest_incoming_kpis",
+        schemaId: "suggest-incoming-kpis-v1",
+        input: buildKpiSuggestionTaskInput(context),
+        model: "test-model"
+      },
+      AbortSignal.timeout(5000),
+      fakeClaudeExecutor()
+    );
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBe(false);
+    expect(result.output).toMatchObject({ status: "empty", groups: [] });
+  });
+
   it("executes certified claude manifest through adapter parseOutput", async () => {
     const result = await executeCompletion(
       claudeManifest(),

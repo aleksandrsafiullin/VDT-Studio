@@ -1417,6 +1417,26 @@ describe("vdt-store cli rescan", () => {
     expect(useVdtStudioStore.getState().removedCliAgentIds).toEqual(["claude"]);
   });
 
+  it("shows received providers before the full scan ends and preserves them after an interrupted scan", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(body, {
+      headers: { "content-type": "application/x-ndjson" }
+    }));
+    const scan = useVdtStudioStore.getState().rescanClis();
+    const cursor = { id: "cursor-agent", installed: true, executable: "/bin/agent", alias: "agent", version: "1", status: "ready" };
+    stream.enqueue(new TextEncoder().encode(JSON.stringify({ agents: [cursor], modelsByAgent: { "cursor-agent": ["cursor-live"] } }) + "\n"));
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().cliDetectionAgents).toContainEqual(cursor));
+    expect(useVdtStudioStore.getState().isRescanningClis).toBe(true);
+    expect(useVdtStudioStore.getState().cliDiscoveredModelsByAgent["cursor-agent"]).toEqual(["cursor-live"]);
+    stream.close();
+    await scan;
+    expect(useVdtStudioStore.getState()).toMatchObject({
+      cliDetectionError: "Provider scan ended early. Try Rescan.", isRescanningClis: false,
+      cliDetectionAgents: expect.arrayContaining([cursor])
+    });
+  });
+
   it("deduplicates pending tests and discards a late result after provider removal", async () => {
     let resolveTest!: (response: Response) => void;
     vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => { resolveTest = resolve; }));

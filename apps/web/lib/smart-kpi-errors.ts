@@ -1,6 +1,9 @@
 /** Fixed, credential-free explanations shared by HTTP admission and the UI.
  * Never display a provider's free-form error or rejected request body. */
 export const SMART_KPI_FAILURE_REASONS: Readonly<Record<string, string>> = {
+  PREPARATION_IN_PROGRESS: "Another Suggested KPI request is still running for this project. Wait for it to finish, then choose Retry.",
+  METADATA_TIMEOUT: "The provider took too long to verify the selected model. Choose Retry to check it again.",
+  REASONING_UNSUPPORTED: "The selected model cannot use this Suggested KPI reasoning setting. Choose Provider default or a supported level.",
   INCOMPLETE_OUTPUT: "The model used its generation budget before completing the answer. Choose a lower supported reasoning level or another model, then Retry.",
   INVALID_PROVIDER_OUTPUT: "The model did not return the requested complete JSON response. Retry or choose another model.",
   PROVIDER_REFUSAL: "The provider declined this request. Review the KPI description or choose another model.",

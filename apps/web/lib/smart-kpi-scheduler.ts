@@ -96,6 +96,7 @@ export class SmartKpiScheduler {
   private disposed = false;
   private stopped = false;
   private fullAgentActive = false;
+  private chatStartersPending = false;
   private pumpQueued = false;
   private backgroundWake: ReturnType<typeof setTimeout> | undefined;
   private backgroundWakeDone: Promise<void> | undefined;
@@ -306,8 +307,13 @@ export class SmartKpiScheduler {
   }
   retry(target: string): Promise<SmartKpiNodeSnapshot> { return this.request(target, { priority: "hover", explicit: true }); }
   setFullAgentActive(active: boolean): void { this.fullAgentActive = active; this.schedule(); }
+  setChatStartersPending(pending: boolean): void {
+    this.chatStartersPending = pending;
+    if (pending) this.cancelActive();
+    this.schedule();
+  }
   private hidden(): boolean { return this.options.visibility?.isHidden() ?? (typeof document !== "undefined" && document.hidden); }
-  private eligible(job: Job): boolean { return (!this.fullAgentActive || job.explicit) && (!this.hidden() || job.explicit); }
+  private eligible(job: Job): boolean { return !this.chatStartersPending && (!this.fullAgentActive || job.explicit) && (!this.hidden() || job.explicit); }
   private preemptBackground(hot: Job): void {
     const running = this.active?.job;
     if (!running || hot.priority !== "hover" || !this.eligible(hot) || hot.generation !== this.generation

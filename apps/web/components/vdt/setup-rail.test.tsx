@@ -49,6 +49,24 @@ describe("SetupRail agent composer", () => {
     });
   });
 
+  it("leaves the chat area blank until starter prompts are ready", () => {
+    const html = renderToStaticMarkup(<SetupRail />);
+
+    expect(html).not.toContain('data-testid="agent-chat-empty"');
+    expect(html).not.toContain('data-testid="agent-chat-starters"');
+    expect(html).toContain('data-testid="agent-instruction-input"');
+  });
+
+  it("shows the welcome panel and the prepared prompts together", () => {
+    const prompts = ["Explain the output formula", "Check the missing inputs", "Compare the main drivers"] as const;
+    const html = renderToStaticMarkup(<SetupRail starterPrompts={[...prompts]} />);
+
+    expect(html).toContain('data-testid="agent-chat-empty"');
+    expect(html).toContain('data-testid="agent-chat-starters"');
+    expect(html).toContain("What would you like");
+    for (const prompt of prompts) expect(html).toContain(prompt);
+  });
+
   it("names the selected KPI and supports missing units", () => {
     const html = renderToStaticMarkup(<SelectedKpiContext node={{ id: "calendar_time", name: "Calendar Time", unit: "hours/month" }} onClear={() => undefined} />);
     expect(html).toContain('data-testid="agent-selected-kpi"');

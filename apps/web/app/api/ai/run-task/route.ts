@@ -65,10 +65,24 @@ export async function POST(request: Request) {
     const maxTokens = readMaxTokens(body.providerConfig);
     const taskInput = { ...input, ...(maxTokens !== undefined ? { maxTokens } : {}), signal: request.signal };
 
+    // Background starters must use the explicit connection without inheriting a
+    // server API key or the main chat's reasoning preference.
+    if (taskType === "suggest_chat_starters") {
+      const apiKey = body.providerConfig?.apiKey;
+      if (body.providerId !== "local_runner" && body.providerId !== "mock" && (typeof apiKey !== "string" || !apiKey.trim())) {
+        return NextResponse.json({ ok: false, error: "A configured API key is required." }, { status: 400 });
+      }
+      if (body.providerConfig) {
+        body.providerConfig = { ...body.providerConfig };
+        for (const key of ["modelReasoning", "reasoningEffort", "thinkingBudget", "disableThinking", "adaptiveThinking"]) delete body.providerConfig[key];
+      }
+    }
     const provider = createAiProvider(body as AiRouteProviderRequest, request.url);
     const result = await runAiTask(taskType, provider, taskInput as RunAiTaskInputMap[Exclude<RunTaskType, "suggest_incoming_kpis">]);
 
-    return NextResponse.json({ ok: true, result });
+    const response = NextResponse.json({ ok: true, result });
+    if (taskType === "suggest_chat_starters") response.headers.set("cache-control", "no-store");
+    return response;
   } catch (error) {
     if (error instanceof AiRouteProviderError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });

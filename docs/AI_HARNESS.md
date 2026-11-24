@@ -413,6 +413,8 @@ ADR-005 lease/heartbeat/takeover coordinator.
 
 ## Smart one-completion preparation
 
+The chat-starter task uses `suggest_chat_starters` / `suggest-chat-starters-v1` for a read-only one-shot request. The validator accepts exactly three distinct short prompts. It creates no conversation, tool action or graph proposal.
+
 `suggest_incoming_kpis` / `suggest-incoming-kpis-v1` is registered through core,
 harness, model bridge, HTTP runner and desktop sidecar completions. It bypasses
 agent bootstrap/deepen, conversations, research/tools, schema fallback and repair.
@@ -562,7 +564,7 @@ shell, arbitrary filesystem, database or provider-configuration authority.
 
 ## Registered Tasks
 
-The schema registry contains 19 task contracts. Eighteen are exposed product tasks; `agent_plan` is retained as an internal compatibility contract and must not become the primary VDT build path.
+The schema registry contains 20 task contracts. Nineteen are exposed product tasks; `agent_plan` is retained as an internal compatibility contract and must not become the primary VDT build path.
 
 | Owner | Tasks |
 |---|---|

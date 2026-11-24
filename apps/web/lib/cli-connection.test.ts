@@ -140,11 +140,12 @@ describe("automatic CLI connection lifecycle", () => {
     app.start();
     await settle();
     await vi.advanceTimersByTimeAsync(3_000);
-    expect(app.rescan).toHaveBeenCalledTimes(2);
+    expect(app.getBindings).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(app.rescan).toHaveBeenCalledTimes(2);
+    expect(app.getBindings).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
-    expect(app.rescan).toHaveBeenCalledTimes(3);
+    expect(app.getBindings).toHaveBeenCalledTimes(3);
+    expect(app.rescan).toHaveBeenCalledOnce();
     expect(app.publish.mock.lastCall?.[0].bindings?.bindings).toEqual([]);
   });
 
@@ -227,8 +228,23 @@ describe("automatic CLI connection lifecycle", () => {
     finish(bindings);
     await settle();
     expect(app.publish.mock.calls.some(([check]) => check.key === cliConnectionKey(settings) && check.bindings)).toBe(false);
-    expect(app.rescan).toHaveBeenCalledTimes(2);
+    expect(app.rescan).toHaveBeenCalledOnce();
     expect(app.publish.mock.lastCall?.[0].key).toBe(cliConnectionKey(changed));
+  });
+
+  it("uses the live catalog when the selected reasoning already has an exact binding", async () => {
+    const app = harness();
+    const exact = { ...bindings, bindings: [
+      ...bindings.bindings, { ...bindings.bindings[0]!, bindingId: "high-binding", reasoningEffort: "high" as const }
+    ] };
+    app.getBindings.mockResolvedValue(exact);
+    app.start();
+    await settle();
+    const changed = { ...settings, cliModelSelection: { ...settings.cliModelSelection, reasoningEffort: "high" as const } };
+    app.update({ settings: changed });
+    expect(app.publish).toHaveBeenLastCalledWith({ key: cliConnectionKey(changed), bindings: exact });
+    expect(app.rescan).toHaveBeenCalledOnce();
+    expect(app.getBindings).toHaveBeenCalledOnce();
   });
 
   it("disposes timers/subscriptions and ignores late results", async () => {

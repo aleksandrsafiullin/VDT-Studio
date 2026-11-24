@@ -8,6 +8,7 @@ export type VdtAiTaskType =
   | "generate_tree"
   | "deepen_node"
   | "suggest_incoming_kpis"
+  | "suggest_chat_starters"
   | "simplify_branch"
   | "suggest_alternative"
   | "suggest_formula"

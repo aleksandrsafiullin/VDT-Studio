@@ -72,17 +72,18 @@ remains partial; see [Formula Engine](FORMULA_ENGINE.md#model-validation).
 
 ## Chat model/effort binding amendment (2026-10-26)
 
-The composer obtains models through the active CLI, API or local-runtime catalog
-contract. A discrete reasoning slider exposes only model-specific admitted levels;
+The composer opens a summary with the current model and reasoning control.
+Selecting the model name opens the model list from the active CLI, API or
+local-runtime catalog. A discrete reasoning slider exposes only model-specific admitted levels;
 provider-default remains a separate position. Catalog availability does not imply
-chat-adapter qualification. Codex/Cursor host catalogs refresh on demand after
+chat-adapter qualification. Codex, Cursor and Claude Code host catalogs refresh on demand after
 60 seconds while retaining every existing immutable binding/engine.
 
-New chat runs may select an immutable Codex model/effort binding admitted from the
-authenticated host CLI catalog. The public request still contains only its opaque
-binding ID. The host pins the advertised effort with `model_reasoning_effort` on
-open, resume and envelope repair; no frontend-supplied command/config text is
-accepted. Default preserves the transport's model default. Exact effort matching
+New chat runs may select immutable Codex or Claude Code model/effort bindings
+admitted from the authenticated host CLI catalog. The public request contains the
+opaque binding ID. Codex pins the advertised effort with `model_reasoning_effort`
+on open, resume and envelope repair. Claude Code pins SDK-advertised effort with
+`--effort` on open and resume. The server owns the CLI arguments. Default preserves the transport's model default. Exact effort matching
 is required, and active or paused runs cannot be retargeted by composer preference
 changes. The UI locks those choices until a new chat or terminal state. Ultra
 delegation is outside the current Gateway-only profile.

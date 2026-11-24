@@ -1,4 +1,4 @@
-import { resolveAgentResearchStatusFromEnv } from "../../runs/runtime";
+import { resolveAgentResearchStatusFromEnv } from "../../runs/session-research";
 
 export const dynamic = "force-dynamic";
 

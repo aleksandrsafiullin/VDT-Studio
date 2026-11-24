@@ -98,7 +98,10 @@ function expectClaudeOmitted(
 }
 
 describe("ClaudeResumeCheckpointTransport", () => {
-  it.each(["claude-sonnet-4-6", "auto"])("opens and resumes %s with tools disabled and stdin prompt", async (model) => {
+  it.each([
+    { model: "claude-sonnet-4-6", reasoningEffort: "high" as const },
+    { model: "auto", reasoningEffort: undefined }
+  ])("opens and resumes $model with the selected effort and no tools", async ({ model, reasoningEffort }) => {
     const env = await environment();
     const runner = new FakeRunner((request) => ({
       exitCode: 0,
@@ -109,6 +112,7 @@ describe("ClaudeResumeCheckpointTransport", () => {
     const transport = new ClaudeResumeCheckpointTransport({
       executable: "/opt/claude/claude",
       validatedCliVersion: "2.1.0",
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       runner
     });
     const opened = await transport.executeSegment({
@@ -130,6 +134,8 @@ describe("ClaudeResumeCheckpointTransport", () => {
     for (const request of runner.requests) {
       if (model === "auto") expect(request.args).not.toContain("--model");
       else expect(request.args).toEqual(expect.arrayContaining(["--model", model]));
+      if (reasoningEffort) expect(request.args).toEqual(expect.arrayContaining(["--effort", reasoningEffort]));
+      else expect(request.args).not.toContain("--effort");
     }
     expect(opened.sessionId).toBe("claude-session-1");
     expect(resumed.sessionId).toBe("claude-session-1");
@@ -246,7 +252,6 @@ describe("ClaudeResumeCheckpointTransport", () => {
     expect(runner.requests[0]?.environment).toEqual({
       HOME: canonicalAuthHome,
       USERPROFILE: canonicalAuthHome,
-      CLAUDE_CONFIG_DIR: path.join(canonicalAuthHome, ".claude"),
       PATH: "/usr/bin:/bin",
       USER: "trusted-user",
       LOGNAME: "trusted-user"
@@ -280,6 +285,30 @@ describe("ClaudeResumeCheckpointTransport", () => {
       HOME: canonicalState,
       USERPROFILE: canonicalState,
       CLAUDE_CONFIG_DIR: canonicalState
+    });
+  });
+
+  it("reports a missing Claude profile without replaying CLI paths or restore commands", async () => {
+    const runner = new FakeRunner(() => ({
+      exitCode: 1,
+      signal: null,
+      stdout: "",
+      stderr: 'Claude configuration file not found at: /private/user/.claude.json\nYou can manually restore it by running: cp -f "/private/user/backup" "/private/user/.claude.json"'
+    }));
+    const transport = new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    });
+    await expect(transport.executeSegment({
+      mode: "open",
+      environment: await environment(),
+      model: "claude-haiku-5-5",
+      prompt: "{}",
+      signal: new AbortController().signal
+    }, [])).rejects.toMatchObject({
+      code: "CLAUDE_CHECKPOINT_PROCESS_FAILED",
+      message: "Claude Code could not load its configuration. Open Claude Code to verify the signed-in profile, then retry in VDT Studio."
     });
   });
 

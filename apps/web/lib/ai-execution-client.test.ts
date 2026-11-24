@@ -132,9 +132,25 @@ describe("AiExecutionClient", () => {
     );
     const result = await new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).detectSubscriptionClis("codex");
 
-    expect(fetcher).toHaveBeenCalledWith("/api/ai/detect-clis?id=codex");
+    expect(fetcher).toHaveBeenCalledWith("/api/ai/detect-clis?id=codex", { signal: expect.any(AbortSignal) });
     expect(result.agents[0]).toMatchObject({ id: "codex", installed: true, status: "ready" });
     expect(result.modelsByAgent.codex).toEqual(["gpt-5"]);
+  });
+
+  it("reports an actionable error when the development provider scan reaches its deadline", async () => {
+    const signal = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal.signal);
+    const fetcher = vi.fn<typeof fetch>(async (_, init) => new Promise((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    try {
+      const result = new DevelopmentRunnerClient(fetcher).detectSubscriptionClis();
+      signal.abort();
+      await expect(result).rejects.toThrow("The provider scan timed out. Try Rescan.");
+      expect(timeout).toHaveBeenCalledWith(35_000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("binds the default browser fetch before calling web detection routes", async () => {

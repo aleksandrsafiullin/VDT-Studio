@@ -66,12 +66,13 @@ start a provider or server; live acceptance with those requests remains unrun.
 
 ## Composer model and reasoning controls
 
-The chat model button opens a popover rather than Settings, and shows only its
-name and readiness dot; status text remains in tooltip/accessibility metadata.
+The chat model button shows the model name and readiness dot. It opens a summary
+with the current model and reasoning controls. Selecting the model name in the
+summary opens the model list. Status text remains in tooltip/accessibility metadata.
 Reasoning uses a discrete horizontal slider with ticks, the selected level and a
 provider-default reset. Positions include only the selected model’s admitted
-metadata, in ascending effort order. API and local catalogs load when the menu
-opens through the same provider routes used by Settings; Azure requires a manual
+metadata, in ascending effort order. API and local catalogs load when the model
+list opens through the same provider routes used by Settings. Azure requires a manual
 deployment name. API credentials are scoped to the configured endpoint and are
 not stored in a catalog key or diagnostics. Older responses are ignored after
 provider, endpoint, credential or menu-lifecycle changes.
@@ -80,10 +81,11 @@ the same bounded `debug models` response as model discovery. Existing string-ID
 lists and other adapters retain their contract. Only whitelisted model metadata
 is retained; instructions/hidden models are omitted.
 
-The trusted chat host admits an immutable binding per validated model/effort pair.
+The trusted chat host admits an immutable binding per validated model/effort pair for Codex and Claude Code.
 The browser selects that ID, with no executable/argument/config authority. The
-reviewed transport passes `-c model_reasoning_effort="<effort>"` on open and resume,
-while Default omits it. The client persists model/effort selection and requires an
+Codex transport passes `-c model_reasoning_effort="<effort>"` on open and resume.
+Claude Code uses the model’s SDK-advertised effort levels and passes `--effort`
+on open and resume. Default omits the effort flag. The client persists model/effort selection and requires an
 exact binding. These controls apply to new chat runs and remain locked for active
 or paused runs. Ultra enables native delegation and is excluded from this
 Gateway-only profile. API/local preferences are keyed separately by provider,
@@ -255,9 +257,9 @@ Cursor's **Authenticate** action is not a dashboard/documentation link. The trus
 
 Settings **Test** checks subscription CLI/session readiness through the development runtime or desktop sidecar. It runs the reviewed detection/auth probe and succeeds only for an installed backend with status `ready`; it does not start a separate model-completion run or prove that a selected model can generate a VDT. Providers without a usable status command can still require the adapter's bounded minimal connection prompt. Local HTTP tests and the standalone `POST /v1/backends/:id/test` diagnostic retain the registered `connection-test-v1` completion probe.
 
-Development rescans deduplicate simultaneous identical probes but do not cache completed account/session results. Responses use `Cache-Control: no-store`, so a rescan after sign-in sees fresh state. Protected model-list probes run only after CLI readiness is verified. Browser-facing detection diagnostics contain concise, fixed guidance rather than raw subprocess commands, credential output or environment instructions. Empty or unrecognized successful status output remains unverified; negative states such as `unauthenticated` cannot be mistaken for `authenticated`. Cursor's stored-session/account-validation failure remains non-executable and its summary explains why reconnecting is required.
+Development rescans share in-flight probes per provider, including between targeted and full scans. Completed account/session results expire immediately. ACP and RPC model lists come from the same handshake used to verify the connection. Development Settings shows each provider as its result arrives. A timed-out scan keeps results that already arrived. Settings keeps known cards and models visible while marking pending providers as checking. The chat picker reads the shared live connection catalog, so opening it or choosing an already admitted effort does not launch another probe. The development browser reports a timeout with a Rescan option after 35 seconds, or 100 seconds on Windows to allow the bundled Cursor probes. Responses use `Cache-Control: no-store`, so a rescan after sign-in sees fresh state. Protected model-list probes run only after CLI readiness is verified. Browser-facing detection diagnostics contain concise, fixed guidance rather than raw subprocess commands, credential output or environment instructions. Empty or unrecognized successful status output remains unverified; negative states such as `unauthenticated` cannot be mistaken for `authenticated`. Cursor's stored-session/account-validation failure remains non-executable and its summary explains why reconnecting is required.
 
-Subscription model choices are provider-owned. Codex and Cursor adapters populate Settings only from their reviewed model-list commands. Adapters without a confirmed machine-readable list command, and any failed/auth-blocked list probe, expose `auto` and manual entry instead of a hardcoded catalog. Local HTTP backends continue to load models from their manifest-owned `/models` or native Ollama endpoint.
+Subscription model choices are provider-owned. Codex and Cursor populate Settings from their model-list commands. Claude Code uses the model metadata in the installed CLI’s Agent SDK initialization reply after auth verification. The metadata probe runs in a temporary workspace with tools, hooks, and MCP disabled. It sends no model prompt and does not persist a session. Settings uses the resolved model ID when reported and otherwise uses the CLI’s selectable value. Adapters without a confirmed machine-readable list command, and any failed/auth-blocked list probe, expose `auto` and manual entry instead of a hardcoded catalog. Local HTTP backends continue to load models from their manifest-owned `/models` or native Ollama endpoint.
 
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged.
 
@@ -268,7 +270,7 @@ Ollama responses stream with independent bounds: 300 seconds to the first valid 
 On a Mac under memory pressure, Ollama supports optional host tuning with `launchctl setenv OLLAMA_FLASH_ATTENTION 1` and `launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0`, followed by an Ollama restart while inference is idle. This global Ollama setting halves the K/V-cache allocation compared with f16, with a precision tradeoff; it does not change the selected weights or the requested context length. See the [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-set-the-quantization-type-for-the-kv-cache). VDT does not silently change these host settings. The 2026-10-17 local run confirmed the same qwen3:8b weights and 16,384-token context with a loaded allocation of about 6.3 GB instead of 7.4 GB; decoding on this Mac fell from about 5–6 to about 3 tokens/second and another exchange hit the 300-second deadline. The host tuning was reverted to its original unset values. This is not provider qualification or a task-quality guarantee.
 
 
-For chat, CLI authentication and execution availability are separate checks. The composer shows **Chat ready** only after the selected backend/model resolves to a server-owned session binding. `pnpm dev` and `run.command` enable the unverified CLI session canary by default; `VDT_CLI_SESSION_CANARY_ENABLED=false` opts out, and production builds reject it. Codex registers its provider-default binding (`auto`, omitted from native `--model` arguments) plus up to 100 validated model IDs from an authenticated CLI catalog. A browser cannot supply executable arguments or invent model bindings. Explicit `VDT_CODEX_SESSION_MODEL` pins the default binding. Codex and Cursor catalogs are rechecked on demand after 60 seconds, with concurrent refreshes coalesced; newly admitted IDs are appended while existing bindings and engines remain immutable. An absent CLI is also rechecked after that interval. Cursor and Claude provider defaults use `auto` and omit native `--model`; explicit trusted-host model overrides remain supported. This is development wiring, not hard-isolation or provider certification.
+For chat, CLI authentication and execution availability are separate checks. The composer shows **Chat ready** only after the selected backend/model resolves to a server-owned session binding. `pnpm dev` and `run.command` enable the unverified CLI session canary by default; `VDT_CLI_SESSION_CANARY_ENABLED=false` opts out, and production builds reject it. Codex registers its provider-default binding (`auto`, omitted from native `--model` arguments) plus up to 100 validated model IDs from an authenticated CLI catalog. A browser cannot supply executable arguments or invent model bindings. Explicit `VDT_CODEX_SESSION_MODEL` pins the default binding. Codex, Cursor and Claude catalogs are rechecked on demand after 60 seconds, with concurrent refreshes coalesced; newly admitted IDs are appended while existing bindings and engines remain immutable. A fresh Claude Settings discovery can admit new models immediately after rechecking the same CLI and its authentication. An absent CLI is also rechecked after that interval. Cursor and Claude register the same per-model bindings from their authenticated catalogs. Their provider defaults use `auto` and omit native `--model`. Explicit trusted-host model overrides remain supported. This is development wiring, not hard-isolation or provider certification.
 
 The standard desktop package connects Cursor separately through its managed
 Settings sign-in. It admits only exact reviewed CLI payload and model records

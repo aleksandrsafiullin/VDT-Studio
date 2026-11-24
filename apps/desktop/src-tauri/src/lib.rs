@@ -79,7 +79,7 @@ const PACKAGED_WEB_DESKTOP: bool = cfg!(all(any(target_os = "macos", target_os =
 
 fn check_cursor_sidecar_access(packaged: bool, backend_id: &str, task_type: Option<&str>) -> Result<(), String> {
     let is_connection = task_type.is_none();
-    let is_agent_task = matches!(task_type, Some("generate_tree" | "agent_decision" | "agent_plan" | "data_agent_decision"));
+    let is_agent_task = matches!(task_type, Some("generate_tree" | "agent_decision" | "agent_plan" | "data_agent_decision" | "suggest_chat_starters"));
     if packaged && backend_id.trim() == "cursor_subscription" && (is_connection || is_agent_task) {
         return Err("CURSOR_MANAGED_PROFILE_REQUIRED: Use the packaged Cursor connection in Settings and the Agent chat model picker.".into());
     }
@@ -276,7 +276,7 @@ mod harness_tests {
     #[test]
     fn packaged_cursor_connection_and_chat_require_the_managed_profile() {
         assert!(super::check_cursor_sidecar_access(true, "cursor_subscription", None).is_err());
-        for task in ["generate_tree", "agent_decision", "agent_plan", "data_agent_decision"] {
+        for task in ["generate_tree", "agent_decision", "agent_plan", "data_agent_decision", "suggest_chat_starters"] {
             assert!(super::check_cursor_sidecar_access(true, "cursor_subscription", Some(task)).is_err());
             assert!(super::check_cursor_sidecar_access(false, "cursor_subscription", Some(task)).is_ok());
             assert!(super::check_cursor_sidecar_access(true, "codex_subscription", Some(task)).is_ok());

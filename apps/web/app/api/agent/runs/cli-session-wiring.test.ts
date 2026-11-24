@@ -24,6 +24,7 @@ const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtExternalAgentEngines?: unknown;
   __vdtCursorSessionBindingProbe?: unknown;
   __vdtCliSessionRegistrationOutcomes?: unknown;
+  __vdtClaudeCliCatalog?: unknown;
   __vdtCliSessionRegistrationTimes?: Map<string, number>;
 };
 
@@ -38,6 +39,7 @@ afterEach(() => {
   delete runtimeGlobal.__vdtCursorSessionBindingProbe;
   delete runtimeGlobal.__vdtCliSessionRegistrationOutcomes;
   delete runtimeGlobal.__vdtCliSessionRegistrationTimes;
+  delete runtimeGlobal.__vdtClaudeCliCatalog;
 });
 
 function mockAllClisInstalled() {
@@ -94,6 +96,52 @@ describe("trusted-local CLI session wiring", { timeout: 45_000 }, () => {
     expect(isAdmittedCliSessionCanary({ bindingId, modelId: "cursor-account-model", engineAdapterId: "cursor-resume-checkpoint-v1", allowUnqualifiedExternalCanary: true })).toBe(true);
     expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
     expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
+  });
+
+  it("admits Claude chat models only after the signed-in CLI advertises them", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    const modelId = "claude-sonnet-catalog-fixture";
+    const listModels = vi.fn(async () => [modelId, "--unsafe"]);
+    const probeAuth = vi.fn()
+      .mockResolvedValueOnce({ status: "authentication_required" })
+      .mockResolvedValue({ status: "ready" });
+    getSubscriptionCliAdapter.mockImplementation((backend: string) =>
+      backend === "claude_subscription" ? { probeAuth, listModels } : undefined);
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(listModels).not.toHaveBeenCalled();
+
+    runtimeGlobal.__vdtCliSessionRegistrationTimes?.set("claude", Date.now() - 60_001);
+    await runtime.ensureServerManagedExecutionBindings();
+    const bindingId = cliSessionModelBindingId(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID, modelId);
+    expect(runtime.agentExecutionBindingRegistry.resolve(bindingId)).toMatchObject({
+      modelId, capability: { backendId: "claude_subscription" }
+    });
+    expect(runtime.agentExecutionBindingRegistry.has(cliSessionModelBindingId(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID, "--unsafe"))).toBe(false);
+    const { isAdmittedCliSessionCanary } = await import("./supervisor-runtime");
+    expect(isAdmittedCliSessionCanary({ bindingId, modelId, engineAdapterId: "claude-resume-checkpoint-v1", allowUnqualifiedExternalCanary: true })).toBe(true);
+  });
+
+  it("admits a newly scanned Claude model before the periodic catalog refresh", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    const listModels = vi.fn(async () => ["existing-claude-fixture"]);
+    getSubscriptionCliAdapter.mockImplementation((backend: string) =>
+      backend === "claude_subscription" ? { probeAuth: async () => ({ status: "ready" }), listModels } : undefined);
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    const { recordClaudeCliCatalog } = await import("@/lib/claude-cli-catalog");
+    recordClaudeCliCatalog("/opt/vdt-test/bin/claude", "claude-1.0.0", [{ id: "new-claude-fixture", reasoningEfforts: ["low", "high", "ultra"] }]);
+    await runtime.ensureServerManagedExecutionBindings();
+    const bindingId = cliSessionModelBindingId(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID, "new-claude-fixture");
+    expect(runtime.agentExecutionBindingRegistry.resolve(bindingId).modelId).toBe("new-claude-fixture");
+    const withEffort = cliSessionModelBindingId(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID, "new-claude-fixture", "high");
+    expect(runtime.agentExecutionBindingRegistry.resolve(withEffort)).toMatchObject({ reasoningEffort: "high" });
+    expect(runtime.agentExecutionBindingRegistry.has(cliSessionModelBindingId(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID, "new-claude-fixture", "ultra"))).toBe(false);
+    expect(listModels).toHaveBeenCalledOnce();
   });
 
   it("rechecks a previously absent CLI without restarting the host", async () => {

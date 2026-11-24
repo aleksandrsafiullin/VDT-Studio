@@ -35,10 +35,21 @@ describe("independent Suggested KPI settings", () => {
     expect(smartKpiSourceKey(changed)).not.toBe(smartKpiSourceKey(settings));
     expect(resolvedSmart(changed).providerConfig).toMatchObject({ model: "chat-model", modelReasoning: false });
     const cli = choose({ ...applyLocalRunnerPreset(settings, "custom_cli_json"), selectedCliAgentId: "codex", cliModelSelection: { source: "custom", customModel: "chat-cli", reasoningEffort: "high" } }, { model: "fast-cli" });
-    expect(resolvedSmart(cli).providerConfig).toMatchObject({ model: "fast-cli", modelReasoning: false });
+    expect(resolvedSmart(cli).providerConfig).toMatchObject({ model: "fast-cli" });
+    expect(resolvedSmart(cli).providerConfig).not.toHaveProperty("modelReasoning");
     expect(cli.cliModelSelection).toMatchObject({ customModel: "chat-cli", reasoningEffort: "high" });
     expect(smartKpiPreferences({ ...cli, selectedCliAgentId: "kiro" }).model).toBeUndefined();
     expect(smartKpiPreferences({ ...cli, runnerUrl: "http://127.0.0.1:9876" }).model).toBeUndefined();
+  });
+
+  it("uses Provider default after switching CLI or model, while preserving an explicit Off for its original model", () => {
+    const cli = { ...applyLocalRunnerPreset(api(), "custom_cli_json"), selectedCliAgentId: "codex" as const,
+      cliModelSelection: { source: "custom" as const, customModel: "chat-cli" } };
+    const off = choose(cli, { reasoning: false });
+    expect(smartKpiReasoning(off)).toBe(false);
+    expect(smartKpiReasoning({ ...off, selectedCliAgentId: "claude" })).toBeUndefined();
+    expect(smartKpiReasoning({ ...off, cliModelSelection: { source: "custom", customModel: "next-cli-model" } })).toBeUndefined();
+    expect(smartKpiReasoning(off)).toBe(false);
   });
 
   it("keeps Provider default as explicit saved opt-in, separate from absent default Off", () => {

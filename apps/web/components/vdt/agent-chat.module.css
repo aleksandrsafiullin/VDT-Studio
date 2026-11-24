@@ -119,7 +119,7 @@
 .emptyDescription { margin: 14px 0 24px; color: var(--workspace-muted); font-size: 0.8125em; line-height: 1.7; }
 .suggestions { display: grid; gap: 3px; max-width: 310px; }
 .suggestions button { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 11px 0; border-bottom: 1px solid var(--workspace-line); text-align: left; font-size: 0.8125em; color: var(--workspace-secondary); transition: padding 150ms, color 150ms; }
-.suggestions button svg { color: var(--workspace-muted); }
+.suggestions button svg { flex: none; color: var(--workspace-muted); }
 .suggestions button:hover { padding-inline: 8px; color: var(--workspace-ink); }
 
 .composerDock { z-index: 2; flex-shrink: 0; padding: 9px 14px 10px; background: var(--workspace-background); }
@@ -167,7 +167,14 @@
 .modelName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modelPopover { position: absolute; z-index: 40; bottom: calc(100% + 12px); right: -36px; width: 290px; max-width: calc(100cqw - 28px); max-height: min(480px, 65vh); overflow-y: auto; padding: 9px; border: 1px solid var(--workspace-line); border-radius: 16px; background: var(--workspace-surface); box-shadow: 0 14px 42px #00000024, 0 3px 8px #00000008; animation: chat-enter 150ms ease-out; }
 .modelPickerHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; color: var(--workspace-ink); font-size: 0.75em; font-weight: 600; }
-.modelPickerHeading > span { color: var(--workspace-muted); font-size: 0.9em; font-weight: 400; }
+.modelPickerHeading > span { margin-left: auto; color: var(--workspace-muted); font-size: 0.9em; font-weight: 400; }
+.modelPickerBack { display: grid; min-height: 28px; min-width: 28px; place-items: center; border-radius: 7px; color: var(--workspace-muted); }
+.modelDetailsTrigger { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 9px; border-radius: 10px; background: var(--workspace-control); color: var(--workspace-ink); text-align: left; }
+.modelDetailsTrigger > span { display: grid; min-width: 0; gap: 2px; }
+.modelDetailsTrigger small { color: var(--workspace-muted); font-size: 0.6875em; }
+.modelDetailsTrigger strong { overflow-wrap: anywhere; font-size: 0.8125em; font-weight: 600; }
+.modelDetailsTrigger:hover, .modelPickerBack:hover { background: var(--workspace-hover, var(--workspace-line-soft)); }
+.modelDetailsTrigger:focus-visible, .modelPickerBack:focus-visible { outline: 2px solid var(--workspace-ink); outline-offset: -2px; }
 .modelOptions { max-height: 220px; overflow-y: auto; border: 0; margin: 0; padding: 0; }
 .modelSearch { width: calc(100% - 18px); margin: 0 9px 6px; padding: 8px; border: 1px solid var(--workspace-line); border-radius: 8px; background: var(--workspace-surface); color: var(--workspace-ink); font-size: 0.75em; }
 .modelOption { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 8px; padding: 9px; border-radius: 9px; color: var(--workspace-secondary); font-size: 0.75em; cursor: pointer; }

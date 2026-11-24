@@ -493,6 +493,8 @@ Restoration requires an inline confirmation and creates a checkpoint of the curr
 
 ### In-product VDT agent
 
+When a VDT opens with an empty chat and a ready connection, the selected model generates three short prompts for that tree in the interface language. Each prompt is a complete question or request of at most 100 characters. Prompts are scoped to the full tree and name any KPI they refer to. Clicking a prompt fills the draft for editing and sending. The welcome panel appears once all three prompts pass validation. The conversation area stays empty while waiting or if generation fails, and the composer remains available. Smart KPI preparation waits until the starter request settles, including when generation fails.
+
 The chat rail has a compact header, a collapsed **Context** editor for the current
 root KPI and unit in one row, without a repeated Current brief label or Period field,
 dark user bubbles and unboxed formatted assistant responses with Copy.

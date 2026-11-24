@@ -32,23 +32,31 @@ export async function resolveSmartHarnessIdentity(backendId: string, model: stri
     const identity = await codexSmartMetadataIdentity(env, selection.executable, selection.version);
     return { backendId, modelId: configured ?? "host_default", requestModel: configured ?? "auto", modelResolution: configured ? "exact" : "host_default_alias", ...identity, bindingVersion: pinReasoning(identity.bindingVersion, modelReasoning), reasoningValues };
   }
+  if (backendId === "cursor_subscription" && modelReasoning !== undefined) {
+    throw Object.assign(new Error("This Cursor CLI does not expose a reviewed independent reasoning control. Use Provider default."), { code: "REASONING_UNSUPPORTED" });
+  }
   const executable = await resolveHarnessExecutable(h, env);
+  const configured = model && model !== "auto" && model !== "host_default" ? model : h.defaultModel && h.defaultModel !== "auto" && h.defaultModel !== "host_default" ? h.defaultModel : undefined;
+  const claudeMayDisableThinking = backendId === "claude_subscription" && claudeModelSupportsThinkingOff(configured);
+  if (backendId === "claude_subscription" && (modelReasoning !== false || !claudeMayDisableThinking)) {
+    claudeReasoningArgs(modelReasoning, configured, false);
+  }
   const js = /\.[cm]?js$/.test(executable);
   const versionArgs = [...(h.custom ? h.args : []), "--version"];
   const environment = harnessEnvironment(h, env);
   const cwd = await mkdtemp(path.join(tmpdir(), "vdt-harness-metadata-"));
   let retained = false, version: string | undefined, directClaudeSubscriptionVerified = false;
   try {
-    const result = await probeOwnedCliVersion(js ? process.execPath : executable, cwd, environment, { signal, requireConfirmedCleanup: true }, js ? [executable, ...versionArgs] : versionArgs, 4000);
+    const result = await probeOwnedCliVersion(js ? process.execPath : executable, cwd, environment, { signal, requireConfirmedCleanup: true }, js ? [executable, ...versionArgs] : versionArgs, h.transport === "native" ? 8_000 : 4_000);
     version = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/)[0];
-    if (backendId === "claude_subscription") directClaudeSubscriptionVerified = await verifyDirectClaudeSubscription(executable, cwd, environment, signal);
+    if (claudeMayDisableThinking) directClaudeSubscriptionVerified = await verifyDirectClaudeSubscription(executable, cwd, environment, signal);
   } catch (e) {
     const code = (e as { code?: string })?.code;
     if (code === "CLEANUP_UNCONFIRMED") { retained = true; await writeFile(path.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed" }), { mode: 0o600 }); }
+    if (code === "METADATA_TIMEOUT" && !signal.aborted) throw e;
     throw Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Harness metadata process cleanup is unconfirmed." : signal.aborted ? "Harness metadata probe cancelled." : "Harness version could not be verified."), { code: code === "CLEANUP_UNCONFIRMED" ? code : signal.aborted ? "CANCELLED" : "SUGGESTIONS_UNAVAILABLE", ...(retained ? { retainedDirectory: cwd } : {}) });
   } finally { if (!retained) await rm(cwd, { recursive: true, force: true }); }
   if (!version || version.length > 256) throw Object.assign(new Error("Harness version is unavailable."), { code: "SUGGESTIONS_UNAVAILABLE" });
-  const configured = model && model !== "auto" && model !== "host_default" ? model : h.defaultModel && h.defaultModel !== "auto" && h.defaultModel !== "host_default" ? h.defaultModel : undefined;
   let reasoningValues: HarnessReasoningValue[] = [];
   let vibeCredentialSource: VibeCredentialSource | undefined;
   if (h.transport !== "native") {
@@ -59,10 +67,8 @@ export async function resolveSmartHarnessIdentity(backendId: string, model: stri
       vibeCredentialSource = await session.credentialSource(signal);
       return values;
     }, { env, executable, maxBytes: 64 * 1024 });
-  } else if (backendId === "cursor_subscription" && modelReasoning !== undefined) {
-    throw Object.assign(new Error("This Cursor CLI does not expose a reviewed independent reasoning control. Use Provider default."), { code: "REASONING_UNSUPPORTED" });
   } else if (backendId === "claude_subscription") {
-    if (directClaudeSubscriptionVerified && claudeModelSupportsThinkingOff(configured)) reasoningValues = [false];
+    if (directClaudeSubscriptionVerified && claudeMayDisableThinking) reasoningValues = [false];
     claudeReasoningArgs(modelReasoning, configured, directClaudeSubscriptionVerified);
   }
   const identity = harnessOpaqueIdentity(h, executable, version, env, { ...(vibeCredentialSource ? { vibeCredentialSource } : {}) });

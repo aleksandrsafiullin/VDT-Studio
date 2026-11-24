@@ -1,6 +1,8 @@
 import { DATA_DISCOVERY_JSON_SCHEMAS, isDataDiscoverySchemaId, normalizeDataDiscoveryOutput, strictDataDiscoverySchema, validateDataDiscoveryOutput } from "./data-schema-contracts";
 import { KPI_SUGGESTION_MODEL_JSON_SCHEMA, validateKpiSuggestionModelOutput, type VdtAiTaskType } from "@vdt-studio/vdt-core";
 
+import { CHAT_STARTER_OUTPUT_SCHEMA, isChatStarterOutput } from "@vdt-studio/vdt-core";
+
 export const VDT_OUTPUT_SCHEMA_IDS = [
   "orchestrator-first-response-v1",
   "agent-decision-v2",
@@ -11,6 +13,7 @@ export const VDT_OUTPUT_SCHEMA_IDS = [
   "generate-tree-v1",
   "deepen-node-v2",
   "suggest-incoming-kpis-v1",
+  "suggest-chat-starters-v1",
   "simplify-branch-v1",
   "suggest-alternative-v1",
   "suggest-formula-v1",
@@ -43,6 +46,7 @@ const schemaTask: Record<VdtTaskSchemaId, VdtAiTaskType> = {
   "deepen-node-v1": "deepen_node",
   "deepen-node-v2": "deepen_node",
   "suggest-incoming-kpis-v1": "suggest_incoming_kpis",
+  "suggest-chat-starters-v1": "suggest_chat_starters",
   "simplify-branch-v1": "simplify_branch",
   "suggest-alternative-v1": "suggest_alternative",
   "suggest-formula-v1": "suggest_formula",
@@ -1080,6 +1084,7 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
     },
     ["duplicateClusters", ...advisoryRequired]
   ),
+  "suggest-chat-starters-v1": CHAT_STARTER_OUTPUT_SCHEMA,
   "explain-node-v1": objectSchema(
     {
       nodeId: stringProp,
@@ -1260,6 +1265,7 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
     isObjectArray(output.missingDrivers) && validateAdvisoryArrays(output),
   "identify-duplicate-drivers-v1": (output) =>
     isObjectArray(output.duplicateClusters) && validateAdvisoryArrays(output),
+  "suggest-chat-starters-v1": isChatStarterOutput,
   "explain-node-v1": (output) =>
     typeof output.nodeId === "string" &&
     typeof output.explanation === "string" &&

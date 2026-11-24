@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { buildChatStarterInput, productionVolumeProject } from "@vdt-studio/vdt-core";
 import { POST } from "./route";
 
 function jsonRequest(body: unknown) {
@@ -29,6 +29,29 @@ describe("run-task API route", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("uses the selected API model for one bounded chat starter completion", async () => {
+    vi.stubEnv("OPENAI_COMPATIBLE_BASE_URL", "https://api.openai.com/v1");
+    const prompts = ["What drives production volume?", "Where is downtime counted?", "Which assumptions need data?"];
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ prompts }) } }]
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const response = await POST(jsonRequest({
+      taskType: "suggest_chat_starters",
+      providerId: "openai_compatible",
+      providerConfig: { apiKey: "test-key", model: "gpt-5-mini", reasoningEffort: "high" },
+      input: buildChatStarterInput(productionVolumeProject, "en")
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ ok: true, result: { kind: "chat_starters", prompts } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(sent).toMatchObject({ model: "gpt-5-mini", max_completion_tokens: 1024 });
+    expect(sent).not.toHaveProperty("reasoning_effort");
   });
 
   it("rejects generate_tree with 400 before provider execution", async () => {

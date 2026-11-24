@@ -6,6 +6,7 @@ import { resolveExecutionCategory } from "./execution-category";
 import { resolveExecutionSettings } from "./execution-mode-resolver";
 import { providerConnectionRequest, requestProviderModelCapabilities } from "./provider-agent-binding";
 import { resolveSmartKpiSettings } from "./smart-kpi-settings";
+import { SMART_METADATA_RESPONSE_GRACE_MS, SMART_RUNNER_METADATA_TIMEOUT_MS, SMART_WEB_METADATA_TIMEOUT_MS } from "./smart-kpi-metadata";
 import { loadProviderModelCatalog, normalizeProviderModelIds, providerModelSource } from "./provider-model-catalog";
 
 function pairedRunnerUrl(config: Record<string, unknown>): string {
@@ -53,10 +54,11 @@ export async function loadSmartKpiReasoningValues(settings: ExecutionSettings, s
     return identity.reasoningValues?.filter(isModelReasoningValue);
   }
   const target = options.pairingToken ? `${pairedRunnerUrl(config)}/v1/smart-execution` : "/api/ai/suggestions/execution";
-  const deadline = AbortSignal.any([signal, AbortSignal.timeout(6500)]);
+  const metadataLimit = options.pairingToken ? SMART_RUNNER_METADATA_TIMEOUT_MS : SMART_WEB_METADATA_TIMEOUT_MS;
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(metadataLimit + SMART_METADATA_RESPONSE_GRACE_MS)]);
   const response = await awaitProviderSettlement(fetcher(target, {
     method: "POST", redirect: "error", headers: { "content-type": "application/json", ...(options.pairingToken ? { authorization: `Bearer ${options.pairingToken}` } : {}) },
-    body: JSON.stringify({ backendId, timeoutMs: 5000, ...(model ? { model } : {}) }), signal: deadline
+    body: JSON.stringify({ backendId, timeoutMs: metadataLimit, ...(model ? { model } : {}) }), signal: deadline
   }), deadline);
   const payload = JSON.parse(await readBoundedText(response, 8 * 1024, "Suggested KPI model options", deadline, true));
   if (!response.ok || !payload.ok || payload.identity?.backendId !== backendId || model && payload.identity?.requestModel !== model) {

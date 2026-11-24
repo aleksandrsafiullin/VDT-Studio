@@ -9,6 +9,7 @@ export interface CliConnectionCheck {
   key?: string | undefined;
   bindings?: AgentExecutionBindingSelection | undefined;
   failed?: boolean | undefined;
+  checking?: boolean | undefined;
   catalog?: AgentExecutionBindingSelection | undefined;
 }
 
@@ -32,6 +33,10 @@ const RETRY_DELAYS = [3_000, 10_000, 30_000, 60_000];
 const READY_REFRESH_MS = 60_000;
 const RECOVERY_REFRESH_MS = 3_000;
 
+function selectedDetection(state: CliConnectionSnapshot, agentId = state.settings.selectedCliAgentId) {
+  return state.detections?.find(({ id }) => id === agentId);
+}
+
 /** One app-wide owner, independent of Settings and of the mounted VDT panel.
  * Only selection is durable; every browser session verifies live CLI access. */
 export function connectCliConnection(port: {
@@ -52,6 +57,11 @@ export function connectCliConnection(port: {
   let healthy = false;
   let lastAttempt = -Infinity;
   let failures = 0;
+  let verifiedCatalog: {
+    detection: CliReadinessDetection | undefined;
+    bindings: AgentExecutionBindingSelection;
+    checkedAt: number;
+  } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function clearTimer() {
@@ -76,8 +86,9 @@ export function connectCliConnection(port: {
     needsCheck = false;
     running = true;
     clearTimer();
-    port.publish({ key: requestKey });
+    if (failures === 0) port.publish({ key: requestKey, checking: true });
     let retry = false;
+    let needsAuthentication = false;
     try {
       if (scan) await port.rescan(state.settings.selectedCliAgentId);
       if (disposed || selectionRevision !== requestRevision) return;
@@ -90,15 +101,18 @@ export function connectCliConnection(port: {
       });
       healthy = false;
       if (!readiness?.canExecute) {
-        const status = verified.detections?.find((agent) => agent.id === verified.settings.selectedCliAgentId)?.status;
+        port.publish({ key: requestKey });
+        const status = selectedDetection(verified)?.status;
         retry = Boolean(verified.detectionError) || status === undefined ||
           status === "installed" || status === "unavailable" || status === "error";
+        needsAuthentication = retry;
         return;
       }
       const bindings = await port.getBindings();
       if (disposed || selectionRevision !== requestRevision) return;
       const latest = port.getSnapshot();
-      if (latest.scanning || latest.testing || latest.detections !== verified.detections || latest.detectionError) return;
+      if (latest.scanning || latest.testing || selectedDetection(latest) !== selectedDetection(verified) || latest.detectionError) return;
+      verifiedCatalog = { detection: selectedDetection(latest), bindings, checkedAt: Date.now() };
       const execution = resolveExecutionSettings(latest.settings);
       healthy = resolveExecutionBindingId(bindings, latest.settings, execution.providerId, execution.providerConfig) !== null;
       port.publish({ key: requestKey, bindings });
@@ -118,7 +132,7 @@ export function connectCliConnection(port: {
           if (retry && port.isVisible()) {
             const delay = RETRY_DELAYS[Math.min(failures++, RETRY_DELAYS.length - 1)]!;
             timer = setTimeout(() => {
-              needsScan = true;
+              needsScan = needsAuthentication;
               needsCheck = true;
               void run();
             }, delay);
@@ -146,7 +160,9 @@ export function connectCliConnection(port: {
     if (disposed) return;
     const state = port.getSnapshot();
     const nextKey = selectedKey(state);
-    const detectionChanged = state.detections !== previous.detections || state.detectionError !== previous.detectionError;
+    const detectionChanged = selectedDetection(state) !== selectedDetection(previous, state.settings.selectedCliAgentId) || state.detectionError !== previous.detectionError;
+    const providerChanged = state.settings.selectedCliAgentId !== previous.settings.selectedCliAgentId;
+    const wasConnected = key !== undefined;
     const becameIdle = (previous.scanning || previous.testing) && !state.scanning && !state.testing;
     const openedVdt = state.vdtId !== previous.vdtId;
     previous = state;
@@ -158,9 +174,20 @@ export function connectCliConnection(port: {
       lastAttempt = -Infinity;
       clearTimer();
       // A discovery scan may have just selected its first installed provider.
-      needsScan = Boolean(key) && !detectionChanged;
+      needsScan = Boolean(key) && !detectionChanged && (!wasConnected || providerChanged || !selectedDetection(state));
       needsCheck = Boolean(key);
-      port.publish({ key });
+      const execution = resolveExecutionSettings(state.settings);
+      if (key && !needsScan && !state.scanning && !state.testing && !state.detectionError &&
+          verifiedCatalog && verifiedCatalog.detection === selectedDetection(state) &&
+          Date.now() - verifiedCatalog.checkedAt < READY_REFRESH_MS &&
+          resolveExecutionBindingId(verifiedCatalog.bindings, state.settings, execution.providerId, execution.providerConfig)) {
+        needsCheck = false;
+        healthy = true;
+        lastAttempt = verifiedCatalog.checkedAt;
+        port.publish({ key, bindings: verifiedCatalog.bindings });
+      } else {
+        port.publish({ key });
+      }
     } else if (key && (detectionChanged || becameIdle)) {
       if (!running && detectionChanged && !state.scanning && !state.testing) needsScan = false;
       needsCheck = true;

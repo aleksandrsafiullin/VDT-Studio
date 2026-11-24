@@ -1,20 +1,20 @@
+import type { ChatStarterInput, ChatStarterOutput } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
+import { recentClaudeCliCatalog } from "@/lib/claude-cli-catalog";
 import { registerHarnessSessionBindings, isCurrentHarnessSession } from "./harness-session-bindings";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { getSubscriptionCliAdapter, isCheckpointReasoningEffort, type ReasoningEffort, type SubscriptionCliModelOption } from "@vdt-studio/model-bridge";
+import { getSubscriptionCliAdapter, isCheckpointReasoningEffort, isClaudeReasoningEffort, type ClaudeReasoningEffort, type ReasoningEffort, type SubscriptionCliModelOption } from "@vdt-studio/model-bridge";
 import {
   AgentRunStore,
   AgentRunStateSupervisorPersistence,
   createDefaultToolRegistry,
   createVdtAgentRuntime,
-  researchProviderStatus,
   type AgentDecisionProvider,
   type AgentExecutionEngine,
   type AgentExecutionSummaryV2,
   type AgentSupervisorPersistence,
-  type ResearchProviderStatus,
   type ResearchProviderEnv,
   type ResearchProviderResolverOptions,
   type ToolRegistry,
@@ -69,10 +69,11 @@ const runtimeGlobal = globalThis as typeof globalThis & {
 
 // Re-admit additive model/effort bindings once after development hot reload.
 // Existing immutable bindings and running sessions retain their original engine.
-if (runtimeGlobal.__vdtCliReasoningRegistrationVersion !== 2) {
+if (runtimeGlobal.__vdtCliReasoningRegistrationVersion !== 4) {
   runtimeGlobal.__vdtCliSessionRegistrationOutcomes?.delete("codex");
   runtimeGlobal.__vdtCliSessionRegistrationOutcomes?.delete("cursor");
-  runtimeGlobal.__vdtCliReasoningRegistrationVersion = 2;
+  runtimeGlobal.__vdtCliSessionRegistrationOutcomes?.delete("claude");
+  runtimeGlobal.__vdtCliReasoningRegistrationVersion = 4;
 }
 
 const CLI_SESSION_REGISTRAR_KEYS = ["cursor", "codex", "claude"] as const;
@@ -88,6 +89,11 @@ function cliSessionRegistrationOutcomes(): Map<CliSessionRegistrarKey, CliSessio
 }
 
 function cliSessionRegistrationNeeded(key: CliSessionRegistrarKey): boolean {
+  if (key === "claude" && recentClaudeCliCatalog()?.models.some((model) =>
+    isSafeCliModelId(model.id) && [undefined, ...(model.reasoningEfforts ?? []).filter(isClaudeReasoningEffort)].some((effort) =>
+      !agentExecutionBindingRegistry.has(cliSessionModelBindingId(CLAUDE_SESSION_EXECUTION_BINDING_ID, model.id, effort))
+    )
+  )) return true;
   const outcome = cliSessionRegistrationOutcomes().get(key);
   return (outcome !== "registered" && outcome !== "absent") ||
     Date.now() - (runtimeGlobal.__vdtCliSessionRegistrationTimes?.get(key) ?? 0) >= 60_000;
@@ -255,6 +261,20 @@ function startPackagedCursorRefresh(
   return refresh;
 }
 
+export async function completePackagedCursorChatStarters(modelId: string | undefined, input: ChatStarterInput, signal: AbortSignal): Promise<ChatStarterOutput | undefined> {
+  if (!standardCursorProfile && cursorDesktopActivations.length === 0) return undefined;
+  const models = standardCursorProfile
+    ? (await refreshPackagedCursorConnection()).models
+    : (await (cursorDesktopBindingProbe ??= Promise.all(cursorDesktopActivations.map(registerPackagedCursorExecution))))
+      .filter(model => model !== undefined);
+  const model = modelId && modelId !== "auto" ? models.find(entry => entry.id === modelId) : models[0];
+  const engine = model && externalAgentEngines.get(model.bindingId);
+  if (!model || !engine || !("completeChatStarters" in engine) || typeof engine.completeChatStarters !== "function") {
+    throw new Error("The selected managed Cursor model is unavailable.");
+  }
+  return await engine.completeChatStarters(model.bindingId, input, signal) as ChatStarterOutput;
+}
+
 export function signInPackagedCursor(): Promise<PackagedCursorSnapshot> {
   const profile = standardCursorProfile;
   if (!profile) return Promise.resolve({ status: "unsupported", models: [] });
@@ -418,13 +438,6 @@ export function createAgentToolRegistryFromEnv(
 ): ToolRegistry {
   const researchProvider = resolveSessionAwareResearch(env, options);
   return createDefaultToolRegistry({ researchProvider, datasetProvider:retainedDatasetProvider });
-}
-
-export function resolveAgentResearchStatusFromEnv(
-  env: ResearchProviderEnv = process.env,
-  options: ResearchProviderResolverOptions = {}
-): ResearchProviderStatus {
-  return researchProviderStatus(resolveSessionAwareResearch(env, options));
 }
 
 export function createAgentRunStore(env?: StorageWriteEnvironment): AgentRunStore {
@@ -661,7 +674,6 @@ async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliS
 }
 
 async function registerClaudeSessionCanary(bridge: ModelBridgeNode): Promise<CliSessionRegistrationResult> {
-  if (agentExecutionBindingRegistry.has(CLAUDE_SESSION_EXECUTION_BINDING_ID)) return "registered";
   const {
     ClaudeResumeCheckpointEngine,
     ClaudeResumeCheckpointTransport,
@@ -670,16 +682,16 @@ async function registerClaudeSessionCanary(bridge: ModelBridgeNode): Promise<Cli
   const detection = await detectSubscriptionCli("claude");
   if (!detection.installed || !detection.executable || !detection.version) return "absent";
 
-  const toolCatalogHash = modelAgentToolCatalogHash(agentRuntime.tools);
-  const transport = new ClaudeResumeCheckpointTransport({
-    executable: detection.executable,
-    validatedCliVersion: detection.version,
-    timeoutMs: readPositiveIntegerEnv("VDT_CLAUDE_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
-  });
-  const engine = new ClaudeResumeCheckpointEngine({
-    transport,
-    cliVersion: detection.version,
-    toolCatalogHash,
+  const { executable, version: cliVersion } = detection;
+  const createEngine = (reasoningEffort?: ClaudeReasoningEffort) => new ClaudeResumeCheckpointEngine({
+    transport: new ClaudeResumeCheckpointTransport({
+      executable,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      validatedCliVersion: cliVersion,
+      timeoutMs: readPositiveIntegerEnv("VDT_CLAUDE_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
+    }),
+    cliVersion: cliVersion,
+    toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools),
     allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
     enableUnverifiedCanary: true,
     sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
@@ -691,11 +703,44 @@ async function registerClaudeSessionCanary(bridge: ModelBridgeNode): Promise<Cli
     }),
     resolveBinding: resolveDurableSessionBinding
   });
+  const engine = createEngine();
   registerCliSessionBinding({
     bindingId: CLAUDE_SESSION_EXECUTION_BINDING_ID,
     engine,
     modelId: process.env.VDT_CLAUDE_SESSION_MODEL?.trim() || "auto"
   });
+  try {
+    const adapter = getSubscriptionCliAdapter("claude_subscription");
+    const auth = await adapter?.probeAuth?.(detection.executable, AbortSignal.timeout(5_000));
+    if (auth?.status === "ready") {
+      const recent = recentClaudeCliCatalog();
+      const options = { signal: AbortSignal.timeout(12_000) };
+      const models: readonly SubscriptionCliModelOption[] = recent?.executable === executable && recent.version === cliVersion
+        ? recent.models
+        : adapter?.listModelOptions
+          ? await adapter.listModelOptions(executable, options)
+          : (await adapter?.listModels?.(executable, options) ?? []).map((id) => ({ id }));
+      const effortEngines = new Map<ClaudeReasoningEffort, AgentExecutionEngine>();
+      for (const { id: modelId, reasoningEfforts } of models.slice(0, 100)) {
+        if (!isSafeCliModelId(modelId)) continue;
+        registerCliSessionBinding({ bindingId: cliSessionModelBindingId(CLAUDE_SESSION_EXECUTION_BINDING_ID, modelId), engine, modelId });
+        for (const effort of new Set(reasoningEfforts ?? [])) {
+          if (!isClaudeReasoningEffort(effort)) continue;
+          let effortEngine = effortEngines.get(effort);
+          if (!effortEngine) {
+            effortEngine = createEngine(effort);
+            effortEngines.set(effort, effortEngine);
+          }
+          registerCliSessionBinding({
+            bindingId: cliSessionModelBindingId(CLAUDE_SESSION_EXECUTION_BINDING_ID, modelId, effort),
+            engine: effortEngine, modelId, reasoningEffort: effort
+          });
+        }
+      }
+    }
+  } catch {
+    // The provider default remains available when catalog discovery fails.
+  }
   return "registered";
 }
 

@@ -9,6 +9,7 @@ import { ProjectManagementPanel } from "./project-management-panel";
 import { ProjectVdtList } from "./project-vdt-list";
 import { ProjectWorkspaceRouteState } from "./project-workspace-route-state";
 import { SetupRail } from "./setup-rail";
+import { useChatStarters } from "./use-chat-starters";
 import { TopBar } from "./top-bar";
 import { useWorkspaceRouteSync } from "./use-workspace-route-sync";
 import { VdtCanvas } from "./vdt-canvas";
@@ -35,9 +36,14 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
   const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
+  const chatActive = useVdtStudioStore((state) => state.isGenerating || Boolean(state.generateActivity));
   const { openWorkspaceVdt, showProjectWorkspace, isBootstrapping, bootstrapError, retryWorkspace } = useWorkspaceRouteSync(projectId);
   const isDesktop = useDesktopLayout();
   const isProjectMode = workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace);
+  const { prompts: starterPrompts, pending: starterPending } = useChatStarters(
+    isProjectMode || isBootstrapping || bootstrapError ? undefined : workspace.activeVdtId,
+    !chatActive
+  );
   const leftCollapsed = !isProjectMode && isDesktop && ui.leftPanelCollapsed;
   const rightCollapsed = !isProjectMode && isDesktop && ui.rightPanelCollapsed;
   const leftWidth = isProjectMode ? PROJECT_MANAGEMENT_PANEL_WIDTH : leftCollapsed ? COLLAPSED_PANEL_WIDTH : ui.leftPanelWidth;
@@ -84,7 +90,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
           <WorkspaceModeRail appleStyle={isProjectMode} />
         </div>
         <div className="min-h-0 lg:block">
-          {isProjectMode ? <ProjectManagementPanel urlScopedProjectId={projectId} /> : <SetupRail />}
+          {isProjectMode ? <ProjectManagementPanel urlScopedProjectId={projectId} /> : <SetupRail starterPrompts={starterPrompts} />}
         </div>
         {!isProjectMode && isDesktop && !leftCollapsed ? (
           <PanelResizeHandle
@@ -100,7 +106,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
           className={clsx("flex min-h-0 flex-col overflow-hidden", !isProjectMode && styles.canvasFrame)}
           style={{ minHeight: isDesktop && !isProjectMode ? 0 : BASE_WORKSPACE_SECTION_MIN_HEIGHT }}
         >
-          {isProjectMode ? <ProjectVdtList onOpenVdt={openWorkspaceVdt} /> : <VdtCanvas />}
+          {isProjectMode ? <ProjectVdtList onOpenVdt={openWorkspaceVdt} /> : <VdtCanvas deferSmartKpi={starterPending} />}
         </section>
         {!isProjectMode && isDesktop && !rightCollapsed ? (
           <PanelResizeHandle

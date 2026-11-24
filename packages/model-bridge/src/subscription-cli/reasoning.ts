@@ -38,3 +38,11 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
 export function isCheckpointReasoningEffort(value: unknown): value is Exclude<ReasoningEffort, "ultra"> {
   return isReasoningEffort(value) && value !== "ultra";
 }
+
+
+const CLAUDE_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeReasoningEffort = typeof CLAUDE_REASONING_EFFORTS[number];
+
+export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
+  return CLAUDE_REASONING_EFFORTS.some((effort) => effort === value);
+}

@@ -1,4 +1,4 @@
-import { KPI_SUGGESTION_LIMITS, SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
+import { CHAT_STARTER_INSTRUCTION, KPI_SUGGESTION_LIMITS, SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
 import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -20,7 +20,7 @@ import {
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 import { cursorLaunchTarget, isWindowsCursorPayload, detectSubscriptionCli, selectCodexExecutable, windowsCursorLaunchIssueMessage } from "@vdt-studio/model-bridge/local-runtime";
-import { executeSmartSuggestion } from "./smart-suggestions";
+import { executeChatStarters, executeSmartSuggestion } from "./smart-suggestions";
 import { executeHarnessCompletion } from "./harness-completion";
 import { probeHarnessModels } from "@vdt-studio/model-bridge/local-runtime";
 
@@ -279,6 +279,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
   "check-units-v1": { unitFindings: [], ...advisoryStub },
   "identify-missing-drivers-v1": { missingDrivers: [], ...advisoryStub },
   "identify-duplicate-drivers-v1": { duplicateClusters: [], ...advisoryStub },
+  "suggest-chat-starters-v1": { prompts: ["Test prompt one?", "Test prompt two?", "Test prompt three?"] },
   "explain-node-v1": { nodeId: "node-1", explanation: "Mock", keyDrivers: [], assumptions: [], questionsForUser: [] },
   "explain-scenario-v1": { scenarioId: "scenario-1", narrative: "Mock", impactHighlights: [], assumptions: [], questionsForUser: [] },
   "generate-executive-summary-v1": { headline: "Mock", keyDrivers: [], risks: [], recommendations: [] }
@@ -860,7 +861,9 @@ export async function executeCli(
 ): Promise<ExecutionResult> {
   assertManifestSafe(manifest);
   const smart = request.taskType === "suggest_incoming_kpis";
-  const ownsProcessGroup = smart && process.platform !== "win32";
+  const readOnlyCompletion = smart || request.taskType === "suggest_chat_starters";
+  const claudeChatStarters = request.taskType === "suggest_chat_starters" && manifest.id === "claude_subscription";
+  const ownsProcessGroup = readOnlyCompletion && process.platform !== "win32";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
   const selected = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
@@ -885,7 +888,7 @@ export async function executeCli(
       : undefined;
 
   async function runCliAttempt(prompt: string, timeoutMs: number, requestJson = payload): Promise<ExecutionResult> {
-    if (byteLength(prompt) > (smart ? KPI_SUGGESTION_LIMITS.inputBytes : EXECUTION_LIMITS.maxPromptBytes)) {
+    if (byteLength(prompt) > (readOnlyCompletion ? KPI_SUGGESTION_LIMITS.inputBytes : EXECUTION_LIMITS.maxPromptBytes)) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
 
@@ -901,8 +904,9 @@ export async function executeCli(
     const promptPath = path.join(cwd, "prompt.txt");
     await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
+    const schema = cliResponseSchema(request);
     const schemaPath = path.join(cwd, "schema.json");
-    await writeFile(schemaPath, `${JSON.stringify(cliResponseSchema(request), null, 2)}\n`, {
+    await writeFile(schemaPath, `${JSON.stringify(schema, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx"
@@ -921,7 +925,10 @@ export async function executeCli(
           cwd,
           promptPath,
           promptText,
+          schemaJson: JSON.stringify(schema),
           schemaPath,
+          singleTurn: readOnlyCompletion,
+          ...(claudeChatStarters ? { chatStarters: true } : {}),
           outputPath,
           enableWorkspaceTrust:
             manifest.id === "cursor_subscription" &&
@@ -970,7 +977,7 @@ export async function executeCli(
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
       command,
       finalArgs,
-      { cwd, env: cursorTarget?.env ?? childEnv, shell: false, windowsHide: true, ...(smart ? { detached: ownsProcessGroup } : {}), stdio: ["pipe", "pipe", "pipe"] }
+      { cwd, env: cursorTarget?.env ?? childEnv, shell: false, windowsHide: true, ...(readOnlyCompletion ? { detached: ownsProcessGroup } : {}), stdio: ["pipe", "pipe", "pipe"] }
     );
     processStarted = true;
 
@@ -1000,9 +1007,9 @@ export async function executeCli(
       if (cancelled) return;
       cancelled = true;
       killOwned("SIGTERM");
-      forceKill = setTimeout(() => killOwned("SIGKILL"), smart ? 250 : EXECUTION_LIMITS.killGraceMs);
+      forceKill = setTimeout(() => killOwned("SIGKILL"), readOnlyCompletion ? 250 : EXECUTION_LIMITS.killGraceMs);
       forceKill.unref?.();
-      if (smart) cleanupDeadline = setTimeout(() => { cleanupUnconfirmed = true; rejectCompletion(Object.assign(new Error("Smart CLI process cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" })); }, 1250);
+      if (readOnlyCompletion) cleanupDeadline = setTimeout(() => { cleanupUnconfirmed = true; rejectCompletion(Object.assign(new Error("Smart CLI process cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" })); }, 1250);
     };
     signal.addEventListener("abort", terminate, { once: true });
     const effectiveTimeout = Math.min(timeoutMs, EXECUTION_LIMITS.timeoutMs);
@@ -1037,7 +1044,7 @@ export async function executeCli(
       };
       rejectCompletion = fail;
       const trySettleFromStream = (force = false) => {
-        if (!adapter?.parseStreamingOutput || request.taskType === "suggest_incoming_kpis") return;
+        if (!adapter?.parseStreamingOutput || readOnlyCompletion) return;
         if (streamingResult || streamingError !== undefined) return;
         const currentByteLength = byteLength(stdout);
         // Cursor previously reparsed the complete accumulated JSONL stream on
@@ -1078,7 +1085,7 @@ export async function executeCli(
       child.stdout.on("data", (chunk: Buffer | string) => {
         const chunkText = chunk.toString();
         stdout += chunkText;
-        if (byteLength(stdout) > (smart ? 64 * 1024 : EXECUTION_LIMITS.maxStdoutBytes)) {
+        if (byteLength(stdout) > (readOnlyCompletion ? 64 * 1024 : EXECUTION_LIMITS.maxStdoutBytes)) {
           outputLimitExceeded = true;
           terminate();
           return;
@@ -1149,7 +1156,7 @@ export async function executeCli(
         });
       }
       assertLineLimit(stdout);
-      if (request.taskType === "suggest_incoming_kpis") {
+      if (readOnlyCompletion) {
         if (byteLength(stdout) > 64 * 1024) throw Object.assign(new Error("Smart CLI stream exceeded its bound."), { code: "OUTPUT_TOO_LARGE" });
         const inspect = (v: unknown): boolean => {
           if (!v || typeof v !== "object") return false;
@@ -1169,8 +1176,8 @@ export async function executeCli(
       const parsedOutput = adapter
         ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
         : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
-      if (smart && byteLength(JSON.stringify(parsedOutput)) > 16 * 1024) throw Object.assign(new Error("Smart output exceeded 16 KiB."), { code: "OUTPUT_TOO_LARGE" });
-      const output = smart ? parsedOutput : normalizeRegisteredSchemaOutput(request.schemaId as VdtSchemaId, parsedOutput);
+      if (readOnlyCompletion && byteLength(JSON.stringify(parsedOutput)) > 16 * 1024) throw Object.assign(new Error("Smart output exceeded 16 KiB."), { code: "OUTPUT_TOO_LARGE" });
+      const output = readOnlyCompletion ? parsedOutput : normalizeRegisteredSchemaOutput(request.schemaId as VdtSchemaId, parsedOutput);
       const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
       if (!schemaValid) {
         throw Object.assign(new Error("Backend output failed registered schema validation."), {
@@ -1202,7 +1209,7 @@ export async function executeCli(
     } finally {
       signal.removeEventListener("abort", terminate);
       if (timeout) clearTimeout(timeout);
-      if (smart && !processClosed && !cleanupUnconfirmed) {
+      if (readOnlyCompletion && !processClosed && !cleanupUnconfirmed) {
         terminate();
         let deadline: NodeJS.Timeout | undefined;
         try { await Promise.race([processClosure, new Promise<void>(resolve => { deadline = setTimeout(() => { cleanupUnconfirmed = true; resolve(); }, 1250); })]); }
@@ -1229,11 +1236,15 @@ export async function executeCli(
     }
   }
 
-  const first = await runCliAttempt((request.taskType === "suggest_incoming_kpis" ? SMART_KPI_INSTRUCTION + "\n" : "") + buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
+  const instruction = smart ? SMART_KPI_INSTRUCTION : readOnlyCompletion ? CHAT_STARTER_INSTRUCTION : "";
+  const prompt = claudeChatStarters
+    ? JSON.stringify({ taskType: request.taskType, input: request.input, outputJsonSchema: cliResponseSchema(request) })
+    : [instruction, buildSubscriptionPrompt(request)].filter(Boolean).join("\n");
+  const first = await runCliAttempt(prompt, request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
     async (error: unknown) => {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error;
-      if (request.schemaId === "agent-decision-v2" || request.taskType === "suggest_incoming_kpis") throw error;
+      if (request.schemaId === "agent-decision-v2" || readOnlyCompletion) throw error;
       const parsedOutput = typeof error === "object" && error !== null && "output" in error ? (error as { output?: unknown }).output : undefined;
       const invalidText =
         parsedOutput === undefined
@@ -1628,6 +1639,7 @@ export async function executeCompletion(
   if (!isVdtSchemaId(request.schemaId)) throw Object.assign(new Error("Unknown schemaId."), { code: "UNKNOWN_SCHEMA" });
   if (signal.aborted) throw abortError();
   if (request.taskType === "suggest_incoming_kpis") return executeSmartSuggestion(manifest, request, signal, options);
+  if (request.taskType === "suggest_chat_starters" && manifest.kind !== "mock") return executeChatStarters(manifest, request, signal, options);
   if (manifest.harness && manifest.harness.transport !== "native") return executeHarnessCompletion(manifest, request, signal, options);
   const prompt = JSON.stringify({
     requestId: request.requestId,

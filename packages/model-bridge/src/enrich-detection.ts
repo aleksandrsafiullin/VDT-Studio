@@ -5,7 +5,7 @@ import type { ModelBackendStatus } from "./contract";
 import type { SubscriptionCliDetectionResult } from "./detection";
 import { getSubscriptionCliAdapter } from "./subscription-cli/registry";
 import { getHarnessDefinition } from "./harness/profiles";
-import { probeHarnessModels } from "./harness/rpc-session";
+import { probeHarnessModels, type HarnessModel } from "./harness/rpc-session";
 import type { HarnessAccessChecks } from "./harness/catalog";
 
 export interface EnrichedSubscriptionCliDetection extends SubscriptionCliDetectionResult {
@@ -40,7 +40,7 @@ function probeDiagnostics(status: ModelBackendStatus): string[] {
 
 export async function enrichSubscriptionCliDetection(
   agent: SubscriptionCliDetectionResult,
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; onHarnessModels?: (models: readonly HarnessModel[]) => void } = {}
 ): Promise<EnrichedSubscriptionCliDetection> {
   if (!agent.installed || !agent.executable) {
     return {
@@ -58,7 +58,8 @@ export async function enrichSubscriptionCliDetection(
   const harness = getHarnessDefinition(agent.backendId);
   if (harness && harness.transport !== "native") {
     try {
-      await probeHarnessModels(harness, options.signal ?? AbortSignal.timeout(5000));
+      const models = await probeHarnessModels(harness, options.signal ?? AbortSignal.timeout(5000));
+      options.onHarnessModels?.(models);
       return { ...publicDetection(agent), status: "ready", authSummary: "Protocol session verified. Account access and quotas remain managed by the provider and are checked when a task runs.", checks: { authentication: "provider_managed", protocol: "verified" }, diagnostics: [] };
     } catch (e) {
       const code = (e as { code?: string })?.code;

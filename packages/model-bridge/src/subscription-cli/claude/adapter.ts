@@ -1,3 +1,4 @@
+import { CHAT_STARTER_INSTRUCTION } from "@vdt-studio/vdt-core";
 import type { ModelBackendDetectionResult } from "../../contract";
 import type { VdtSchemaId } from "../../schema-registry";
 import { assertArgsSafe } from "../security";
@@ -6,6 +7,8 @@ import { probeClaudeAuth } from "./auth";
 import { parseClaudeJsonOutput } from "./parser";
 import { evaluateClaudeVersion, parseClaudeVersionOutput } from "./version";
 import { probeOwnedCliVersion } from "../codex/executable-selection";
+import { listClaudeModels, listClaudeModelOptions } from "./models";
+import { isClaudeReasoningEffort } from "../reasoning";
 
 export const CLAUDE_BACKEND_ID = "claude_subscription";
 
@@ -41,16 +44,21 @@ export function claudeReasoningArgs(value: SubscriptionCliBuildArgsInput["modelR
     }
     return ["--settings", JSON.stringify({ alwaysThinkingEnabled: false, env: { MAX_THINKING_TOKENS: "0" } })];
   }
-  if (typeof value !== "string" || !["low", "medium", "high", "xhigh", "max"].includes(value)) throw Object.assign(new Error("Unsupported Claude effort level."), { code: "REASONING_UNSUPPORTED" });
+  if (!isClaudeReasoningEffort(value)) throw Object.assign(new Error("Unsupported Claude effort level."), { code: "REASONING_UNSUPPORTED" });
   return ["--effort", value];
 }
 
 /** Reviewed dynamic flags appended after manifest static args at spawn time. */
 export function buildClaudeDynamicArgs(input: SubscriptionCliBuildArgsInput): readonly string[] {
   const args: string[] = [];
-  args.push(...claudeReasoningArgs(input.modelReasoning, input.model, input.directClaudeSubscriptionVerified));
+  const reasoning = input.chatStarters && input.model === "claude-haiku-5-5" ? "low" : input.modelReasoning;
+  args.push(...claudeReasoningArgs(reasoning, input.model, input.directClaudeSubscriptionVerified));
   if (input.model) args.push("--model", input.model);
-  if (input.schemaPath) args.push("--json-schema", input.schemaPath);
+  if (input.singleTurn) {
+    // The prompt carries the schema and the host validates the single JSON reply.
+    args.push("--max-turns", "1", "--setting-sources", "");
+  } else if (input.schemaJson) args.push("--json-schema", input.schemaJson);
+  if (input.chatStarters) args.push("--system-prompt", CHAT_STARTER_INSTRUCTION);
   const prompt = input.promptText?.trim();
   if (!prompt) throw Object.assign(new Error("Claude subscription prompt text is required."), { code: "PROMPT_REQUIRED" });
   args.push(prompt);
@@ -66,6 +74,8 @@ function mapClaudeError(message: string): string {
 }
 
 export const claudeSubscriptionCliAdapter: SubscriptionCliAdapter = {
+  listModels: listClaudeModels,
+  listModelOptions: listClaudeModelOptions,
   id: "claude",
   backendId: CLAUDE_BACKEND_ID,
 

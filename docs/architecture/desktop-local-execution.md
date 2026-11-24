@@ -16,6 +16,11 @@ for the selected local model's capabilities. API Smart capabilities use their
 existing credential-scoped provider boundary. No command can provide an arbitrary
 local model endpoint or executable.
 
+Chat starters reuse the private completion command for local CLI and model
+connections. Packaged Cursor generates them through its managed, qualified
+model and isolated runner using a single read-only segment. The terminal result
+passes the same model, workspace and tool-event checks as other Cursor segments.
+
 ## Smart preparation and metadata boundary
 
 The existing `ai_complete` command/task registry carries the compact read-only
@@ -87,6 +92,9 @@ the web runtime and sidecar. After activation, the host waits up to 60 seconds
 for the web runtime's private readiness frame. This gives cold starts more
 time under x64 emulation or filesystem contention. If the deadline expires,
 the host stops the runtime and reports startup failure.
+The Next.js startup hook imports Windows storage inside the Node.js branch of its
+`NEXT_RUNTIME` check so the Edge compiler can omit the Node.js-only dependency.
+At runtime, storage admission requires Windows and the private host activation.
 This implementation is not an installed-platform
 support claim; Windows project storage admission and native qualification are
 tracked in [W7](../implementation/OPEN_ALPHA_W7_2026-11-13.md) and

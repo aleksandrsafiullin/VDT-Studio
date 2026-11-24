@@ -1,4 +1,8 @@
 import { validateKpiSuggestionTaskInput, type KpiSuggestionTaskInput, type KpiSuggestionModelOutput, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
+import {
+  CHAT_STARTER_INSTRUCTION, CHAT_STARTER_LIMITS, CHAT_STARTER_OUTPUT_SCHEMA,
+  validateChatStarterInput, validateChatStarterOutput, type ChatStarterInput
+} from "@vdt-studio/vdt-core";
 import type { VdtAgentRun } from "@vdt-studio/vdt-agent";
 import { generateVdtProject } from "../generate-vdt";
 import type { DeepenNodeContext } from "../schemas/deepen-node";
@@ -85,6 +89,7 @@ export type AiAdvisoryResult =
 export type AiExplanationResult = ExplainNodeResult | ExplainScenarioResult | ExecutiveSummaryResult;
 
 export type RunAiTaskResult =
+  | { kind: "chat_starters"; prompts: [string, string, string] }
   | { kind: "suggestions"; result: KpiSuggestionModelOutput }
   | { kind: "project"; project: VdtProject }
   | { kind: "change_set"; changeSet: VdtChangeSet; agentRun?: VdtAgentRun }
@@ -93,6 +98,7 @@ export type RunAiTaskResult =
 
 export type RunAiTaskInputMap = {
   suggest_incoming_kpis: KpiSuggestionTaskInput & RunAiTaskCommonOptions;
+  suggest_chat_starters: ChatStarterInput & RunAiTaskCommonOptions;
   generate_tree: GenerateVdtInput & RunAiTaskCommonOptions;
   deepen_node: RunAiTaskDeepenNodeInput;
   simplify_branch: RunAiTaskSimplifyBranchInput;
@@ -129,6 +135,25 @@ export async function runAiTask<T extends RunnableAiTaskType>(
       const { maxTokens, signal, ...payload } = input as RunAiTaskInputMap["suggest_incoming_kpis"];
       const result = await runSuggestIncomingKpis(provider, validateKpiSuggestionTaskInput(payload), pickRunOptions({ maxTokens, signal }));
       return { kind: "suggestions", result };
+    }
+    case "suggest_chat_starters": {
+      const { maxTokens, signal, ...payload } = input as RunAiTaskInputMap["suggest_chat_starters"];
+      const bounded = validateChatStarterInput(payload);
+      const deadline = AbortSignal.timeout(provider.type === "local_runner"
+        ? CHAT_STARTER_LIMITS.localModelTimeoutMs : CHAT_STARTER_LIMITS.timeoutMs);
+      const completionSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      const output = await provider.completeStructured({
+        taskType,
+        input: bounded,
+        schema: CHAT_STARTER_OUTPUT_SCHEMA,
+        outputJsonSchema: CHAT_STARTER_OUTPUT_SCHEMA,
+        systemPrompt: CHAT_STARTER_INSTRUCTION,
+        userPrompt: JSON.stringify(bounded),
+        maxTokens: Math.min(maxTokens ?? CHAT_STARTER_LIMITS.outputTokens, CHAT_STARTER_LIMITS.outputTokens),
+        signal: completionSignal
+      });
+      completionSignal.throwIfAborted();
+      return { kind: "chat_starters", prompts: validateChatStarterOutput(output).prompts };
     }
     case "generate_tree": {
       const { maxTokens, ...generateInput } = input as RunAiTaskInputMap["generate_tree"];

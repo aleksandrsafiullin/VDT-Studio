@@ -29,19 +29,19 @@ describe("claudeSubscriptionCliAdapter", () => {
   });
 
   describe("buildArgs snapshots", () => {
-    it("builds json-schema and prompt args", () => {
+    it("passes the JSON schema inline and then the prompt", () => {
+      const schemaJson = JSON.stringify({ type: "object", properties: { ok: { type: "boolean" } } });
       expect(
         buildClaudeDynamicArgs({
-          schemaPath: "/tmp/vdt-run-abc/schema.json",
+          schemaJson,
           promptText: "Return JSON for generate-tree-v1."
         })
-      ).toMatchInlineSnapshot(`
-        [
-          "--json-schema",
-          "/tmp/vdt-run-abc/schema.json",
-          "Return JSON for generate-tree-v1.",
-        ]
-      `);
+      ).toEqual(["--json-schema", schemaJson, "Return JSON for generate-tree-v1."]);
+    });
+
+    it("uses a single tool-free turn with a schema in the prompt for Suggested KPI", () => {
+      expect(buildClaudeDynamicArgs({ singleTurn: true, schemaJson: "{}", promptText: "Return KPI JSON." }))
+        .toEqual(["--max-turns", "1", "--setting-sources", "", "Return KPI JSON."]);
     });
 
     it("passes assertArgsSafe on reviewed dynamic args including empty tools flags from manifest", () => {
@@ -56,7 +56,7 @@ describe("claudeSubscriptionCliAdapter", () => {
         "*",
         "--strict-mcp-config",
         ...claudeSubscriptionCliAdapter.buildArgs({
-          schemaPath: "/private/tmp/vdt-run-xyz/schema.json",
+          schemaJson: JSON.stringify({ type: "object" }),
           promptText: "Task prompt only."
         })
       ];

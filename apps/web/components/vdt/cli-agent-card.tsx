@@ -68,6 +68,7 @@ interface CliAgentCardProps {
   testStatus?: ProviderTestStatus | undefined;
   authActionStatus?: ProviderTestStatus | undefined;
   isTesting: boolean;
+  isScanning?: boolean | undefined;
   isAuthenticating?: boolean | undefined;
   onSelect: () => void;
   onTest: () => void;
@@ -85,6 +86,7 @@ export function CliAgentCard({
   testStatus,
   authActionStatus,
   isTesting,
+  isScanning = false,
   isAuthenticating = false,
   onSelect,
   onTest,
@@ -110,8 +112,10 @@ export function CliAgentCard({
       : "CLI list unavailable";
   const showManualEntry = modelSelection.source === "custom" && (!modelSelection.customModel || !dropdownModels.includes(modelValue));
   const versionLabel = versionCompatibilityLabel(detection);
-  const testDisabled = isTestDisabled(detection, isTesting) || isAuthenticating;
-  const requestReadiness = describeCliDetection(catalog.id, detection);
+  const testDisabled = isTestDisabled(detection, isTesting) || isAuthenticating || isScanning;
+  const requestReadiness = isScanning
+    ? { state: "checking" as const, label: "Checking", message: "Verifying provider access." }
+    : describeCliDetection(catalog.id, detection);
   const requestReadinessClass = {
     checking: "bg-slate-100 text-slate-600",
     ready: "bg-emerald-50 text-emerald-700",
@@ -215,7 +219,7 @@ export function CliAgentCard({
               size="sm"
               variant="secondary"
               data-testid={`cli-agent-authenticate-${catalog.id}`}
-              disabled={isAuthenticating || isTesting}
+              disabled={isAuthenticating || isTesting || isScanning}
               onClick={onAuthenticate}
             >
               {isAuthenticating ? (

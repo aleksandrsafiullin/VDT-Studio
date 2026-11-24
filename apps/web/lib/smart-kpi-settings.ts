@@ -45,7 +45,8 @@ export function resolveSmartKpiSettings(settings: ExecutionSettings): ExecutionS
   const { providerId, providerConfig: config = {} } = resolveExecutionSettings(effective);
   const model = String(config.model ?? "auto");
   const reasoning = preference.reasoningByModel?.[model];
-  effective.modelReasoningBySource = reasoning === null ? {} : { [modelReasoningKey(providerId, config)]: isModelReasoningValue(reasoning) ? reasoning : false };
+  const requested = reasoning === null ? undefined : reasoning ?? (category === "cli_subscriptions" ? undefined : false);
+  effective.modelReasoningBySource = requested === undefined ? {} : { [modelReasoningKey(providerId, config)]: requested };
   return effective;
 }
 

@@ -258,8 +258,9 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 The inspector contains **Properties** and **Warnings**. Node edits apply directly without per-node Accept/Reject. AI requests use the chat or the node-card incoming-KPI action; the separate AI inspector tab, Review model and Explain scenario controls have been removed. Editor-level JSON import and JSON/Markdown export have also been removed. Full project archive import/export, including attached source files, is planned at the project-workspace level.
 
 The **VDT Agent** chat uses a compact **Context** disclosure for the brief, dark
-user bubbles and formatted assistant responses with Copy. Starter prompts fill a
-draft for review. The rounded composer groups **+ → Attach a file / Edit model
+user bubbles and formatted assistant responses with Copy. The welcome panel
+appears with the generated starter prompts. Smart KPI preparation waits until
+the starter request settles. Clicking a prompt fills a draft for review. The rounded composer groups **+ → Attach a file / Edit model
 context**, search, local voice input and a model picker. Enter sends;
 Shift + Enter adds a line. While a request runs with an empty draft, Stop is
 available. Status and the collapsed **Work log** use recorded runtime activity.
@@ -396,6 +397,7 @@ pnpm dev
 ```
 
 On macOS, double-click `run.command` or run `./run.command start`, `./run.command stop` or `./run.command restart` in Terminal. The launcher manages its own Next.js process for this checkout and keeps the browser URL at `http://localhost:3000`. If port 3000 is occupied outside this launcher, it reports the conflict. For an earlier launch or a manually started server, use its original Terminal window to stop it.
+The local development launcher limits Webpack module concurrency to reduce contention during cold route compilation. Set `NEXT_WEBPACK_PARALLELISM` before launching to override the default of 16.
 
 Open the URL printed by Next.js. For standalone local-runner development:
 
@@ -475,7 +477,9 @@ Choose **From file** for the selected KPI, or use the VDT Agent composer papercl
 
 ## AI Task Surface
 
-The schema registry contains 19 task contracts. Eighteen are exposed product tasks; `agent_plan` remains an internal compatibility contract and is not the primary build path.
+The schema registry contains 20 task contracts. Nineteen are exposed product tasks; `agent_plan` remains an internal compatibility contract and is not the primary build path.
+
+`suggest_chat_starters` asks the selected chat model for three brief, complete prompts about the open tree. The composer remains usable during the request and each prompt opens as an editable draft.
 
 | Category | Exposed tasks |
 |---|---|

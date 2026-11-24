@@ -34,7 +34,7 @@ remaining provider/platform/semantic qualification limits are recorded in the
 
 ## Local harness integration (2026-11-02)
 
-Implemented: declarative thirteen-harness catalog, shared ACP and Pi RPC execution, custom host profiles and multi-harness Suggested KPI with independent model/reasoning settings. Reasoning is Off by default; unsupported controls remain explicit. The pre-release catalog retains only current systems; retired entries and compatibility adapters are removed. Remaining: exact-version live semantic/permission qualification, packaged desktop acceptance and supported-platform certification; existing corrective/release gates remain open. See [Harness connections](HARNESS_CONNECTIONS.md).
+Implemented: declarative thirteen-harness catalog, shared ACP and Pi RPC execution, custom host profiles and multi-harness Suggested KPI with independent model/reasoning settings. CLI suggestions start with Provider default, and API and local HTTP suggestions start with Off. Unsupported controls remain explicit. The pre-release catalog retains only current systems; retired entries and compatibility adapters are removed. Remaining: exact-version live semantic/permission qualification, packaged desktop acceptance and supported-platform certification; existing corrective/release gates remain open. See [Harness connections](HARNESS_CONNECTIONS.md).
 
 ## Inspector layout (2026-11-02)
 
@@ -245,8 +245,8 @@ and card width are preserved.
 ## Agent chat interface
 
 Implemented for local web: a neutral conversation rail, collapsed model context,
-dark user bubbles, formatted assistant responses with Copy, draft-only starter
-prompts and one rounded composer. The + menu exposes existing file attachment
+dark user bubbles, formatted assistant responses with Copy, and one rounded
+composer. The welcome panel appears with the generated tree-specific prompts before Smart KPI starts preparing suggestions. The + menu exposes existing file attachment
 and context editing; search, voice and active-model readiness remain accessible.
 Web search uses a compact globe + Off/Auto/On control, neutral state emphasis,
 and separate provider feedback. The
@@ -398,7 +398,7 @@ Implemented at alpha level:
 - separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and legacy preference cleanup survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
-- 19 registered task schemas, 18 exposed product tasks and phase-gate drift checks;
+- 20 registered task schemas, 19 exposed product tasks and phase-gate drift checks;
 - experimental local file-based incoming-KPI discovery, with immutable project source reuse/download, provider-assisted mapping, required decisions, full-byte additive numeric/duration hierarchy calculations (four levels/200 nodes) and Description provenance;
 - alpha packaging, checksum/SBOM and provider-certification metadata.
 

@@ -1,4 +1,4 @@
-import { validateKpiSuggestionTaskInput, importProjectJson, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
+import { validateChatStarterInput, validateKpiSuggestionTaskInput, importProjectJson, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
 import {
   deepenNodeContextSchema,
   executiveSummaryInputSchema,
@@ -16,6 +16,7 @@ import {
 export const RUN_TASK_TYPES = [
   "deepen_node",
   "suggest_incoming_kpis",
+  "suggest_chat_starters",
   "simplify_branch",
   "suggest_alternative",
   "suggest_formula",
@@ -143,6 +144,7 @@ export function parseRunTaskRequest(body: RunTaskRequestBody): {
   const limits = TASK_LIMITS[taskType];
   const input = readRecord(body.input, "input");
   if (taskType === "suggest_incoming_kpis") return { taskType, input: validateKpiSuggestionTaskInput(input) };
+  if (taskType === "suggest_chat_starters") return { taskType, input: validateChatStarterInput(input) };
   const project = readProject(input.project, limits);
 
   switch (taskType) {
@@ -233,7 +235,7 @@ export function parseRunTaskRequest(body: RunTaskRequestBody): {
 
 export function assertRunTaskBodySize(bodyText: string, taskType: RunTaskType) {
   const maxBytes = TASK_LIMITS[taskType].maxInputBytes;
-  if (bodyText.length > maxBytes) {
+  if (new TextEncoder().encode(bodyText).byteLength > maxBytes) {
     throw new Error(`Request body must be ${maxBytes} bytes or fewer for ${taskType}.`);
   }
 }

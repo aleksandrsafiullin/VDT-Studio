@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
 import { clsx } from "clsx";
-import type { VdtNode } from "@vdt-studio/vdt-core";
+import type { ChatStarterOutput, VdtNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
@@ -13,7 +13,7 @@ import type { CliRequestReadiness } from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
-import { filterAgentChatHistoryForVdt, selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
+import { filterAgentChatHistoryForVdt, selectedCliScanStatus, selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 import { SkillContextControl } from "./skill-context-control";
@@ -100,7 +100,7 @@ export function SelectedKpiContext({ node, onClear }: { node: Pick<VdtNode, "id"
   );
 }
 
-export function SetupRail() {
+export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutput["prompts"] | undefined }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("execution");
   const [confirmSpeechDownload, setConfirmSpeechDownload] = useState(false);
@@ -118,8 +118,8 @@ export function SetupRail() {
   const brief = useVdtStudioStore((state) => state.brief);
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
-  const cliDetectionError = useVdtStudioStore((state) => state.cliDetectionError);
-  const isRescanningClis = useVdtStudioStore((state) => state.isRescanningClis);
+  const cliDetectionError = useVdtStudioStore((state) => selectedCliScanStatus(state).detectionError);
+  const isRescanningClis = useVdtStudioStore((state) => selectedCliScanStatus(state).isScanning);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const agentChatHistory = useVdtStudioStore((state) => state.agentChatHistory);
@@ -398,24 +398,20 @@ export function SetupRail() {
               </section>
             ) : null}
 
-            {!generateActivity && !historyOpen ? (
+            {!generateActivity && !historyOpen && starterPrompts ? (
               <div className={styles.emptyState} data-testid="agent-chat-empty">
                 <span className={styles.welcomeMark}><Sparkles size={22} strokeWidth={1.5} aria-hidden="true" /></span>
                 <p className={styles.emptyEyebrow}>A little clarity goes a long way</p>
                 <h3>What would you like<br />to explore?</h3>
                 <p className={styles.emptyDescription}>Turn your questions and data into<br />a clearer picture of what drives results.</p>
-                <div className={styles.suggestions}>
-                  {[
-                    { label: "Break down this KPI", text: "Help me break down the current KPI into its main drivers." },
-                    { label: "Explore my project data", text: "Help me understand which project data can support this model." },
-                    { label: "Review the model", text: "Review the current model and suggest improvements." }
-                  ].map((suggestion) => (
-                    <button type="button" key={suggestion.label} onClick={() => {
+                <div className={styles.suggestions} aria-live="polite" data-testid="agent-chat-starters">
+                  {starterPrompts.map((prompt) => (
+                    <button type="button" key={prompt} onClick={() => {
                       voice.onManualEdit();
-                      setInstructionText(suggestion.text);
+                      setInstructionText(prompt.trim());
                       instructionInputRef.current?.focus();
                     }}>
-                      <span>{suggestion.label}</span><ArrowUpRight size={14} aria-hidden="true" />
+                      <span>{prompt.trim()}</span><ArrowUpRight size={14} aria-hidden="true" />
                     </button>
                   ))}
                 </div>

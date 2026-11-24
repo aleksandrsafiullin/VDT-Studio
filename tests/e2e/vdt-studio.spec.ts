@@ -1490,7 +1490,14 @@ test("setup rail model menu opens provider settings only after its explicit acti
 
   await setupRail.getByTestId("execution-mode-configure").click();
 
-  await expect(page.getByRole("dialog", { name: "Model and reasoning", exact: true })).toBeVisible();
+  const summary = page.getByRole("dialog", { name: "Model and reasoning", exact: true });
+  await expect(summary).toBeVisible();
+  await expect(summary.getByRole("radio")).toHaveCount(0);
+  await summary.getByTestId("composer-model-list-trigger").click();
+  const models = page.getByRole("dialog", { name: "Select model", exact: true });
+  await expect(models.getByRole("radio").first()).toBeAttached();
+  await models.getByRole("button", { name: "Back to model and reasoning" }).click();
+  await expect(summary.getByTestId("composer-model-list-trigger")).toBeFocused();
   await expect(page.getByTestId("settings-modal")).not.toBeVisible();
   await page.getByRole("button", { name: "Provider settings", exact: true }).click();
 

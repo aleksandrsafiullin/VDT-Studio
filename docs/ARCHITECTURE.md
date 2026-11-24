@@ -335,6 +335,8 @@ characters fall back to identity with `contextTruncated`; missing targets fail
 admission. This uses existing request/checkpoint persistence without new storage
 fields, mutation permissions or finish authority.
 
+Empty-chat starters run as a separate `suggest_chat_starters` structured completion using the chat's selected model. The editor waits for native CLI authentication while full-chat session binding resolves independently. It releases Smart KPI skill and execution admission after the starter request settles. Ollama thinking is disabled for this request. Codex uses the lowest advertised effort when available, with short host-authored model instructions and the graph summary supplied separately as data. Claude Haiku 5.5 uses Low effort with a compact system prompt. Other backends use provider-default reasoning. Local model requests allow extra time to cold-load a model. A bounded graph summary carries topology, formula excerpts and availability flags. It excludes source rows and workspace history. The output validator checks length and sentence endings before the editor displays the set. The open VDT owns the result in memory. Closing the empty chat or changing the tree or connection aborts the request and invalidates its result.
+
 `chatKpiContextExcludedVdtId` is transient UI state, separate from the inspector's
 `selectedNodeId` and excluded from persistence. The clear button and empty-pane
 click set it for the active VDT; `selectNode` clears it even when selecting the

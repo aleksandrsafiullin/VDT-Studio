@@ -42,7 +42,7 @@ const edgeTypes: EdgeTypes = {
   vdtEdge: VdtRelationEdge
 };
 
-export function VdtCanvas() {
+export function VdtCanvas({ deferSmartKpi = false }: { deferSmartKpi?: boolean }) {
   const project = useVdtStudioStore((state) => state.project);
   const highlightedNodeIds = useVdtStudioStore((state) => state.highlightedNodeIds);
   const kpiHorizontalGap = useVdtStudioStore((state) => state.ui.kpiHorizontalGap);
@@ -52,7 +52,7 @@ export function VdtCanvas() {
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
-  const smart = useSmartKpi();
+  const smart = useSmartKpi(deferSmartKpi);
   const flow = useRef<ReactFlowInstance<Node<VdtNodeCardData, "vdtNode">, Edge<VdtEdgeData>> | undefined>(undefined);
   const [viewportRevision, setViewportRevision] = useState(0);
   const calculation = useMemo(() => calculateGraph(project), [project]);

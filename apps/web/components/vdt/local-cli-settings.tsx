@@ -67,8 +67,11 @@ export function resolveCliSettingsDetectionState(
   removedAgentIds: readonly CliAgentId[] = []
 ) {
   const detectionById = new Map((detections ?? []).map((detection) => [detection.id, detection] as const));
-  const scanPending = isScanning || detections === undefined;
-  const installedAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && (entry.custom || detectionById.get(entry.id)?.installed === true));
+  const scanPending = isScanning || (detections === undefined && !detectionError);
+  const installedAgents = CLI_CATALOG.filter((entry) => {
+    const detection = detectionById.get(entry.id);
+    return detection && !removedAgentIds.includes(entry.id) && (entry.custom || detection.installed);
+  });
   const removedAgents = CLI_CATALOG.filter((entry) => removedAgentIds.includes(entry.id));
   const notInstalledAgents = CLI_CATALOG.filter((entry) => !entry.custom && !removedAgentIds.includes(entry.id) && isConfirmedNotInstalled(detectionById.get(entry.id)));
 
@@ -120,6 +123,7 @@ export function LocalCliSettings() {
   const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
   const cliDetectionError = useVdtStudioStore((state) => state.cliDetectionError);
   const isRescanningClis = useVdtStudioStore((state) => state.isRescanningClis);
+  const cliScanCompleted = useVdtStudioStore((state) => state.cliScanCompleted);
   const rescanningCliId = useVdtStudioStore((state) => state.rescanningCliId);
   const cliModelByAgent = useVdtStudioStore((state) => state.cliModelByAgent);
   const cliDiscoveredModelsByAgent = useVdtStudioStore((state) => state.cliDiscoveredModelsByAgent);
@@ -166,13 +170,14 @@ export function LocalCliSettings() {
 
   useEffect(() => {
     const hasFullCatalog = CLI_CATALOG.every((entry) => cliDetectionAgents?.some((agent) => agent.id === entry.id));
-    if (hasAttemptedInitialScan.current || hasFullCatalog || isRescanningClis) {
+    const fullScanRunning = isRescanningClis && (!rescanningCliId || appMode !== "development_web");
+    if (hasAttemptedInitialScan.current || hasFullCatalog || fullScanRunning) {
       return;
     }
 
     hasAttemptedInitialScan.current = true;
     runInitialScan();
-  }, [cliDetectionAgents, isRescanningClis, runInitialScan]);
+  }, [appMode, cliDetectionAgents, isRescanningClis, rescanningCliId, runInitialScan]);
 
   useEffect(() => {
     if (!installToast) {
@@ -287,7 +292,9 @@ export function LocalCliSettings() {
           <div role="status" aria-live="polite" data-testid="local-cli-scan-status" className="flex items-center gap-2 rounded-lg border border-line px-4 py-4 text-xs text-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Checking installed providers…
           </div>
-        ) : cliDetectionError && installedAgents.length === 0 ? null : installedAgents.length === 0 ? (
+        ) : null}
+
+        {installedAgents.length === 0 ? !cliScanPending && !cliDetectionError && (
           <div data-testid="local-cli-empty-installed" className="rounded-xl border border-dashed border-line bg-slate-50/60 px-5 py-8 text-center">
             <p className="text-sm font-medium text-ink">{removedAgents.length > 0 ? "No subscriptions added" : "No installed providers found"}</p>
             <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted">{removedAgents.length > 0 ? "Add a provider back whenever you need it. Your CLI installations and provider accounts stay on this Mac." : "Install a supported CLI, sign in with your provider, and rescan."}</p>
@@ -297,6 +304,7 @@ export function LocalCliSettings() {
           <div className="space-y-3">
             {installedAgents.map((entry) => (
               <CliAgentCard key={entry.id} catalog={entry} detection={detectionById.get(entry.id)!}
+                isScanning={isRescanningClis && (!rescanningCliId || rescanningCliId === entry.id) && !cliScanCompleted.includes(entry.id)}
                 selected={isSubscriptionCliActive && selectedCliAgentId === entry.id}
                 modelSelection={resolveModelSelection(entry.id)} discoveredModels={cliDiscoveredModelsByAgent[entry.id] ?? []}
                 testStatus={cliTestStatusByAgent[entry.id]} authActionStatus={authStatusByAgent[entry.id]}

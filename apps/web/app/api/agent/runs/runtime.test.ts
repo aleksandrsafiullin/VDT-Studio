@@ -16,8 +16,8 @@ import { createStorageWriteActor } from "../../vdt/storage-write-adapter";
 import {
   createAgentRunStore,
   createAgentToolRegistryFromEnv,
-  resolveAgentResearchStatusFromEnv
 } from "./runtime";
+import { resolveAgentResearchStatusFromEnv } from "./session-research";
 
 const tempDirs: string[] = [];
 

@@ -168,6 +168,51 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
     }
   }, 30_000);
 
+  it("shares a provider probe between overlapping full and targeted scans", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-overlap-"));
+    try {
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
+
+      const [full, targeted] = await Promise.all([
+        GET(new Request("http://localhost:3000/api/ai/detect-clis")),
+        GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"))
+      ]);
+      const results = await readJson(full);
+      const provider = await readJson(targeted);
+      expect(targeted.headers.get("x-vdt-cli-probe-cache")).toBe("hit");
+      expect(provider.agents).toEqual(results.agents?.filter((agent) => agent.id === "codex"));
+      expect(provider.modelsByAgent?.codex).toEqual(results.modelsByAgent?.codex);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("streams each development provider result and a terminal marker", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-stream-"));
+    try {
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
+      const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis", {
+        headers: { accept: "application/x-ndjson" }
+      }));
+      expect(response.headers.get("content-type")).toBe("application/x-ndjson");
+      const frames = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
+      expect(frames[0].harnesses).toHaveLength(13);
+      expect(frames.at(-1)).toEqual({ done: true });
+      expect(frames.slice(1, -1).flatMap((frame) => frame.agents)).toHaveLength(13);
+      expect(frames).toContainEqual(expect.objectContaining({
+        agents: [expect.objectContaining({ id: "codex", status: "ready" })]
+      }));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("observes a changed Cursor login state immediately after sign-in and skips protected model discovery until ready", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-auth-refresh-"));
     try {

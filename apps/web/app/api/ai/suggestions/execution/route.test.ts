@@ -16,5 +16,18 @@ it("caps metadata-only admission by the lower raw user deadline and waits probe 
   let settled = false;
   const pending = POST(new Request("http://localhost:3000/api/ai/suggestions/execution", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ backendId: "codex_subscription", timeoutMs: 20 }) })).finally(() => { settled = true; });
   await vi.advanceTimersByTimeAsync(25); expect(signal.aborted).toBe(true); expect(settled).toBe(false);
-  reject(Object.assign(new Error("Owned probe closed."), { code: "CANCELLED" })); expect((await pending).status).toBe(409);
+  reject(Object.assign(new Error("Owned probe closed."), { code: "CANCELLED" })); const response = await pending;
+  expect(response.status).toBe(504);
+  expect(await response.json()).toMatchObject({ error: { code: "METADATA_TIMEOUT" } });
+});
+
+
+it("reports unsupported explicit reasoning as a settings error", async () => {
+  resolve.mockRejectedValue(Object.assign(new Error("internal details"), { code: "REASONING_UNSUPPORTED" }));
+  const response = await POST(new Request("http://localhost:3000/api/ai/suggestions/execution", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ backendId: "claude_subscription", model: "selected", modelReasoning: false })
+  }));
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({ error: { code: "REASONING_UNSUPPORTED", message: expect.stringContaining("Provider default") } });
 });

@@ -6,6 +6,7 @@ import {
   type IncomingKpiBatchInput, type IncomingKpiBatchPreview, type KpiSuggestionContext, type VdtProject
 } from "@vdt-studio/vdt-core";
 import { SmartKpiScheduler, type SmartKpiNodeSnapshot } from "@/lib/smart-kpi-scheduler";
+import { SMART_KPI_FAILURE_REASONS } from "@/lib/smart-kpi-errors";
 import { createSmartKpiPreparedSelection, type SmartKpiPreparedSelection } from "@/lib/smart-kpi-client";
 import { getSmartKpiLibraryProposal, recordSmartKpiDecision } from "@/lib/smart-kpi-decisions";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
@@ -28,7 +29,7 @@ export function smartKpiAgentIsActive(state: { isGenerating: boolean; agentRun?:
 }
 
 /** Exactly one scheduler for the active canvas owner; no provider work in cards. */
-export function useSmartKpi() {
+export function useSmartKpi(chatStartersPending: boolean) {
   const project = useVdtStudioStore(state => state.project);
   const targets = useMemo(() => smartKpiTargetIds({ graph: project.graph }), [project.graph]);
   const workspace = useVdtStudioStore(state => state.workspace);
@@ -46,29 +47,50 @@ export function useSmartKpi() {
   const scope = useMemo(() => resolveSmartKpiScope({ project, workspace, personalisation, smartKpiSkill: skillState }), [project, workspace, personalisation, skillState]);
   const guidanceReady = !scope.vdtId || Boolean(scope.selectedSkill);
   const guidanceReadyRef = useRef(guidanceReady); guidanceReadyRef.current = guidanceReady;
-  const [skillRefresh, refreshSkill] = useReducer(value => value + 1, 0);
+  const [skillRevision, refreshSkill] = useReducer(value => value + 1, 0);
   const rootName = project.graph.nodes.find(node => node.id === project.rootNodeId)?.name ?? project.name;
   useEffect(() => {
-    const changed = () => refreshSkill();
-    window.addEventListener("vdt:skills-changed", changed); window.addEventListener("focus", changed);
-    const timer = setInterval(changed, 10_000);
-    return () => { clearInterval(timer); window.removeEventListener("vdt:skills-changed", changed); window.removeEventListener("focus", changed); };
-  }, []);
-  useEffect(() => {
     const projectId = workspace.activeProjectId, vdtId = workspace.activeVdtId;
-    if (!projectId || !vdtId) return;
-    const controller = new AbortController(); let current = true;
+    if (!projectId || !vdtId || chatStartersPending) return;
+    let request: AbortController | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const previous = useVdtStudioStore.getState().smartKpiSkill;
     if (previous?.workspaceId !== projectId || previous.vdtId !== vdtId)
       useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "loading" } });
-    void loadSmartKpiSkill(projectId, vdtId, rootName, controller.signal).then(skill => {
-      if (!current) return;
-      const before = useVdtStudioStore.getState().smartKpiSkill;
-      if (before?.status === "ready" && before.workspaceId === projectId && before.vdtId === vdtId && kpiCanonicalJson(before.skill) === kpiCanonicalJson(skill)) return;
-      useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "ready", skill } });
-    }).catch(error => { if (current) useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "unavailable", reason: error instanceof Error ? error.message : "Choose a current skill in Context." } }); });
-    return () => { current = false; controller.abort(); };
-  }, [workspace.activeProjectId, workspace.activeVdtId, rootName, skillRefresh]);
+
+    const refresh = () => {
+      clearTimeout(timer);
+      if (request) return;
+      request = new AbortController();
+      const { signal } = request;
+      void loadSmartKpiSkill(projectId, vdtId, rootName, signal).then(skill => {
+        if (signal.aborted) return;
+        const before = useVdtStudioStore.getState().smartKpiSkill;
+        if (before?.status === "ready" && before.workspaceId === projectId && before.vdtId === vdtId && kpiCanonicalJson(before.skill) === kpiCanonicalJson(skill)) return;
+        useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "ready", skill } });
+      }).catch(error => {
+        if (!signal.aborted) useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "unavailable", reason: error instanceof Error ? error.message : "Choose a current skill in Context." } });
+      }).finally(() => {
+        if (signal.aborted) return;
+        request = undefined;
+        timer = setTimeout(poll, 10_000);
+      });
+    };
+
+    function poll() {
+      if (document.visibilityState === "hidden") timer = setTimeout(poll, 10_000);
+      else refresh();
+    }
+    window.addEventListener("vdt:skills-changed", refreshSkill);
+    window.addEventListener("focus", refresh);
+    refresh();
+    return () => {
+      request?.abort();
+      clearTimeout(timer);
+      window.removeEventListener("vdt:skills-changed", refreshSkill);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [workspace.activeProjectId, workspace.activeVdtId, rootName, skillRevision, chatStartersPending]);
   const scopeKey = useMemo(() => kpiCanonicalJson(scope), [scope]);
   const ownerKey = kpiCanonicalJson([scope.workspaceId, scope.vdtId, project.id]);
   const [admission, setAdmission] = useState<Admission>({ status: "preparing" });
@@ -148,18 +170,18 @@ export function useSmartKpi() {
   // Settings metadata admission is separate from model preparation and hover.
   const credentialStatus = resolveExecutionSettings(executionSettings).providerId === "local_runner" ? "local" : apiKeyStorageStatus;
   useEffect(() => {
-    let current = true;
+    const controller = new AbortController();
     setAdmission({ status: "preparing" });
-    if (credentialStatus === "saving" || credentialStatus === "loading") return () => { current = false; };
-    const timer = setTimeout(() => { void createSmartKpiPreparedSelection(executionSettings, { ...(runnerPairingToken ? { pairingToken: runnerPairingToken } : {}) })
-      .then(selection => { if (current) setAdmission({ status: "ready", selection }); })
-      .catch(error => { if (current) setAdmission({ status: error?.code === "CLEANUP_UNCONFIRMED" ? "blocked" : "unavailable",
+    if (chatStartersPending || credentialStatus === "saving" || credentialStatus === "loading") return;
+    const timer = setTimeout(() => { void createSmartKpiPreparedSelection(executionSettings, { signal: controller.signal, ...(runnerPairingToken ? { pairingToken: runnerPairingToken } : {}) })
+      .then(selection => { if (!controller.signal.aborted) setAdmission({ status: "ready", selection }); })
+      .catch(error => { if (!controller.signal.aborted) setAdmission({ status: error?.code === "CLEANUP_UNCONFIRMED" ? "blocked" : "unavailable",
         reason: error?.code === "CLEANUP_UNCONFIRMED" ? "The host must confirm previous process cleanup before preparing more suggestions."
           : error?.code === "REASONING_UNSUPPORTED" ? "This model cannot use the selected Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
           : error?.code === "CREDENTIAL_IDENTITY_UNVERIFIED" ? "This host cannot verify the CLI credential source. Recheck the CLI sign-in or choose another connection."
-          : "Choose a supported execution backend and model in Execution mode to prepare this KPI." }); }); }, 150);
-    return () => { current = false; clearTimeout(timer); };
-  }, [executionSettings, runnerPairingToken, metadataRetry, credentialStatus]);
+          : SMART_KPI_FAILURE_REASONS[error?.code] ?? "Choose a supported execution backend and model in Execution mode to prepare this KPI." }); }); }, 150);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [executionSettings, runnerPairingToken, metadataRetry, credentialStatus, chatStartersPending]);
 
   useEffect(() => {
     const instance = new SmartKpiScheduler({
@@ -192,6 +214,10 @@ export function useSmartKpi() {
       cancelClose(); previousProject.current = undefined; contexts.current.clear();
     };
   }, [scope.workspaceId, cancelClose]);
+
+  useEffect(() => {
+    scheduler.current?.setChatStartersPending(chatStartersPending);
+  }, [chatStartersPending, scope.workspaceId]);
 
   const executionKey = admission.selection ? kpiCanonicalJson(admission.selection.execution) : "";
   useEffect(() => { requestedPreparation.current = undefined; setFeedback(undefined); close(); }, [scope.workspaceId, scope.vdtId, project.id, close]);

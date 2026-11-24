@@ -40,3 +40,4 @@ export * from "./suggestions/incoming-compile";
 export * from "./suggestions/incoming-values";
 export * from "./suggestions/incoming-path";
 export * from "./personalisation";
+export * from "./chat-starters";

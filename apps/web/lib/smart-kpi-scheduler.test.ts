@@ -59,6 +59,24 @@ function create(options: ConstructorParameters<typeof SmartKpiScheduler>[0]): Sm
 }
 
 describe("Smart KPI bounded scheduling", () => {
+  it("keeps Smart KPI preparations queued until chat starters settle", async () => {
+    const transport = controlled();
+    const scheduler = create({ prepare: transport.prepare });
+    scheduler.setChatStartersPending(true);
+    await scheduler.setWorkspace(workspace(1));
+    await scheduler.request("child_0", { priority: "visible" });
+    await scheduler.retry(fixtureTarget);
+    await scheduler.whenSettled();
+    expect(transport.prepare).not.toHaveBeenCalled();
+
+    scheduler.setChatStartersPending(false);
+    await vi.waitFor(() => expect(transport.calls[0]?.context.targetNodeId).toBe(fixtureTarget));
+    transport.resolve(0);
+    await vi.waitFor(() => expect(transport.calls[1]?.context.targetNodeId).toBe("child_0"));
+    transport.resolve(1);
+    await scheduler.whenSettled();
+  });
+
   it("changes context/cache generation when only the selected skill pin changes", async () => {
     const transport = controlled(), s = create({ prepare: transport.prepare }), w = workspace();
     const pin = (version: number) => { const content = `# Service method\nVersion ${version}: disjoint service causes.`; return { id: "custom.service", title: "Service method", version, content,
@@ -248,7 +266,7 @@ describe("Smart KPI bounded scheduling", () => {
     await scheduler.request(fixtureTarget); await scheduler.whenSettled();
     const result = scheduler.getSnapshot(fixtureTarget);
     expect(result).toMatchObject({ state: { status: "unavailable" }, canApply: false });
-    expect("reason" in result.state && result.state.reason).toContain("explicitly select Provider default");
+    expect("reason" in result.state && result.state.reason).toContain("Provider default");
     expect(result.proposal).toBeUndefined();
     expect(prepare).toHaveBeenCalledOnce();
   });

@@ -58,6 +58,12 @@ plus a separate chat-binding readiness check. ACP session setup proves protocol
 compatibility, not subscription entitlement: account/provider access and quota
 may only be checked by that harness when a task runs. Model discovery uses
 initialize/session setup without a model prompt.
+Claude Code supplies its models through the installed CLI’s [Agent SDK initialization](https://code.claude.com/docs/en/agent-sdk/typescript) without a model prompt. The development host admits those models for new chat bindings.
+Claude chat and session resume use the trusted subscription home's default
+Claude Code layout. The host leaves `CLAUDE_CONFIG_DIR` unset for that home so
+the CLI can find its global `~/.claude.json` alongside its separate settings
+directory. A run without a subscription home keeps its configuration in the
+isolated state directory.
 Only advertised models are listed. A provider default remains available; explicit
 model selection must be accepted by the upstream session. Kiro's preset selects
 the V3 ACP engine without modifying the user's saved Kiro configuration. Copilot
@@ -126,12 +132,26 @@ Smart metadata operation, including the private desktop bridge. A runner change
 clears the previous host's model/reasoning catalog. Pairing tokens are sent only
 after loopback runner validation, without redirects.
 
-Reasoning starts **Off**, independently of chat. Only supported model levels
-are offered. Off maps to an explicit provider disable control; it is not an
-omitted override or Low. Some CLIs/models cannot disable reasoning or do not
-advertise a trustworthy control. VDT explains that limitation before preparing
-a suggestion. The user can explicitly choose **Provider default** or another
-supported model/level. There is no hidden reasoning fallback.
+CLI suggestions start with **Provider default** for each model without a saved
+reasoning choice. API and local HTTP suggestions start **Off**. These defaults
+are independent of chat. A saved **Off** requests disablement, and unsupported
+settings receive an explanation. The development web host allows up to 12
+seconds to verify CLI metadata. Switching model or connection cancels any
+superseded browser metadata check.
+
+For Suggested KPI and empty-chat questions, Claude Code receives a single-turn
+prompt containing the response schema. VDT validates the returned JSON against
+that schema. Chat starters use a compact Claude system prompt. The Haiku 5.5
+starter request uses Low effort. Other
+Claude structured completions pass the schema as inline JSON through the native
+`--json-schema` flag.
+
+Codex chat starters use the lowest advertised reasoning effort and a short,
+host-owned instruction file in the isolated execution directory. Standard input
+carries only the bounded tree summary. The CLI receives the response schema
+through its output-schema option.
+On macOS and Linux the runner stops its owned CLI group after the validated
+turn completes and waits for process cleanup before returning the prompts.
 
 The resolved model and reasoning participate in the preparation binding/cache
 identity across browser, HTTP, runner and desktop. Settings changes invalidate

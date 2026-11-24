@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
+import { buildChatStarterInput, buildKpiSuggestionContext, buildKpiSuggestionTaskInput, productionVolumeProject } from "@vdt-studio/vdt-core";
 import { createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
 import { createManifestRegistry } from "./manifests";
 import { executeCompletion, type ExecutorOptions } from "./executor";
@@ -48,6 +48,52 @@ describe("Smart local response reader ownership", () => {
 });
 
 describe("Smart task-scoped local transport", () => {
+  it.each(process.platform === "win32" ? [false] : [false, true])("isolates Codex starter instructions and waits for process close (early stop: %s)", async stopEarly => {
+    const root = await directory();
+    const running = Object.assign(child(), stopEarly ? { pid: 12345 } : {});
+    let signalStop!: () => void;
+    const stopping = new Promise<void>(resolve => { signalStop = resolve; });
+    const kill = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (signal === "SIGTERM") signalStop();
+      return true;
+    });
+    const input = buildChatStarterInput(productionVolumeProject, "en");
+    const output = { prompts: ["Check the root formula.", "Which inputs are missing?", "Review the main drivers."] };
+    let instructions = "";
+    let stdin = "";
+    const spawn = vi.fn((_file: string, args: readonly string[]) => {
+      const config = args.find(arg => arg.startsWith("model_instructions_file="))!;
+      const instructionsPath = JSON.parse(config.slice("model_instructions_file=".length));
+      running.stdin.on("data", chunk => { stdin += String(chunk); });
+      void readFile(instructionsPath, "utf8").then(value => {
+        instructions = value;
+        running.stdout.write(frames(output));
+        if (!stopEarly) running.emit("close", 0);
+      }, error => running.emit("error", error));
+      return running;
+    });
+    const pending = executeCompletion(createManifestRegistry().get("codex_subscription")!, {
+      requestId: crypto.randomUUID(), backendId: "codex_subscription", taskType: "suggest_chat_starters",
+      schemaId: "suggest-chat-starters-v1", model: "selected", input
+    }, new AbortController().signal, {
+      tempRoot: root, env: { HOME: root }, resolveExecutable: async () => "/bin/echo",
+      spawn: spawn as unknown as NonNullable<ExecutorOptions["spawn"]>
+    });
+    if (stopEarly) {
+      await stopping;
+      expect(kill).toHaveBeenCalledWith(-12345, "SIGTERM");
+      expect(await readdir(root)).toHaveLength(1);
+      running.emit("close", null, "SIGTERM");
+    }
+    const result = await pending;
+    expect(result.output).toEqual(output);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(stdin)).toEqual(input);
+    expect(instructions).toContain("one complete question or request");
+    expect(instructions).not.toContain(input.treeName);
+    expect(await readdir(root)).toEqual([]);
+  });
+
   it.skipIf(process.platform === "win32")("ends the owned native CLI group when the leader exits successfully", async () => {
     const root = await directory();
     const running = Object.assign(child(), { pid: 12345 });

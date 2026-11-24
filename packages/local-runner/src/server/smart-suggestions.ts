@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { CHAT_STARTER_INSTRUCTION, CHAT_STARTER_LIMITS, CHAT_STARTER_OUTPUT_SCHEMA, chatStarterTimeoutMs, validateChatStarterInput, validateChatStarterOutput } from "@vdt-studio/vdt-core";
 import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION, kpiSuggestionPromptInput,
   validateKpiSuggestionModelOutput, validateKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
 import { selectSmartCodexExecutable, readCodexSmartDefaultModel, readCodexSmartReasoningValues, SMART_CODEX_DISABLED_FEATURES, SMART_CODEX_CODE_MODE_CONFIG } from "@vdt-studio/model-bridge/local-runtime";
@@ -69,9 +70,9 @@ async function fetchSmart(fetcher: typeof fetch, url: string, init: RequestInit,
   return awaitHttpSettlement(fetcher(url, { ...init, signal, redirect: "error" }), signal);
 }
 
-export function parseSmartCodexOutput(stdout: string, reasoningDisabled = false): unknown {
+export function parseSmartCodexOutput(stdout: string, reasoningDisabled = false, validate: (value: unknown) => unknown = validateKpiSuggestionModelOutput): unknown {
   if (bytes(stdout) > 64 * 1024) throw fail("OUTPUT_TOO_LARGE", "Smart CLI stream exceeds its bound.");
-  try { const direct = JSON.parse(stdout); return validateKpiSuggestionModelOutput(direct); } catch { /* Require the closed event vocabulary below. */ }
+  try { const direct = JSON.parse(stdout); return validate(direct); } catch { /* Require the closed event vocabulary below. */ }
   let text: string | undefined, started = 0, completed = 0;
   for (const line of stdout.split(/\r?\n/).filter(v => v.trim())) {
     let event: Record<string, unknown>;
@@ -94,7 +95,7 @@ export function parseSmartCodexOutput(stdout: string, reasoningDisabled = false)
     throw fail("TOOL_ACTIVITY_REJECTED", "Smart CLI reported an unknown or unauthorized event.");
   }
   if (!text || completed !== 1) throw fail("INVALID_RESPONSE", "Smart CLI returned no completed structured assistant output.");
-  return validateKpiSuggestionModelOutput(JSON.parse(text));
+  return validate(JSON.parse(text));
 }
 
 export async function readLocalSmartReasoningCapabilities(manifest: BackendManifest, model: string, signal: AbortSignal, options: ExecutorOptions = {}): Promise<LocalModelReasoningCapabilities | undefined> {
@@ -107,9 +108,25 @@ export async function readLocalSmartReasoningCapabilities(manifest: BackendManif
   return parseLocalModelReasoningCapabilities(await readSmartResponse(response, signal), manifest.id);
 }
 
-async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], hasSelectedSkill = false): Promise<unknown> {
+const kpiCompletionContract = {
+  instruction: SMART_KPI_INSTRUCTION,
+  schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA as Record<string, unknown>,
+  schemaName: "smart_kpi",
+  outputTokens: Number(limits.outputTokens),
+  validate: validateKpiSuggestionModelOutput as (value: unknown) => unknown
+};
+
+const starterCompletionContract: typeof kpiCompletionContract = {
+  instruction: CHAT_STARTER_INSTRUCTION,
+  schema: CHAT_STARTER_OUTPUT_SCHEMA,
+  schemaName: "chat_starters",
+  outputTokens: CHAT_STARTER_LIMITS.outputTokens,
+  validate: validateChatStarterOutput
+};
+
+async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], hasSelectedSkill = false, contract = kpiCompletionContract): Promise<unknown> {
   const base = manifest.localHttp!.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
-  let reasoning: Record<string, unknown> = {};
+  let reasoning: Record<string, unknown> = native && contract === starterCompletionContract ? { think: false } : {};
   if (modelReasoning !== undefined) {
     const capabilities = await readLocalSmartReasoningCapabilities(manifest, model, signal, options);
     const selected = modelReasoning === false ? capabilities?.values.find(value => value === false || ["none", "off", "disabled"].includes(String(value))) : capabilities?.values.find(value => value === modelReasoning);
@@ -121,10 +138,10 @@ async function localCompletion(manifest: BackendManifest, model: string, prompt:
       reasoning = selected === false ? {} : { reasoning_effort: selected };
     }
   }
-  const body = native ? { model, stream: false, ...reasoning, format: KPI_SUGGESTION_MODEL_JSON_SCHEMA,
-    options: { num_predict: limits.outputTokens, num_ctx: hasSelectedSkill ? 32768 : 8192 }, messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content: prompt }] }
-    : { model, ...reasoning, ...(reasoning.reasoning_effort === undefined ? { max_tokens: limits.outputTokens, temperature: 0 } : { max_completion_tokens: limits.outputTokens }), response_format: { type: "json_schema", json_schema: { name: "smart_kpi", strict: true, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA } },
-      messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content: prompt }] };
+  const body = native ? { model, stream: false, ...reasoning, format: contract.schema,
+    options: { num_predict: contract.outputTokens, num_ctx: hasSelectedSkill ? 32768 : 8192 }, messages: [{ role: "system", content: contract.instruction }, { role: "user", content: prompt }] }
+    : { model, ...reasoning, ...(reasoning.reasoning_effort === undefined ? { max_tokens: contract.outputTokens, temperature: 0 } : { max_completion_tokens: contract.outputTokens }), response_format: { type: "json_schema", json_schema: { name: contract.schemaName, strict: true, schema: contract.schema } },
+      messages: [{ role: "system", content: contract.instruction }, { role: "user", content: prompt }] };
   const serialized = JSON.stringify(body);
   if (bytes(serialized) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart provider envelope exceeds its bounded input allowance.");
   const response = await fetchSmart(options.fetch ?? fetch, native ? `${base.replace(/\/v1$/, "")}/api/chat` : `${base}/chat/completions`,
@@ -140,15 +157,21 @@ async function localCompletion(manifest: BackendManifest, model: string, prompt:
   if (payload.done_reason === "length" || payload.choices?.[0]?.finish_reason === "length") throw fail("OUTPUT_TOO_LARGE", "Smart completion exhausted its token budget.");
   if (native ? payload.done !== true || payload.done_reason !== "stop" : payload.choices?.length !== 1 || payload.choices[0]?.finish_reason !== "stop" || payload.choices[0].message?.function_call || payload.choices[0].message?.refusal) throw fail("INVALID_RESPONSE", "Smart local provider did not acknowledge a completed tool-free response.");
   if (typeof message?.content !== "string" || bytes(message.content) > limits.outputBytes) throw fail("OUTPUT_TOO_LARGE", "Smart output is missing or exceeds 16 KiB.");
-  return validateKpiSuggestionModelOutput(JSON.parse(message.content));
+  return contract.validate(JSON.parse(message.content));
 }
 
-async function cliCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"]): Promise<unknown> {
+async function cliCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], contract = kpiCompletionContract): Promise<unknown> {
   const source = options.env ?? process.env;
+  const starter = contract === starterCompletionContract;
   const selectedModel = model === "auto" ? await readCodexSmartDefaultModel(source) : model;
-  const effort = modelReasoning === false ? "none" : modelReasoning;
+  const advertised = modelReasoning !== undefined || starter
+    ? await readCodexSmartReasoningValues(source, selectedModel) : [];
+  const selectedReasoning = starter
+    ? ([false, "minimal", "low"] as const).find(value => advertised.includes(value))
+    : modelReasoning;
+  const effort = selectedReasoning === false ? "none" : selectedReasoning;
   if (effort !== undefined && !isCheckpointReasoningEffort(effort)) throw fail("REASONING_UNSUPPORTED", "Unsupported Codex reasoning setting.");
-  if (modelReasoning !== undefined && !(await readCodexSmartReasoningValues(source, selectedModel)).includes(modelReasoning === "none" ? false : modelReasoning)) throw fail("REASONING_UNSUPPORTED", "The selected Codex model does not advertise this reasoning setting. Refresh its model catalog or choose Provider default.");
+  if (modelReasoning !== undefined && !advertised.includes(modelReasoning === "none" ? false : modelReasoning)) throw fail("REASONING_UNSUPPORTED", "The selected Codex model does not advertise this reasoning setting. Refresh its model catalog or choose Provider default.");
   const probeEnv: NodeJS.ProcessEnv = { NODE_ENV: source.NODE_ENV ?? "production", ...Object.fromEntries(["PATH", "HOME", "USER", "TMPDIR", "LANG"].flatMap(k => source[k] ? [[k, source[k]!]] : [])) };
   const selected = options.resolveExecutable ? await options.resolveExecutable(manifest, source) : (await selectSmartCodexExecutable(source, signal))?.executable;
   signal.throwIfAborted(); if (!selected) throw fail("BACKEND_NOT_INSTALLED", "Selected Codex CLI is unavailable.");
@@ -164,15 +187,22 @@ async function cliCompletion(manifest: BackendManifest, model: string, prompt: s
     if (authRoot) for (const name of ["auth.json", "installation_id", "models_cache.json"]) {
       try { await copyFile(path.join(authRoot, name), path.join(home, name)); await chmod(path.join(home, name), 0o600); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
     }
-    const schemaPath = path.join(cwd, "schema.json"); await writeFile(schemaPath, JSON.stringify(KPI_SUGGESTION_MODEL_JSON_SCHEMA), { mode: 0o600, flag: "wx" });
+    const schemaPath = path.join(cwd, "schema.json"); await writeFile(schemaPath, JSON.stringify(contract.schema), { mode: 0o600, flag: "wx" });
+    const starterArgs: string[] = [];
+    if (starter) {
+      const instructionsPath = path.join(cwd, "instructions.txt");
+      await writeFile(instructionsPath, contract.instruction, { mode: 0o600, flag: "wx" });
+      starterArgs.push("-c", `model_instructions_file=${JSON.stringify(instructionsPath)}`);
+    }
     const args = ["exec", "--strict-config", "--ephemeral", "--json", "--color", "never", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
       ...SMART_CODEX_DISABLED_FEATURES.flatMap(feature => ["--disable", feature]), ...SMART_CODEX_CODE_MODE_CONFIG.flatMap(config => ["-c", config]), "-c", 'web_search="disabled"', "-c", "tools.update_plan.enabled=false", "-c", "tools.experimental_request_user_input.enabled=false",
-      "-c", "sandbox_workspace_write.network_access=false", ...(effort === undefined ? [] : ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`]), "--output-schema", schemaPath, ...(selectedModel ? ["--model", selectedModel] : []), "-C", cwd, "-"];
+      "-c", "sandbox_workspace_write.network_access=false", ...(effort === undefined ? [] : ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`]), ...starterArgs, "--output-schema", schemaPath, ...(selectedModel ? ["--model", selectedModel] : []), "-C", cwd, "-"];
     signal.throwIfAborted();
     const js = /\.(?:cjs|mjs|js)$/.test(executable);
     child = (options.spawn ?? ((file, argv, config) => spawn(file, [...argv], config)))(js ? process.execPath : executable, js ? [executable, ...args] : args,
       { cwd, env: { ...probeEnv, HOME: cwd, CODEX_HOME: home }, shell: false, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
     const running = child; let stdout = "", stdoutBytes = 0, stderr = 0, failure: Error | undefined, killTimer: NodeJS.Timeout | undefined, cleanupTimer: NodeJS.Timeout | undefined;
+    let stoppedAfterStarter = false;
     const decoder = new TextDecoder("utf-8", { fatal: true });
     const kill = (sig: NodeJS.Signals) => { if (!running.pid) return; try { if (process.platform !== "win32") process.kill(-running.pid, sig); else running.kill(sig); } catch { /* already exited */ } };
     let rejectCleanup: (error: Error) => void = () => {};
@@ -195,19 +225,40 @@ async function cliCompletion(manifest: BackendManifest, model: string, prompt: s
           try { stdout += decoder.decode(chunk, { stream: true }); }
           catch { failure = fail("INVALID_RESPONSE", "Smart CLI returned malformed UTF-8."); stop(); return; }
           // Reject reported tools immediately, before a later assistant result.
+          let terminal = false;
           for (const line of stdout.split(/\r?\n/).slice(0, -1)) {
-            try { const e = JSON.parse(line); if (String(e.type).startsWith("item.") && e.item && !["agent_message", "assistant_message", "reasoning"].includes(e.item.type)) { failure = e.item.type === "error" ? codexItemError(e.item) : fail("TOOL_ACTIVITY_REJECTED", "Smart CLI reported tool activity."); stop(); } } catch { /* final parser handles malformed frames */ }
+            try {
+              const event = JSON.parse(line);
+              if (String(event.type).startsWith("item.") && event.item && !["agent_message", "assistant_message", "reasoning"].includes(event.item.type)) {
+                failure = event.item.type === "error" ? codexItemError(event.item) : fail("TOOL_ACTIVITY_REJECTED", "Smart CLI reported tool activity.");
+                stop();
+                return;
+              }
+              if (event.type === "turn.completed") terminal = true;
+            } catch { /* final parser handles malformed frames */ }
+          }
+          if (starter && terminal && !failure && !stoppedAfterStarter && process.platform !== "win32" && running.pid) {
+            // The one allowed turn is done. End the owned group and still wait
+            // for close so that the next task never overlaps its cleanup.
+            try {
+              parseSmartCodexOutput(stdout.slice(0, stdout.lastIndexOf("\n") + 1), effort === "none", contract.validate);
+              stoppedAfterStarter = true;
+            } catch (error) {
+              failure = error instanceof Error ? error : fail("INVALID_RESPONSE", "Invalid chat starter response.");
+            }
+            stop();
           }
         });
         running.stderr.on("data", (chunk: Buffer) => { stderr += chunk.byteLength; if (stderr > 8192) { failure = fail("OUTPUT_TOO_LARGE", "Smart CLI stderr exceeded its bound."); stop(); } });
-        running.once("close", code => {
+        running.once("close", (code, exitSignal) => {
           if (cleanupTimer) clearTimeout(cleanupTimer); kill("SIGKILL");
           if (!failure) { try { stdout += decoder.decode(); } catch { failure = fail("INVALID_RESPONSE", "Smart CLI returned malformed UTF-8."); } }
-          if (failure) reject(failure); else if (code !== 0) reject(fail("BACKEND_FAILED", "Smart CLI completion failed.")); else resolve();
+          const plannedStop = stoppedAfterStarter && (exitSignal === "SIGTERM" || exitSignal === "SIGKILL");
+          if (failure) reject(failure); else if (code !== 0 && !plannedStop) reject(fail("BACKEND_FAILED", "Smart CLI completion failed.")); else resolve();
         });
         if (signal.aborted) abort(); running.stdin.end(prompt);
       });
-      return parseSmartCodexOutput(stdout, modelReasoning === false || modelReasoning === "none");
+      return parseSmartCodexOutput(stdout, effort === "none", contract.validate);
     } finally { signal.removeEventListener("abort", abort); if (killTimer) clearTimeout(killTimer); if (cleanupTimer) clearTimeout(cleanupTimer); }
   } finally {
     // Spawn/stream promise above settles only after close; this run owns cwd.
@@ -239,4 +290,39 @@ export async function executeSmartSuggestion(manifest: BackendManifest, request:
     return { output, outputBytes: bytes(JSON.stringify(output)), schemaValid: true, repaired: false };
   } catch (error) { if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") throw error; if (timedOut) throw fail("TIMEOUT", "Smart suggestion preparation timed out."); if (caller.aborted) throw abortError(); throw error; }
   finally { clearTimeout(timer); caller.removeEventListener("abort", abort); }
+}
+
+/** Read-only one-shot completion with the same native safety controls as Smart KPI. */
+export async function executeChatStarters(manifest: BackendManifest, request: CompletionRequest, caller: AbortSignal, options: ExecutorOptions): Promise<ExecutionResult> {
+  const wrapped = request.input && typeof request.input === "object" && "data" in request.input
+    ? (request.input as { data: unknown }).data : request.input;
+  const input = validateChatStarterInput(wrapped);
+  const maxTimeoutMs = chatStarterTimeoutMs(manifest.id);
+  const timeoutMs = Math.min(request.timeoutMs ?? maxTimeoutMs, maxTimeoutMs);
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal = AbortSignal.any([caller, deadline]);
+  // Provider default is portable and avoids applying the chat's high-effort preference.
+  const completion = { ...request, input, timeoutMs };
+  delete completion.modelReasoning;
+  let output: unknown;
+  try {
+    if (manifest.kind === "local_http") {
+      output = await localCompletion(manifest, request.model ?? manifest.localHttp!.defaultModel, JSON.stringify(input),
+        signal, options, undefined, false, starterCompletionContract);
+    } else if (manifest.id === "codex_subscription") {
+      output = await cliCompletion(manifest, request.model ?? "auto", JSON.stringify(input), signal, options, undefined, starterCompletionContract);
+    } else if (manifest.harness && manifest.harness.transport !== "native") {
+      output = (await executeHarnessCompletion(manifest, completion, signal, options)).output;
+    } else {
+      output = (await executeCli(manifest, completion, signal, options)).output;
+    }
+    signal.throwIfAborted();
+  } catch (error) {
+    if ((error as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw error;
+    if (caller.aborted) throw abortError();
+    if (deadline.aborted) throw fail("TIMEOUT", "Chat starter generation timed out.");
+    throw error;
+  }
+  const validated = validateChatStarterOutput(output);
+  return { output: validated, outputBytes: bytes(JSON.stringify(validated)), schemaValid: true, repaired: false };
 }

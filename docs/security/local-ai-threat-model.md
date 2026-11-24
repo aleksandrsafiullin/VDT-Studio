@@ -216,6 +216,16 @@ are retained and blocked from automatic overwrite. No keys, raw model prompts,
 permissions, actor authority, revision CAS or API payload policy are added by
 this encoding. If normal and compact writes both fail, no new request is sent.
 
+## Automatic chat starters
+
+Opening a VDT in an empty conversation with a connected model sends a bounded
+tree summary through that selected connection. It contains KPI names, types,
+formula excerpts, tree links and coverage flags. It excludes underlying file
+rows, source contents and chat history. Tree fields are model data. The result
+contains three editable chat drafts. The application dispatches no tool calls
+and makes no graph changes. Packaged Cursor uses the selected managed profile and
+its qualified process isolation.
+
 ## Smart KPI bounded preparation (partial product integration)
 
 Selected guidance amendment 2026-11-03: the trusted-local Smart skill metadata

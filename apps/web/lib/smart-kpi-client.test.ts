@@ -125,12 +125,17 @@ describe("stable credential and selection identities", () => {
     expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body)).providerConfig.modelReasoning).toBe(false);
     expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body)).providerConfig).not.toHaveProperty("modelReasoning");
   });
-  it("sends the Smart model and Off setting to CLI metadata admission", async () => {
+  it("passes the Smart model to CLI metadata and honors an explicit Off", async () => {
     const chat = cliSettings(), settings = { ...chat, smartKpiBySource: updateSmartKpiPreferences(chat, { model: "fast-cli" }) };
     const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, identity: { ...binding, requestModel: "fast-cli", modelId: "fast-cli" } }));
     const selected = await createSmartKpiPreparedSelection(settings, { fetch, appMode: "development_web" });
     expect(selected.execution.modelId).toBe("fast-cli");
-    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ backendId: "codex_subscription", model: "fast-cli", modelReasoning: false });
+    const initialPayload = JSON.parse(String(fetch.mock.calls[0]![1]?.body));
+    expect(initialPayload).toMatchObject({ backendId: "codex_subscription", model: "fast-cli" });
+    expect(initialPayload).not.toHaveProperty("modelReasoning");
+    const off = { ...settings, smartKpiBySource: updateSmartKpiPreferences(settings, { reasoning: false }) };
+    await createSmartKpiPreparedSelection(off, { fetch, appMode: "development_web" });
+    expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body))).toMatchObject({ model: "fast-cli", modelReasoning: false });
     expect(settings.cliModelSelection?.customModel).toBe("selected");
   });
   it("never provisions credentials, changes backend, or uses an ephemeral identity fallback", async () => {

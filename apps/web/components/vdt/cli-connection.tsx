@@ -5,7 +5,7 @@ import { createAgentClient } from "@/lib/agent-client";
 import { hasLocalAiUi } from "@/lib/app-mode";
 import { connectCliConnection } from "@/lib/cli-connection";
 import { useCliConnectionCheck } from "@/lib/cli-connection-state";
-import { useVdtStudioStore } from "./vdt-store";
+import { selectedCliScanStatus, useVdtStudioStore } from "./vdt-store";
 
 export function CliConnection() {
   useEffect(() => {
@@ -16,11 +16,12 @@ export function CliConnection() {
       connection = connectCliConnection({
         getSnapshot: () => {
           const state = useVdtStudioStore.getState();
+          const status = selectedCliScanStatus(state);
           return {
             settings: state.executionSettings,
             detections: state.cliDetectionAgents,
-            detectionError: state.cliDetectionError,
-            scanning: state.isRescanningClis,
+            detectionError: status.detectionError,
+            scanning: status.isScanning,
             testing: Boolean(state.executionSettings.selectedCliAgentId && state.isTestingCliByAgent[state.executionSettings.selectedCliAgentId]),
             removedAgentIds: state.removedCliAgentIds,
             vdtId: state.workspace.activeVdtId
@@ -29,7 +30,8 @@ export function CliConnection() {
         subscribe: (listener) => useVdtStudioStore.subscribe(listener),
         rescan: (agentId) => useVdtStudioStore.getState().rescanClis(agentId),
         getBindings: () => createAgentClient().getExecutionBindings({
-          includePackagedCursor: useVdtStudioStore.getState().executionSettings.selectedCliAgentId === "cursor-agent"
+          includePackagedCursor: useVdtStudioStore.getState().executionSettings.selectedCliAgentId === "cursor-agent",
+          signal: AbortSignal.timeout(/Windows/.test(navigator.userAgent) ? 110_000 : 20_000)
         }),
         publish: (check) => useCliConnectionCheck.setState({
           ...check, catalog: check.bindings ?? useCliConnectionCheck.getState().catalog

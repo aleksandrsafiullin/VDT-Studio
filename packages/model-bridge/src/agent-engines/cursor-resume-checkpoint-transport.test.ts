@@ -224,6 +224,29 @@ async function executeOpen(
 }
 
 describe("CursorResumeCheckpointTransport", () => {
+  it("validates a managed Cursor starter response in one isolated segment", async () => {
+    const isolated = { ...await environment(), credentialEnvironment: [] };
+    const prompts = ["What drives output?", "Which inputs are missing?", "How is downtime counted?"];
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd, sessionId: "session-starters", model: "gpt-5.5-high",
+      result: JSON.stringify({ prompts })
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      isolatedWorkspace: true,
+      vendorSandboxMode: "disabled",
+      runner
+    });
+    const result = await transport.completeChatStarters({
+      environment: isolated, model: "gpt-5.5-high", prompt: "Generate three tree prompts.",
+      signal: new AbortController().signal
+    });
+    expect(result).toEqual({ prompts });
+    expect(runner.requests).toHaveLength(1);
+    expect(runner.requests[0]?.args).not.toContain("--resume");
+  });
+
   it.each(["gpt-5.5-high", "auto"])("opens and resumes %s with shell-free reviewed arguments", async (model) => {
     const isolated = await environment();
     const runner = new FakeRunner((request) => processResult(stream({

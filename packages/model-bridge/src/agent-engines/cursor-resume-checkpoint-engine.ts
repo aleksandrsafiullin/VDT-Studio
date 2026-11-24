@@ -1,3 +1,7 @@
+import {
+  CHAT_STARTER_INSTRUCTION, CHAT_STARTER_LIMITS, CHAT_STARTER_OUTPUT_SCHEMA,
+  validateChatStarterInput, type ChatStarterInput, type ChatStarterOutput
+} from "@vdt-studio/vdt-core";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import {
@@ -64,7 +68,7 @@ const CURSOR_BUILD_PROMPT_RULE = [
 type CursorCheckpointCapability = Extract<AgentCapabilityProfile, { executionProfile: "external_cli_agent" }>;
 
 export interface CursorResumeCheckpointEnvironmentFactoryInput {
-  readonly binding: AgentSessionBinding;
+  readonly binding: Pick<AgentSessionBinding, "runId" | "bindingId">;
   readonly recovery: boolean;
   readonly signal: AbortSignal;
 }
@@ -1119,6 +1123,25 @@ export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#idFactory = options.idFactory ?? randomUUID;
     this.capability = buildCapability(options);
+  }
+
+  async completeChatStarters(bindingId: string, input: ChatStarterInput, caller: AbortSignal): Promise<ChatStarterOutput> {
+    const evidence = qualifiedTransportEvidence.get(this.#options.transport);
+    if (!evidence) throw engineError("EXTERNAL_ENGINE_NOT_QUALIFIED", "Chat starters require the managed Cursor qualification.");
+    const context = validateChatStarterInput(input);
+    const signal = AbortSignal.any([caller, AbortSignal.timeout(CHAT_STARTER_LIMITS.timeoutMs)]);
+    signal.throwIfAborted();
+    const environment = await this.#options.sessionEnvironmentFactory({
+      binding: { bindingId, runId: randomUUID() }, recovery: false, signal
+    });
+    try {
+      const prompt = `${CHAT_STARTER_INSTRUCTION}\n${JSON.stringify({ input: context, schema: CHAT_STARTER_OUTPUT_SCHEMA })}`;
+      const output = await this.#options.transport.completeChatStarters({ environment, model: evidence.modelId, prompt, signal });
+      signal.throwIfAborted();
+      return output;
+    } finally {
+      await environment.close?.();
+    }
   }
 
   async openSession(startInput: AgentEngineStart, host: AgentEngineHost): Promise<AgentRunSession> {

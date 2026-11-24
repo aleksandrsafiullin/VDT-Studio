@@ -61,6 +61,12 @@ describe("Smart preparation service authority and deadlines", () => {
     const first = prepareSmartKpiResponse({ input: data, providerId: "local_runner", providerConfig }, new AbortController().signal, "http://localhost:3000", { provider: async () => ({ completeStructured: async () => new Promise(resolve => { finish = resolve; }) }) as unknown as AiProvider });
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     await expect(prepareSmartKpiResponse({ input: data, providerId: "local_runner", providerConfig }, new AbortController().signal, "http://localhost:3000")).rejects.toMatchObject({ code: "PREPARATION_IN_PROGRESS" });
+    const busy = await suggestions(new Request("http://localhost:3000/api/ai/suggestions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: data, providerId: "local_runner", providerConfig: { ...providerConfig, model: "new-selection" } })
+    }));
+    expect(busy.status).toBe(409);
+    await expect(busy.json()).resolves.toMatchObject({ error: { code: "PREPARATION_IN_PROGRESS" } });
     finish(empty); await first;
     await expect(prepareSmartKpiResponse({ input: data, providerId: "local_runner", providerConfig }, new AbortController().signal, "http://localhost:3000", { provider: async () => ({ completeStructured: async () => { throw Object.assign(new Error("unknown owned closure"), { code: "CLEANUP_UNCONFIRMED" }); } }) as unknown as AiProvider })).rejects.toMatchObject({ code: "CLEANUP_UNCONFIRMED" });
     const never = vi.fn();
