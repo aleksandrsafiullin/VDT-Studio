@@ -211,6 +211,16 @@ describe("formula-editor-model", () => {
     expect(editorTokensToFormula(parseFormulaToEditorTokens(formula))).toBe(formula);
   });
 
+  it("shows localized and mixed-case calls as built-ins while preserving references", () => {
+    const formula = "МИН(Stage_A, mAx(Stage_B, MIN))";
+    const tokens = parseFormulaToEditorTokens(formula);
+    const segments = editorTokensToSegments(tokens, new Map());
+    expect(validateFormulaString(formula)).toEqual({ ok: true });
+    expect(segments.filter(segment => segment.type === "function").map(segment => segment.name)).toEqual(["min", "max"]);
+    expect(editorTokensToFormula(tokens)).toBe("min(Stage_A, max(Stage_B, MIN))");
+    expect([...getReferencedNodeIds(formula)]).toEqual(["Stage_A", "Stage_B", "MIN"]);
+  });
+
   it("getReferencedNodeIds excludes min/max in call position", () => {
     const referenced = getReferencedNodeIds("min(a, b)");
     expect([...referenced].sort()).toEqual(["a", "b"]);

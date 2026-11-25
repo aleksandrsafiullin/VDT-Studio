@@ -35,6 +35,21 @@ function cell(sheet: string, address: string) {
 }
 
 describe("editable Excel VDT export", () => {
+  it("leaves explicit unknown inputs blank while preserving observed zero and scenario overrides", () => {
+    const model = project([node("root", { formula: "missing + known" }),
+      node("missing", { value: 90, baselineValue: 90, valueStatus: "unknown" }),
+      node("known", { baselineValue: 0, valueStatus: "user_provided_value" })]);
+    const baseline = calculateGraph(model);
+    expect(baseline.values).toEqual({ known: 0 });
+    expect(baseline.rootValue).toBeUndefined();
+    expect(calculateGraph(model, { overrides: { missing: 70 } }).rootValue).toBe(70);
+    const { parts, workbookMapping: mapping } = workbook(model);
+    const source = parts["xl/worksheets/sheet3.xml"]!;
+    expect(cell(source, mapping.source.missing!.valueCell).value).toBeUndefined();
+    expect(cell(source, mapping.source.known!.valueCell).value).toBe("0");
+    expect(model.graph.nodes[1]!.baselineValue).toBe(90);
+  });
+
   it("exports a live inverse Baseline formula and inherits its solved value in scenarios", () => {
     const model = project([node("root", { formula: "known - loss" }), node("known", { baselineValue: 100 }),
       node("loss", { baselineValue: 7, goalSeek: { targetNodeId: "root", targetValue: 80 } })], [["root", "known"], ["root", "loss"]]);
@@ -315,9 +330,9 @@ describe("editable Excel VDT export", () => {
     expect(sheet).not.toContain("drawing");
   });
 
-  it("translates the AST with exact grouping, unary negatives, raw percentage values and normalized numeric literals", () => {
+  it.each(["min(a, max(b, 90%))", "МиН(a, MaX(b, 90%))"])("translates %s with correct Excel grouping and numeric literals", (call) => {
     const model = project([
-      node("root", { formula: "-(a - b) / (a + b) + min(a, max(b, 90%))" }),
+      node("root", { formula: `-(a - b) / (a + b) + ${call}` }),
       node("a", { baselineValue: 2, unit: "%" }), node("b", { baselineValue: 1 }),
       node("comma", { formula: "1,85 * a + 1,000" }), node("min", { baselineValue: 3 }),
       node("reserved", { formula: "min + max(a, b)" })

@@ -21,7 +21,8 @@ describe.skipIf(process.platform === "win32")("Smart native Claude metadata matc
     expect((await resolve()).reasoningValues).toEqual([]);
     await expect(resolve("claude-sonnet-4-6", false)).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    expect(calls).toHaveLength(10);
+    expect(calls.filter(args => args.join(" ") === "--version")).toHaveLength(5);
+    expect(calls.filter(args => args.join(" ") === "auth status")).toHaveLength(4);
     expect(calls.every(args => args.join(" ") === "--version" || args.join(" ") === "auth status")).toBe(true);
   });
 });

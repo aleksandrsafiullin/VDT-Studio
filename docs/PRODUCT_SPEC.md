@@ -381,6 +381,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - Cold project routes use **Loading project…** until the selected project is ready, without unselected-project or creation prompts. Fetch failures and missing projects provide Retry and Back to projects. Retry explicitly reloads the project; a background refresh failure remains visible alongside the cached workspace.
 - Project summaries omit the AI-run counter. Other counters use SQL aggregates rather than loading conversation, run or proposal payloads. Stored AI sessions and history are preserved.
 - The editor's Home and Back to project links wait for save confirmation before leaving. A payload identical to the active saved revision reuses that revision. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
+- Chat can offer **Open project workspace** for the active project and VDT. Following the link uses the editor's save and conflict controls. In the project workspace, **Manage VDT** on each VDT card provides a name field and status selector. Deleting a VDT or project still requires confirmation in its workspace or on Home.
 
 Manual editor edits are saved to the project with **Save active VDT** or normal in-app navigation. The app also keeps a local draft. On startup it reopens the draft in its original VDT with the saved revision it was based on. If that revision changed, the draft stays open and the normal conflict checks protect the saved graph. If the VDT cannot be reopened, the Home screen offers to download the local draft or discard it.
 
@@ -411,6 +412,11 @@ titles, unboxed symbols and numeric fields sized to their contents. Drag/remove
 controls reveal on hover or keyboard focus and stay visible for coarse
 pointers. Remove buttons occupy space inside their tokens, separate from the
 caret insertion slots.
+
+The formula editor and chat accept `min` and `max` in any letter case and
+the Russian spellings `МИН` and `МАКС`. Use the same VDT argument syntax
+with every spelling. Excel export uses the evaluated formula's exact factor
+references. [Formula Engine](FORMULA_ENGINE.md#min--max-and-bare-node-references)
 
 Factor-tree cards share these neutral surfaces and use a rounded type icon,
 two-line KPI name, upper-right unit tag in place of the status icon and an inset
@@ -466,6 +472,14 @@ driver table. **Calculation trace** starts collapsed every time the dialog
 opens. Its toggle uses the same right-panel icon as the node inspector and
 exposes expanded state to assistive technology. Narrow screens reveal the trace
 over the table instead of squeezing the columns.
+
+**Probe one factor** previews an absolute change to an overridable input against
+the editor's current baseline. The result shows the changed input, the baseline
+and simulated root values, their delta and the units. Recorded assumptions on the
+calculation path show their evidence status and when to reconsider them. The
+probe does not edit the baseline or any scenario. A missing result appears as
+unavailable, and the modeled sensitivity needs separate evidence of operational
+achievability.
 
 Baseline and resting Scenario fields share comma-grouped thousands and a decimal
 dot (for example, `84,000` and `17.14`), at most two decimal places, independently
@@ -525,6 +539,24 @@ status boxes; questions, retries and approvals retain their existing callbacks.
 The redesign changes presentation and draft interaction, not model admission,
 generation policy, persistence or provider qualification.
 
+**Chat outcome** sets the next task's goal. Automatic uses the existing task mode.
+Answer requests a response, Build structure can finish with measurements outstanding,
+and Calculate baseline requires complete inputs and a finite root result. The
+composer keeps the admitted goal while the run is active. A verified structure
+shows its formulas and recorded assumptions alongside a checklist of current
+measurements. Select an input to edit its baseline in the Inspector, or supply
+the measurement in chat. Zero is a known value. Unknown baselines stay blank
+in input entry and the Excel Source sheet. Illustrative estimates are labeled
+in the checklist and Inspector.
+
+In a saved VDT, **Chat history** groups runs in a conversation and opens its
+latest run. After a run ends, sending another message starts a run with the
+selected model. The next model receives a bounded set of explicit definitions,
+submitted answers and open questions from that conversation. For example,
+`Define output as saleable tonnes` records the definition and
+`Correction: output = run-of-mine tonnes` replaces it. Formulas and values come
+from the current graph. **New** starts a separate conversation.
+
 Implemented locally: in an open VDT, **Selected KPI** above the message field
 shows the selected node's name and unit and follows canvas/inspector selection.
 The first message of a new chat and subsequent instructions carry that node's
@@ -548,7 +580,7 @@ send explicit `selectedNodeId: null` so the model clears earlier KPI focus.
 - Preserve the original-language request, inspect bounded local skill candidates and make an explicit agent-owned selection.
 - Decide the next bounded action, use one reviewed tool, receive feedback and iterate.
 - Ask focused clarification questions when necessary.
-- Build progressively and finish only with a structurally valid, calculable root.
+- Build progressively and validate the structure before finishing a model task. Numerical baselines also require a calculable root.
 - Expose real run events rather than synthetic reasoning.
 - Respect user research policy and manual changes.
 - Offer Suggested KPI layers only for undecomposed Inputs. The duplicate card AI/chat button is removed; explicit agent-chat decomposition and the bounded compatibility `deepen_node` runtime action remain available.
@@ -682,10 +714,15 @@ The node inspector provides **Properties** and **Warnings**. Edits apply directl
 
 Properties displays saved **Value notes** beside the value and editing controls: value-source notes, non-duplicate assumption details and an optional HTTP(S) source reference. Notes are read-only provenance; the existing baseline control edits the numeric input. This exposes draft assumptions without treating them as measured site data.
 
+The inspector's **Move branch** and **Outgoing links** controls update the current draft with the same link rules as chat. The controls preserve formulas and source provenance and surface invalid changes before applying them. The project workspace's **Comparisons** tab lets the user choose two saved VDTs and reopen the result for those revisions. Repeating the same ordered revision pair reuses the saved comparison.
+
+In the project workspace, **New VDT** can start from a blank brief or a built-in example. **Duplicate VDT** creates a new VDT from the selected saved model. **Import JSON** reviews a portable model and creates a new VDT under the selected project after confirmation. Copy, example and import use the existing create-and-initial-revision transaction.
+
 ### Export
 
-- Editable Excel workbook export from the application with one **Export to Excel** button.
-- No editor-level JSON import or JSON/Markdown export controls. Full project archive import/export, including attached source files, is planned at the project-workspace level.
+- The editor’s **Export to Excel** button uses the visible snapshot and selected scenario, including unsaved edits.
+- Chat exports the saved revision and the scenario named in a clear Excel request. When the request omits a scenario, it uses the editor's active scenario. A named workbook must be available before the chat run finishes.
+- **More exports** downloads the visible VDT as JSON or Markdown, including unsaved edits. Chat can open the same format chooser for the current VDT. **Import JSON** accepts a model file up to 4 MiB and detaches external source bindings before import. Full project archives with attachments remain planned.
 - Download `<VDT display name>.xlsx`, preserving ordinary spaces and Unicode. Replace filesystem-unsafe characters, remove trailing Windows dots/spaces, protect reserved Windows filenames and use a fallback for empty/invalid names.
 - Export the complete graph, including shared and disconnected KPIs, once per KPI; the selected/expanded canvas view does not limit output.
 - Lay out parent KPIs on the left and children on the right. Each KPI occupies three vertically stacked cells in one column: name with unit, numeric Baseline, numeric Potential. Same-level KPIs share a column at separate rows. Exactly two narrow empty columns separate levels, with connectors drawn using native cell borders.
@@ -696,7 +733,7 @@ Properties displays saved **Value notes** beside the value and editing controls:
 - Product CLI validation, calculation and export.
 - Include `Comment` after `Effect` on the exported `Scenario Mode` driver table and additional-override rows. Match comments to stable KPI IDs in the selected scenario, including drivers without numeric overrides. Missing/legacy comments produce blank editable text cells. Preserve Unicode, line breaks and formula-like text literally, wrap the column and fit row heights. Comments do not enter calculations or replace the separate `Source` provenance comments.
 
-Current status: Excel export is implemented in the editor; full project archive import/export is planned. Visible Excel sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed by the hidden `_Scenario Calc` calculation sheet. The workbook excludes session credentials. It is a standalone calculation copy, with no workbook import/synchronization. The CLI exports JSON and Markdown. PowerPoint and PDF outputs remain planned.
+Visible Excel sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed by the hidden `_Scenario Calc` calculation sheet. The workbook excludes session credentials and calculates independently. Workbook import and synchronization remain unavailable. Editor JSON and Markdown exports use the CLI serializers. PowerPoint and PDF outputs remain planned.
 
 Known Scenario Mode parity boundary: duplicate imported overrides use the last value once per displayed driver; the workbook does not reproduce repeated-override counting in the application's interaction helper. An unchanged scenario shows zero driver effects and a zero interaction residual, including scratch mode; the application may omit that readout when no overrides exist. These behaviors are explained in Guide.
 

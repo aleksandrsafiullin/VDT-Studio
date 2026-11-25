@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getExcelDownloadFilename } from "./download";
+import { getExcelDownloadFilename, getVdtDownloadFilename } from "./download";
 
 describe("Excel download filename", () => {
   it.each([
@@ -25,5 +25,12 @@ describe("Excel download filename", () => {
     ["/**?", "VDT.xlsx"]
   ])("makes unsafe filename %s usable", (name, expected) => {
     expect(getExcelDownloadFilename(name)).toBe(expected);
+  });
+});
+
+describe("VDT exchange filename", () => {
+  it("uses the same safe display name for JSON and Markdown", () => {
+    expect(getVdtDownloadFilename("Mine/Plant — 年 ", "json")).toBe("Mine_Plant — 年.json");
+    expect(getVdtDownloadFilename("CON", "md")).toBe("_CON.md");
   });
 });

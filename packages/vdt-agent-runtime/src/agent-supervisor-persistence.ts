@@ -1,3 +1,4 @@
+import { finishOutcomeSchema } from "./schemas/agent-finish-outcome";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -152,7 +153,16 @@ export const agentToolOperationReceiptV2Schema = z.object({
   }
 });
 
+export function projectFinishOutcome(receipt: FinishReceiptV2) {
+  const { outcome, policyVersion, projectRevision, projectHash, missingInputs, missingInputCount, rootValue } = receipt;
+  if (!outcome || !policyVersion) return undefined;
+  return { outcome, policyVersion, projectRevision, projectHash,
+    ...(missingInputs && missingInputCount !== undefined ? { missingInputs, missingInputCount } : {}),
+    ...(rootValue !== undefined ? { rootValue } : {}) };
+}
+
 export const finishReceiptV2Schema = z.object({
+  ...finishOutcomeSchema.partial().shape,
   schemaVersion: z.literal(2),
   receiptId: safeIdSchema,
   runId: safeIdSchema,
@@ -168,6 +178,13 @@ export const finishReceiptV2Schema = z.object({
   verifiedAt: timestampSchema,
   finalPersistedAt: timestampSchema.nullable()
 }).strict().superRefine((value, ctx) => {
+  if (Boolean(value.outcome) !== Boolean(value.policyVersion)
+    || (value.outcome === "structural_model" && (value.missingInputCount === undefined
+      || value.missingInputs === undefined || value.missingInputCount < value.missingInputs.length))
+    || (value.outcome !== "structural_model" && (value.missingInputs !== undefined || value.missingInputCount !== undefined))
+    || (value.outcome === "calculated_baseline") !== (value.rootValue !== undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Invalid goal-aware finish evidence." });
+  }
   if (value.state === "verified") {
     if (value.finalMessageHash !== null || value.finalPersistedAt !== null) {
       ctx.addIssue({
@@ -580,6 +597,9 @@ class AgentSupervisorPersistenceCore implements AgentSupervisorPersistence {
         "calculationHash",
         "verifiedAt"
       ]);
+      if (canonicalJson(projectFinishOutcome(previous) ?? null) !== canonicalJson(projectFinishOutcome(receipt) ?? null)) {
+        throw new AgentSupervisorPersistenceError("FINISH_RECEIPT_CONFLICT", "Finish outcome evidence cannot change.");
+      }
       assertForwardTransition("finish", previous.state, receipt.state, {
         verified: ["verified", "final_persisted"],
         final_persisted: ["final_persisted"]
@@ -1052,6 +1072,7 @@ function recoveredFinishReceipt(
   if (
     finalEvent.payload.finishReceiptId !== receipt.receiptId
     || finalEvent.payload.finishReceiptHash !== receipt.receiptHash
+    || canonicalJson(finalEvent.payload.finishOutcome ?? null) !== canonicalJson(projectFinishOutcome(receipt) ?? null)
     || hashFinalMessage(finalEvent) !== finalization.finalMessageHash
   ) {
     throw new AgentSupervisorPersistenceError(

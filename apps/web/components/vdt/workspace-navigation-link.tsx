@@ -6,7 +6,11 @@ import { useRef, useState, type ComponentProps } from "react";
 import { markDeliberateHomeNavigation, navigateAfterWorkspaceSave } from "./workspace-navigation";
 import { useVdtStudioStore } from "./vdt-store";
 
-export function WorkspaceNavigationLink({ href, onSavedNavigate, ...props }: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & { href: string; onSavedNavigate?: (() => void) | undefined }) {
+export function WorkspaceNavigationLink({ href, onSavedNavigate, isCurrent = () => true, ...props }: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & {
+  href: string;
+  onSavedNavigate?: (() => void) | undefined;
+  isCurrent?: () => boolean;
+}) {
   const router = useRouter();
   const saving = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -17,7 +21,7 @@ export function WorkspaceNavigationLink({ href, onSavedNavigate, ...props }: Omi
 
   async function reloadSavedVersion() {
     const { workspace, selectWorkspaceVdt } = useVdtStudioStore.getState();
-    if (saving.current || !workspace.activeVdtId) return;
+    if (saving.current || !workspace.activeVdtId || !isCurrent()) return;
     saving.current = true;
     setBusy(true);
     try {
@@ -35,11 +39,12 @@ export function WorkspaceNavigationLink({ href, onSavedNavigate, ...props }: Omi
   return <>
     <Link {...props} href={href} aria-busy={busy} aria-disabled={busy} onNavigate={(event) => {
       event.preventDefault();
-      if (saving.current) return;
+      if (saving.current || !isCurrent()) return;
       saving.current = true;
       setBusy(true);
       setError(undefined);
       void navigateAfterWorkspaceSave(href, useVdtStudioStore.getState(), (destination) => {
+        if (!isCurrent()) return;
         if (destination === "/") markDeliberateHomeNavigation(useVdtStudioStore.getState());
         if (onSavedNavigate) onSavedNavigate();
         else router.push(destination);

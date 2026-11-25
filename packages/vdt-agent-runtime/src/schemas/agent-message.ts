@@ -41,6 +41,7 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
     personalisation: aiPersonalisationSchema.optional(),
     text: z.string().trim().min(1).max(2_000),
     selectedNodeId: z.string().max(160).nullable().optional(),
+    activeScenarioId: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/).max(128).nullable().optional(),
     researchMode: researchModeSchema.optional()
   }),
   z.object({

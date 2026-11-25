@@ -1,14 +1,35 @@
-import { calculateGraph, extractFormulaReferences, validateGraph, inspectDecompositionHierarchy,getDecompositionContextGroupIds,type VdtProject } from "@vdt-studio/vdt-core";
+import { calculateGraph, extractFormulaReferences, evaluateModelReadiness, inspectDecompositionHierarchy,getDecompositionContextGroupIds, listVersionOperations, type ModelReadinessPurpose, type VdtProject } from "@vdt-studio/vdt-core";
 import { LOCAL_MODEL_UPFRONT_TOOLS } from "./local-model-output-schema";
 
 /** A transport-only table view of project inspection results. Receipts and
  * Gateway hashes retain the original payload; every node/edge field remains
  * available to the model without repeating its JSON keys for every row. */
-export function compactLocalModelPrompt(prompt: string): string {
+export function compactLocalModelPrompt(prompt: string, callableTools?: ReadonlySet<string>): string {
   let input: unknown;
   try { input = JSON.parse(prompt); } catch { return prompt; }
   if (!isRecord(input) || !isRecord(input.delta)) return prompt;
-  return JSON.stringify({ ...input, delta: compactDelta(input.delta) });
+  return JSON.stringify({ ...input, delta: compactDelta(input.delta, callableTools) });
+}
+
+/** Only assess a blank opening. Later turns receive the retained answer and
+ * must continue the same process relationship through construction. */
+export function localStructuralRelationshipContext(prompt: string, observation: unknown, brief: Record<string, unknown>) {
+  if (!isRecord(observation) || observation.constructingTree !== true || observation.needsStructure !== true
+    || observation.nodeCount !== 1 || observation.hasDecompositionPlan
+    || (isRecord(observation.skillResolution) && observation.skillResolution.pinnedSkillId)) return;
+  let input: unknown;
+  try { input = JSON.parse(prompt); } catch { return; }
+  if (!isRecord(input) || typeof input.exchangeId !== "string" || !isRecord(input.delta)
+    || input.delta.type !== "initial_context" || !isRecord(input.delta.context)) return;
+  return {
+    exchangeId: input.exchangeId,
+    request: brief.prompt,
+    businessContext: brief.businessContext === brief.prompt ? undefined : brief.businessContext,
+    kpi: brief.rootKpi,
+    unit: brief.unit,
+    conversationContext: input.delta.context.conversationContext,
+    personalisation: input.personalisation
+  };
 }
 
 /** The native response schema and availableTools already carry the admitted
@@ -30,11 +51,15 @@ export function compactOpenAiFirstPlanPrompt(prompt: string): string {
     delta: projectedDelta, ...rest });
 }
 
-function compactDelta(delta: Record<string, unknown>): Record<string, unknown> {
+function compactDelta(delta: Record<string, unknown>, callableTools?: ReadonlySet<string>): Record<string, unknown> {
   if (delta.type === "initial_context" && isRecord(delta.context) && Array.isArray(delta.context.tools)
     && delta.context.tools.some((tool) => isRecord(tool) && tool.name === "tools.describe")) {
     const continuing = isRecord(delta.context.brief) && delta.context.brief.mode !== "generate_vdt";
-    return { ...delta, context: { ...delta.context, tools: delta.context.tools.map((tool) => {
+    const cards = delta.context.tools.filter(tool => !callableTools || (isRecord(tool) && callableTools.has(String(tool.name))));
+    const otherToolNames = callableTools ? delta.context.tools.flatMap(tool =>
+      isRecord(tool) && typeof tool.name === "string" && !callableTools.has(tool.name)
+        && !(continuing && tool.name === "vdt.create_draft") ? [tool.name] : []) : undefined;
+    return { ...delta, context: { ...delta.context, otherToolNames, tools: cards.map((tool) => {
       if (!isRecord(tool)) return tool;
       const card = { name: tool.name, description: tool.description };
       return { ...card, ...(LOCAL_MODEL_UPFRONT_TOOLS.has(String(tool.name))
@@ -46,7 +71,7 @@ function compactDelta(delta: Record<string, unknown>): Record<string, unknown> {
     }) } };
   }
   if (delta.type === "checkpoint_inputs" && isRecord(delta.checkpointDelta)) {
-    return { ...delta, checkpointDelta: compactDelta(delta.checkpointDelta) };
+    return { ...delta, checkpointDelta: compactDelta(delta.checkpointDelta, callableTools) };
   }
   if ((delta.type !== "tool_results" && delta.type !== "manual_reconciliation") || !Array.isArray(delta.results)) return delta;
   return { ...delta, results: delta.results.map((result) => {
@@ -81,17 +106,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Server-read working state, never an instruction or a mutation. Sending a
  * fresh bounded view avoids relying on a small model to remember generated IDs
  * in its semantic checkpoint. The Gateway still fences every actual write. */
-export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false, enforcePercentageScale = false) {
-  const calculation = calculateGraph(project.graph, { rootNodeId: project.rootNodeId });
-  const validation = validateGraph(project, undefined, { enforcePercentageScale, requireTimeInputUnits: requireDerivedRoot });
+export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false, purpose: ModelReadinessPurpose | "answer" = "calculated_baseline") {
+  const readiness = evaluateModelReadiness(project, { purpose: purpose === "answer" ? "structural_model" : purpose, requireDerivedRoot, requireHierarchy });
+  const calculation = readiness.calculation ?? calculateGraph(project);
+  const { validation } = readiness;
   const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const hierarchy=inspectDecompositionHierarchy(project);
   const contextGroups=getDecompositionContextGroupIds(project.graph,project.rootNodeId);
   let derivedRoot = false;
   try { derivedRoot = !!root?.formula?.trim() && extractFormulaReferences(root.formula).length > 0; } catch { /* Validation below reports the parser error. */ }
-  const missing = project.graph.nodes.filter((node) => node.id !== project.rootNodeId && !contextGroups.has(node.id)
-    && !["root_kpi", "calculated"].includes(node.type) && !node.formula?.trim()
-    && !Number.isFinite(node.baselineValue ?? node.value));
+  const missingIds = new Set(readiness.missingInputs.map(input => input.nodeId));
+  const missing = project.graph.nodes.filter(node => node.id !== project.rootNodeId && missingIds.has(node.id));
   const formulaBacklog = project.graph.nodes.filter((node) => !contextGroups.has(node.id) && ["root_kpi", "calculated"].includes(node.type)
     && !node.formula?.trim() && (node.id !== project.rootNodeId || project.graph.nodes.length > 1));
   const assumptions = project.graph.nodes.filter((node) => ["root_kpi", "calculated"].includes(node.type) && node.assumptions?.length);
@@ -101,8 +126,7 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
   const inputLeafIds = project.graph.nodes.filter((node) => node.id !== project.rootNodeId
     && !["root_kpi", "calculated"].includes(node.type) && !node.formula?.trim() && !parents.has(node.id)).map((node) => node.id);
   const unfilledInputLeafIds = missing.filter((node) => !parents.has(node.id)).map((node) => node.id);
-  const projectReadyForFinish = validation.valid && calculation.errors.length === 0 && Number.isFinite(calculation.rootValue)
-    && (!requireDerivedRoot || (project.graph.nodes.length > 1 && derivedRoot)) && (!requireHierarchy || hierarchy.valid);
+  const projectReadyForFinish = readiness.accepted && formulaBacklog.length === 0;
   const dependencies = new Set<string>();
   if (projectReadyForFinish) {
     const byId = new Map(project.graph.nodes.map((node) => [node.id, node]));
@@ -118,6 +142,7 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
   return {
     schemaVersion: "local-model-working-context.v1",
     revision,
+    readinessPurpose: purpose,
     rootNodeId: project.rootNodeId,
     hierarchyRequired:requireHierarchy,
     hasDecompositionPlan:!!root?.decompositionPlan,
@@ -127,8 +152,14 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
     nodeCount: project.graph.nodes.length,
     constructingTree: requireDerivedRoot,
     needsStructure: requireDerivedRoot && project.graph.nodes.length <= 1,
-    projectReadyForFinish,
+    projectReadyForFinish: purpose === "answer" || projectReadyForFinish,
     rootHasDriverReferences: derivedRoot,
+    ...(!requireDerivedRoot ? {
+      scenarios: project.scenarios.slice(0, 12).map(({ id, name, isMain, overrides }) => ({
+        id, name, isMain, overrideCount: overrides.length
+      })),
+      versions: listVersionOperations(project).slice(0, 12)
+    } : {}),
     writableInputCount: inputLeafIds.length,
     inputLeafIds: inputLeafIds.slice(0, limit),
     unfilledInputCount: unfilledInputLeafIds.length,
@@ -167,6 +198,7 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
       errors: calculation.errors.slice(0, 8),
       errorCount: calculation.errors.length
     },
-    validation: { valid: validation.valid, errors: validation.errors.slice(0, 8), errorCount: validation.errors.length }
+    validation: { valid: validation.valid, errors: validation.errors.slice(0, 8), errorCount: validation.errors.length },
+    readinessIssues: readiness.issues.filter(issue => issue.severity === "error").slice(0, 8)
   };
 }

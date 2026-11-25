@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { GET as download, PATCH as modify } from "./[datasetId]/route";
 import { GET as list, POST as upload } from "./route";
 import type { ProjectFileSource } from "@/lib/project-files-client";
 import { MAX_MULTIPART_BYTES } from "../bounded-upload";
+import { readDatasetFile, saveDatasetFile } from "../store";
 
 const projectId = "project_library";
 const firstVdt = "vdt_library_first";
@@ -84,6 +85,30 @@ describe("project file library", () => {
     expect(response.status).toBe(200);
     expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(source.file.contentHash);
     expect(response.headers.get("content-disposition")).toContain(encodeURIComponent(source.file.fileName));
+  });
+
+  it.skipIf(process.platform === "win32")("accepts an alias to the storage root and rejects a symlink beneath it", async () => {
+    const alias = path.join(dataDir, "root_alias");
+    await symlink(dataDir, alias);
+    const owner = { projectId, dataDir: alias };
+    const datasetId = "alias_dataset";
+    const bytes = Buffer.from("Name,Value\nA,1\n");
+    await saveDatasetFile({
+      datasetId, bytes, textPreview: "",
+      metadata: {
+        projectId, fileName: "alias.csv", mimeType: "text/csv", sizeBytes: bytes.length,
+        storageRef: datasetId, contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+        uploadedAt: "2026-11-24T00:00:00.000Z"
+      }
+    }, owner);
+    const filesDir = path.join(projectDir(dataDir, projectId), "files");
+    expect(await readFile(path.join(filesDir, datasetId, "payload.bin"))).toEqual(bytes);
+    expect((await readDatasetFile(datasetId, owner))?.bytes).toEqual(new Uint8Array(bytes));
+
+    const relocated = path.join(dataDir, "relocated_files");
+    await rename(filesDir, relocated);
+    await symlink(relocated, filesDir);
+    await expect(readDatasetFile(datasetId, owner)).rejects.toMatchObject({ code: "DATA_STORAGE_PATH_UNSAFE" });
   });
 
   it("accepts client data in an empty project before its first tree is created", async () => {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { extractFormulaReferences, parseFormula } from "@vdt-studio/vdt-core";
 import type { AgentTool } from "../tool-registry";
+import { replaceFormulaReference } from "./formula-reference";
 
 export function createFormulaTools(): AgentTool[] {
   return [
@@ -91,8 +92,7 @@ const formulaRenameReferenceTool: AgentTool = {
   outputSchema: z.record(z.string(), z.unknown()),
   phase: "repairing_graph",
   run(_context, input) {
-    const pattern = new RegExp(`\\b${escapeRegExp(input.from)}\\b`, "g");
-    const formula = input.formula.replace(pattern, input.to);
+    const formula = replaceFormulaReference(input.formula, input.from, input.to);
     return { formula, changed: formula !== input.formula };
   }
 };
@@ -137,8 +137,4 @@ function similarity(left: string, right: string): number {
   const tokenScore = intersection / union;
   const prefixScore = right.startsWith(left) || left.startsWith(right) ? 0.5 : 0;
   return Math.max(tokenScore, prefixScore);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

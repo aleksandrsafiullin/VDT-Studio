@@ -14,11 +14,17 @@ const safeId = (max = 128) => boundedString(max).regex(
   "Must use only letters, numbers, underscores, or hyphens."
 );
 
+export const agentOutcomeSchema = z.enum(["answer", "structural_model", "calculated_baseline"]);
+
 export const researchModeSchema = z.enum(["auto", "on", "off"]);
 
 const agentStartRequestCommonShape = {
+  conversationId: safeId().optional(),
+  priorConversationRunId: safeId().optional(),
   mode: z.enum(["generate_vdt", "continue_project", "deepen_node", "review_project"]),
+  outcome: agentOutcomeSchema.optional(),
   input: z.object({
+    activeScenarioId: safeId().optional(),
     personalisation: aiPersonalisationSchema.optional(),
     prompt: optionalBoundedString(2_000),
     rootKpi: optionalBoundedString(160),
@@ -111,4 +117,10 @@ const legacyProviderStartRequestSchema = z.object({
 export const agentStartRequestSchema = z.union([
   executionBindingStartRequestSchema,
   legacyProviderStartRequestSchema
-]);
+]).refine((request) => !(request.conversationId || request.priorConversationRunId) || Boolean(request.workspace?.vdtId), {
+  path: ["workspace", "vdtId"],
+  message: "A conversation requires a stored VDT ID."
+}).refine((request) => !(request.conversationId && request.priorConversationRunId), {
+  path: ["priorConversationRunId"],
+  message: "Select a conversation ID or an earlier run."
+});

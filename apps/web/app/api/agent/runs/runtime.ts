@@ -49,6 +49,8 @@ import {
 import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 import { cliSessionModelBindingId } from "./cli-session-model-binding";
 import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from "./local-model-bindings";
+import { registerWorkspaceOperationTools } from "./workspace-operation-tools";
+import { registerEditorHandoffTools } from "./editor-handoff-tools";
 import { retainedDatasetProvider } from "./dataset-provider";
 import { resolveSessionAwareResearch } from "./session-research";
 import { createPackagedCursorBinding, packagedCursorActivations } from "./packaged-cursor-binding";
@@ -115,6 +117,8 @@ export const agentRuntime =
     tools: createAgentToolRegistryFromEnv()
   });
 
+registerWorkspaceOperationTools(agentRuntime.tools);
+registerEditorHandoffTools(agentRuntime.tools);
 registerModelAgentSchemaTool(agentRuntime.tools);
 
 const cliSessionCanaryEnabled = isCliSessionCanaryEnabled();

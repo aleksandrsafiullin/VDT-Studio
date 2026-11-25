@@ -10,6 +10,7 @@ import type {
   VdtProject,
   VdtWarning
 } from "../types";
+import type { VdtWorkspaceChange } from "../operations/workspace-change";
 
 /** Mutable node fields AI may propose via a change set (excludes layout, timestamps, computed values). */
 export type VdtNodePatch = Partial<
@@ -20,6 +21,7 @@ export type VdtNodePatch = Partial<
     | "type"
     | "unit"
     | "formula"
+    | "goalSeek"
     | "decompositionPlan"
     | "value"
     | "baselineValue"
@@ -36,7 +38,12 @@ export type VdtNodePatch = Partial<
     | "aiRationale"
     | "dataMapping"
   >
->;
+> & {
+  /** Explicit deletion of both input value fields and their evidence, preserved in serialized patches. */
+  clearInputValue?: true | undefined;
+  /** Explicitly remove the balancing setting when replaying a serialized patch. */
+  clearGoalSeek?: true | undefined;
+};
 
 export interface VdtNodeAddition {
   /** Stable change-entry id for selection UI (`toggleChangeSelection`). */
@@ -161,6 +168,7 @@ export interface VdtChangeSet {
   dataSourceChanges?: VdtDataSourceChange[] | undefined;
   dataMappingChanges?: VdtDataMappingChange[] | undefined;
   taxonomyChanges?: VdtTaxonomyChange[] | undefined;
+  workspaceChange?: VdtWorkspaceChange | undefined;
   assumptions: string[];
   questions: string[];
   warnings: VdtWarning[];

@@ -9,6 +9,7 @@ import {
   agentSessionBindingSchema,
   agentToolOperationReceiptV2Schema,
   finishReceiptV2Schema,
+  projectFinishOutcome,
   recoveredFinishFinalizationV2Schema,
   sanitizeAgentSupervisorPersistenceState,
   summarizeAgentSupervisorPersistenceState,
@@ -517,6 +518,9 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
           "projectRevision", "projectHash", "validationHash", "calculationHash",
           "verifiedAt"
         ]);
+        if (canonicalJson(projectFinishOutcome(previous) ?? null) !== canonicalJson(projectFinishOutcome(receipt) ?? null)) {
+          throw new AgentSupervisorPersistenceError("FINISH_RECEIPT_CONFLICT", "Finish outcome evidence cannot change.");
+        }
         assertForwardState("finish", previous.state, receipt.state, {
           verified: ["verified", "final_persisted"],
           final_persisted: ["final_persisted"]
@@ -632,6 +636,7 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
         || requiredNumber(finalRow.session_epoch) !== finalization.recoverySessionEpoch
         || finalEvent.payload.finishReceiptId !== receipt.receiptId
         || finalEvent.payload.finishReceiptHash !== receipt.receiptHash
+        || canonicalJson(finalEvent.payload.finishOutcome ?? null) !== canonicalJson(projectFinishOutcome(receipt) ?? null)
         || plainHash({ messageId: finalEvent.messageId, text: finalEvent.payload.text })
           !== finalization.finalMessageHash
       ) {

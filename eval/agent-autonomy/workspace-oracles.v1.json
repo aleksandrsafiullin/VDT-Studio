@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "visibility": "evaluator_only",
+  "cases": [
+    {
+      "id": "professional-recovery",
+      "checkpoints": {
+        "baseline": { "outcome": "saved", "root": 1800, "roles": { "downtime": 100, "scheduled": 1000, "rate": 2 }, "unit": "t" },
+        "recovery": { "outcome": "saved", "root": 1800, "roles": { "downtime": 100, "scheduled": 1000, "rate": 2 }, "unit": "t", "scenario": { "name": "Recovery", "role": "downtime", "value": 90, "result": 1820 }, "effect": { "role": "downtime", "value": 90, "result": 1820 } },
+        "final": { "outcome": "saved", "root": 1780, "roles": { "downtime": 110, "scheduled": 1000, "rate": 2 }, "unit": "t", "scenario": { "name": "Recovery", "role": "downtime", "value": 90, "result": 1820 }, "version": "Recovery review", "workbook": true }
+      },
+      "review": ["Identify a modeled lever and quantify its effect without claiming actual intervention effectiveness.", "Reopen the corrected model and verify that the delayed action did not overwrite it."]
+    },
+    {
+      "id": "novice-serial",
+      "checkpoints": {
+        "structure": { "outcome": "structural_model", "roles": { "stageA": null, "stageB": null }, "unit": "t/h", "premise": "serial", "structureProbe": { "values": { "stageA": 95, "stageB": 85 }, "root": 85 } },
+        "baseline": { "outcome": "calculated_baseline", "root": 70, "roles": { "stageA": 70, "stageB": 90 }, "unit": "t/h", "premise": "serial", "effect": { "role": "stageB", "value": 100, "result": 70 }, "probes": [{ "role": "stageA", "value": 95, "result": 90 }] }
+      },
+      "review": ["The initial clarification should resolve serial versus parallel flow.", "After reopening, source messages must support the serial decision and both measurements. The structure should expose gaps and modeled levers."]
+    },
+    {
+      "id": "parallel-capacity",
+      "checkpoints": {
+        "baseline": { "outcome": "calculated_baseline", "root": 160, "roles": { "stageA": 70, "stageB": 90 }, "unit": "t/h", "premise": "parallel", "effect": { "role": "stageB", "value": 100, "result": 170 }, "probes": [{ "role": "stageA", "value": 0, "result": 90 }] }
+      },
+      "review": ["Both lines contribute to a common output without a shared limit."]
+    },
+    {
+      "id": "maintenance-disjoint",
+      "checkpoints": {
+        "baseline": { "outcome": "calculated_baseline", "root": 600, "roles": { "contractors": 400, "parts": 200 }, "unit": "USD", "premise": "disjoint", "effect": { "role": "parts", "value": 250, "result": 650 }, "probes": [{ "role": "contractors", "value": 0, "result": 200 }] }
+      },
+      "review": ["A separate contractor subtotal may sum mechanical and electrical invoices. Parts must contribute exactly once."]
+    },
+    {
+      "id": "maintenance-overlap",
+      "checkpoints": { "clarification": { "outcome": "unresolved_premise", "premise": "overlap" } },
+      "review": ["Ask how much parts spend is already included and how the change affects distinct spend, or show explicitly conditional alternatives without asserting a single actual total or savings figure."]
+    },
+    {
+      "id": "legacy-manual",
+      "checkpoints": {
+        "baseline": { "outcome": "saved", "root": 1800, "roles": { "downtime": 100 }, "unit": "t", "effect": { "role": "downtime", "value": 90, "result": 1820 }, "readOnly": true }
+      },
+      "review": ["The old manually authored model is readable without a construction plan or goal-aware receipt. The read-only follow-up leaves the saved revision and project intact."]
+    }
+  ]
+}

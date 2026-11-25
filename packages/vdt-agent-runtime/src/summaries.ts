@@ -43,8 +43,8 @@ export function summarizeProject(project: VdtProject, maxNodes = MAX_CONTEXT_NOD
       type: node.type,
       unit: node.unit,
       formula: node.formula,
-      baselineValue: node.baselineValue,
-      value: node.value,
+      baselineValue: node.valueStatus === "unknown" ? undefined : node.baselineValue,
+      value: node.valueStatus === "unknown" ? undefined : node.value,
       status: node.status,
       childIds: childIdsByNode.get(node.id) ?? []
     })),

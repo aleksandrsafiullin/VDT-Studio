@@ -4,10 +4,10 @@ export const productionVolumeCheckUnitsOutput: CheckUnitsOutput = checkUnitsOutp
   unitFindings: [
     {
       nodeId: "yield_factor",
-      expectedUnit: "ratio",
-      actualUnit: "%",
-      severity: "warning",
-      message: "Yield factor label suggests percent while values behave as ratios."
+      expectedUnit: "1",
+      actualUnit: "1",
+      severity: "info",
+      message: "Yield factor is a dimensionless multiplier and needs no conversion."
     },
     {
       nodeId: "average_productivity",
@@ -18,6 +18,6 @@ export const productionVolumeCheckUnitsOutput: CheckUnitsOutput = checkUnitsOutp
     }
   ],
   assumptions: ["Dimensional checks assume multiplicative composition unless marked additive."],
-  questionsForUser: ["Should % drivers be normalized to explicit ratio units across the model?"],
+  questionsForUser: [],
   warnings: []
 });

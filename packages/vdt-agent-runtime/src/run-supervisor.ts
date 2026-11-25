@@ -20,6 +20,7 @@ import {
 } from "./agent-event-outbox";
 import type { AgentRunEventV2 } from "./schemas/agent-run-event-v2";
 import {
+  projectFinishOutcome,
   recoverAgentSupervisorPersistenceState,
   type AgentSupervisorPersistenceStateV2,
   type AgentEngineExchangeReceiptV2,
@@ -74,7 +75,7 @@ export interface VdtRunSupervisorOptions {
     delta: string;
   }) => void | Promise<void>) | undefined;
   onUsage?: ((metrics: Readonly<Record<string, number | null>>) => void | Promise<void>) | undefined;
-  onFinal?: ((input: { text: string; receiptId: string; receiptHash: string }) => void | Promise<void>) | undefined;
+  onFinal?: ((input: { text: string; receiptId: string; receiptHash: string; finishOutcome?: ReturnType<typeof projectFinishOutcome> }) => void | Promise<void>) | undefined;
 }
 
 /**
@@ -594,7 +595,8 @@ export class VdtRunSupervisor {
           text: event.text,
           format: "markdown",
           finishReceiptId: this.verifiedFinish.receiptId,
-          finishReceiptHash: this.verifiedFinish.receiptHash
+          finishReceiptHash: this.verifiedFinish.receiptHash,
+          ...(durableReceipt?.outcome ? { finishOutcome: projectFinishOutcome(durableReceipt) } : {})
         }
       });
       if (appended.type !== "final") {
@@ -740,12 +742,14 @@ export class VdtRunSupervisor {
       await this.onFinal?.({
         text: finalEvent.payload.text,
         receiptId: verified.receiptId,
-        receiptHash: verified.receiptHash
+        receiptHash: verified.receiptHash,
+        ...(durableReceipt?.outcome ? { finishOutcome: projectFinishOutcome(durableReceipt) } : {})
       });
     }
     this.statusValue = "succeeded";
     if (!completionAlreadyDurable) {
-      await this.appendRuntimeStatus("RUN_SUCCEEDED", "The verified VDT run completed.", "succeeded");
+      const completionMessage = durableReceipt?.outcome === "answer" ? "The answer run completed." : "The verified VDT run completed.";
+      await this.appendRuntimeStatus("RUN_SUCCEEDED", completionMessage, "succeeded");
     }
   }
 
@@ -857,7 +861,8 @@ export class VdtRunSupervisor {
     const payload = {
       receiptId: finishReceipt.receiptId,
       receiptHash: finishReceipt.receiptHash,
-      projectRevision: finishReceipt.projectRevision
+      projectRevision: finishReceipt.projectRevision,
+      ...projectFinishOutcome(finishReceipt)
     };
     const replayResult = vdtGatewayToolResultSchema.parse({
       externalCallId: latest.externalCallId,
@@ -1325,6 +1330,7 @@ function assertDurableFinalReceipt(
     finalEvent.runId !== receipt.runId
     || finalEvent.payload.finishReceiptId !== receipt.receiptId
     || finalEvent.payload.finishReceiptHash !== receipt.receiptHash
+    || hashJson(finalEvent.payload.finishOutcome ?? null) !== hashJson(projectFinishOutcome(receipt) ?? null)
   ) {
     throw new VdtRunSupervisorError(
       "FINAL_RECEIPT_MISMATCH",

@@ -1,3 +1,5 @@
+import { applyNodePatch, newInputValueStatus } from "./node-patch";
+import type { VdtWorkspaceChange } from "../operations/workspace-change";
 import { parseFormula } from "../formula/parser";
 import { FormulaParseError } from "../formula/ast";
 import type { VdtDataMapping, VdtDataSource, VdtEdge, VdtNode, VdtProject, VdtWarning } from "../types";
@@ -21,6 +23,7 @@ export interface FilteredChangeSet {
   dataSourceChanges: VdtDataSourceChange[];
   dataMappingChanges: VdtDataMappingChange[];
   taxonomyChanges: VdtTaxonomyChange[];
+  workspaceChange?: VdtWorkspaceChange | undefined;
 }
 
 export function filterChangeSet(changeSet: VdtChangeSet, selection?: ReadonlySet<string>): FilteredChangeSet {
@@ -33,7 +36,8 @@ export function filterChangeSet(changeSet: VdtChangeSet, selection?: ReadonlySet
     edgeChanges: changeSet.edgeChanges.filter((entry) => isSelected(entry.id)),
     dataSourceChanges: (changeSet.dataSourceChanges ?? []).filter((entry) => isSelected(entry.id)),
     dataMappingChanges: (changeSet.dataMappingChanges ?? []).filter((entry) => isSelected(entry.id)),
-    taxonomyChanges: (changeSet.taxonomyChanges ?? []).filter((entry) => isSelected(entry.id))
+    taxonomyChanges: (changeSet.taxonomyChanges ?? []).filter((entry) => isSelected(entry.id)),
+    ...(changeSet.workspaceChange && isSelected(changeSet.workspaceChange.id) ? { workspaceChange: changeSet.workspaceChange } : {})
   };
 }
 
@@ -46,10 +50,11 @@ function defaultNodeType(addition: VdtNodeAddition): VdtNode["type"] {
 }
 
 function additionToNode(addition: VdtNodeAddition, timestamp: string): VdtNode {
+  const type = defaultNodeType(addition);
   return {
     id: addition.nodeId,
     name: addition.name,
-    type: defaultNodeType(addition),
+    type,
     status: "ai_suggested",
     aiGenerated: true,
     ...definedProperties({
@@ -58,7 +63,7 @@ function additionToNode(addition: VdtNodeAddition, timestamp: string): VdtNode {
       formula: addition.formula,
       value: addition.value,
       baselineValue: addition.baselineValue,
-      valueStatus: addition.valueStatus,
+      valueStatus: newInputValueStatus({ ...addition, type }),
       valueSource: addition.valueSource,
       aiConfidence: addition.aiConfidence,
       aiRationale: addition.aiRationale,
@@ -94,6 +99,14 @@ export function collectChangeSetStructureWarnings(
 ): VdtWarning[] {
   const errors: VdtWarning[] = [];
   const seenEntryIds = new Set<string>();
+  if (changeSet.workspaceChange && (!filtered.workspaceChange
+    || changeSet.additions.length || changeSet.updates.length || changeSet.deletions.length || changeSet.edgeChanges.length
+    || changeSet.dataSourceChanges?.length || changeSet.dataMappingChanges?.length || changeSet.taxonomyChanges?.length)) {
+    return [warning({
+      severity: "error", type: "invalid_graph",
+      message: "Apply the complete scenario or version operation on its own."
+    })];
+  }
   if (changeSet.additions.some((addition) => addition.tags?.includes("incoming_kpi_breakdown"))) {
     const allEntries = [
       ...changeSet.additions, ...changeSet.updates, ...changeSet.deletions, ...changeSet.edgeChanges,
@@ -390,12 +403,7 @@ export function mutateProjectGraph(
         return node;
       }
 
-      const patch = update.patch;
-      return {
-        ...node,
-        ...definedProperties(patch),
-        updatedAt: timestamp
-      };
+      return applyNodePatch(node, update.patch, timestamp);
     });
   }
 

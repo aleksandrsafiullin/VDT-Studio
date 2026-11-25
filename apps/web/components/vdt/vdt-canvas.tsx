@@ -30,6 +30,7 @@ import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
 import { useSmartKpi } from "./use-smart-kpi";
 import { SmartKpiPanel, SmartKpiUndoNotice } from "./smart-kpi-panel";
+import { listenForSuggestedKpiReview } from "./suggested-kpi-handoff";
 import { visibleSmartKpiTargets } from "./smart-kpi-geometry";
 import { clsx } from "clsx";
 import styles from "./workspace-shell.module.css";
@@ -80,6 +81,8 @@ export function VdtCanvas({ deferSmartKpi = false }: { deferSmartKpi?: boolean }
   }, [calculation.rootValue, project]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [flowCanRender, setFlowCanRender] = useState(false);
+  const openSmartReview = smart.openReview;
+  useEffect(() => listenForSuggestedKpiReview(window, () => canvasRef.current, useVdtStudioStore.getState, openSmartReview), [openSmartReview]);
 
   const fallbackPositions = useMemo(() => {
     const existingPositions = collectExistingPositions(project.graph.nodes);

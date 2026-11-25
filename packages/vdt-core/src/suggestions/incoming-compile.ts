@@ -1,7 +1,7 @@
 import type { VdtProject, GraphCalculationResult, VdtWarning } from "../types";
 import type { VdtChangeSet, VdtNodeUpdate } from "../changeset/types";
 import { previewChangeSet } from "../changeset/preview";
-import { validateGraph } from "../graph/validation";
+import { evaluateModelReadiness } from "../graph/model-readiness";
 import { inspectDecompositionHierarchy } from "../graph/decomposition";
 import { calculateGraph } from "../formula/calculate";
 import { calculateScenarioGraph } from "../scenario/scenario";
@@ -9,7 +9,7 @@ import { extractFormulaReferences } from "../formula/evaluator";
 import { parseFormula } from "../formula/parser";
 import { assertSmartKpiGraph } from "./compile";
 import { expandIncomingKpiFormula, inspectIncomingKpiDraft } from "./incoming-contract";
-import { validateIncomingKpiEffectiveReferences, validateIncomingKpiModelConstants, validateIncomingKpiUnits } from "./incoming-formal";
+import { validateIncomingKpiEffectiveReferences, validateIncomingKpiUnits } from "./incoming-formal";
 import { fingerprintKpiProject, kpiCanonicalJson } from "./identity";
 import { validateKpiSuggestionForContext } from "./recipes";
 import { smartAssert } from "./validation";
@@ -62,8 +62,8 @@ export async function compileIncomingKpiBatch(project: VdtProject, input: Incomi
     smartAssert(before.valid, "INVALID_EXISTING_HIERARCHY", before.errors[0] ?? "Repair the existing plan.");
   }
   validateIncomingKpiEffectiveReferences(analysis);
-  if (input.draft.formulaAuthorship === "model" || input.draft.formulaAuthorship === "recipe") validateIncomingKpiModelConstants(analysis);
-  validateIncomingKpiUnits(analysis, bindings, target.unit, input.context.period);
+  validateIncomingKpiUnits(analysis, bindings, target.unit, input.context.period,
+    input.draft.formulaAuthorship === "model" || input.draft.formulaAuthorship === "recipe");
   const targetOffRoot = plan?.nodes.find(entry => entry.nodeId === target.id)?.kind === "context";
   const direct = project.graph.edges.filter(edge => edge.sourceNodeId === target.id);
   const existingIds = new Set(bindings.flatMap(row => row.existingNodeId ? [row.existingNodeId] : []));
@@ -147,8 +147,8 @@ export async function compileIncomingKpiBatch(project: VdtProject, input: Incomi
     else if (changeSet.updates.some(update => update.nodeId === node.id)) node.updatedAt = host.now;
   }
   assertSmartKpiGraph(preview);
-  const validation = validateGraph(preview);
-  smartAssert(validation.valid, "INVALID_GRAPH", validation.errors[0]?.message ?? "Check the graph.");
+  const readiness = evaluateModelReadiness(preview, { purpose: "structural_model" });
+  smartAssert(readiness.accepted, "INVALID_GRAPH", readiness.issues.find(issue => issue.severity === "error")?.message ?? "Check the graph.");
   let constructionWarnings: string[] = [];
   if (plan) {
     const hierarchy = inspectDecompositionHierarchy(preview, "incremental_user_apply");

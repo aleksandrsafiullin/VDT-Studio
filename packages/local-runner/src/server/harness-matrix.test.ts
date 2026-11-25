@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput, createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
+import {
+  buildChatStarterInput, buildKpiSuggestionContext, buildKpiSuggestionTaskInput, createSmartKpiMeasuredFixture
+} from "@vdt-studio/vdt-core";
 import { createManifestRegistry } from "./manifests";
 import { executeCompletion } from "./executor";
 import { profileDefinition, validateHarnessProfile } from "@vdt-studio/model-bridge/node";
@@ -40,9 +42,13 @@ describe("all harnesses share the structured task boundary", () => {
     const manifests = createManifestRegistry();
     const custom = id.startsWith("custom-") ? profileDefinition(validateHarnessProfile({ id: "custom-contracts", name: "Contracts", command: rpcFixture, args: [], transport: id === "custom-acp" ? "acp" : "vdt-jsonl" })) : undefined;
     const manifest = custom ? { ...manifests.get("opencode_subscription")!, id: custom.backendId, harness: custom } : manifests.get(`${id}_subscription`)!;
-    const smartInput = buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: "all-contracts", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-11", grain: "month" } }));
+    const project = createSmartKpiMeasuredFixture();
+    const smartInput = buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(project, { workspaceId: "all-contracts", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-11", grain: "month" } }));
+    const starterInput = buildChatStarterInput(project, "en");
     for (const taskType of ALL_VDT_TASK_TYPES) {
-      const schemaId = schemaIdForTask(taskType), input = taskType === "suggest_incoming_kpis" ? smartInput : {};
+      const schemaId = schemaIdForTask(taskType);
+      const input = taskType === "suggest_incoming_kpis" ? smartInput
+        : taskType === "suggest_chat_starters" ? starterInput : {};
       const request = { requestId: crypto.randomUUID(), backendId: manifest.id, taskType, schemaId, input, model: id === "pi" ? "fixture/test-model" : "test-model", timeoutMs: 3000 };
       const expected = await executeCompletion(manifests.get("mock")!, { ...request, backendId: "mock" }, AbortSignal.timeout(3000));
       let executable = id === "pi" ? piFixture : rpcFixture;

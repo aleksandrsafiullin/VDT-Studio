@@ -30,10 +30,37 @@ describe("VdtBuilderSession", () => {
     });
 
     expect(added.revision).toBe(2);
-    expect(added.changeSet?.additions[0]?.nodeId).toBe("effective_working_time");
+    expect(added.changeSet?.additions[0]).toMatchObject({ nodeId: "effective_working_time", valueStatus: "unknown" });
+    expect(added.project.graph.nodes.find(node => node.id === "effective_working_time")?.valueStatus).toBe("unknown");
     expect(added.event.revision).toBe(2);
     expect(before.graph.nodes).toHaveLength(1);
     expect(added.project.graph.nodes).toHaveLength(2);
+  });
+
+  it("records unknown for new empty inputs while preserving legacy nodes and explicit values", () => {
+    const builder = new VdtBuilderSession();
+    const draft = builder.createDraft({ projectTitle: "Capacity", rootKpi: "Capacity", unit: "t/h" });
+    const legacy = builder.addDriver({ nodeId: "legacy", parentNodeId: draft.project.rootNodeId, name: "Legacy" }).project;
+    delete legacy.graph.nodes.find(node => node.id === "legacy")!.valueStatus;
+    const current = new VdtBuilderSession({ project: legacy });
+    const parentNodeId = draft.project.rootNodeId;
+    const unmeasured = builder.addDriver({ nodeId: "stage_a", parentNodeId, name: "Stage A" });
+    const changeSet = unmeasured.changeSet!;
+    delete changeSet.additions[0]!.valueStatus;
+    changeSet.edgeChanges = [];
+    const status = { valueStatus: "user_provided_value" as const, baselineValue: 0 };
+    changeSet.additions.push({ id: "add_stage_b", nodeId: "stage_b", parentNodeId, name: "Stage B", relation: "positive_driver", ...status });
+    const applied = current.applyChangeSet(changeSet);
+    expect(applied.project.graph.nodes.find(node => node.id === "legacy")?.valueStatus).toBeUndefined();
+    expect(applied.project.graph.nodes.find(node => node.id === "stage_a")?.valueStatus).toBe("unknown");
+    expect(applied.project.graph.nodes.find(node => node.id === "stage_b")).toMatchObject(status);
+
+    const zero = current.addDriver({ nodeId: "zero", parentNodeId, name: "Zero", baselineValue: 0 });
+    expect(zero.project.graph.nodes.find(node => node.id === "zero")).toMatchObject({ baselineValue: 0 });
+    expect(zero.project.graph.nodes.find(node => node.id === "zero")?.valueStatus).toBeUndefined();
+    const filled = current.updateNode({ nodeId: "stage_a", patch: { baselineValue: 0 } });
+    expect(filled.project.graph.nodes.find(node => node.id === "stage_a")).toMatchObject({ baselineValue: 0 });
+    expect(filled.project.graph.nodes.find(node => node.id === "stage_a")?.valueStatus).toBeUndefined();
   });
 
   it("validates formulas before mutation", () => {
@@ -54,6 +81,7 @@ describe("VdtBuilderSession", () => {
     builder.setFormula({ nodeId: "output", formula: "rate * 3" });
     expect(builder.getProject().graph.nodes.find((node) => node.id === "output")?.type).toBe("root_kpi");
     expect(builder.getProject().graph.nodes.find((node) => node.id === "rate")?.type).toBe("calculated");
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "rate")?.valueStatus).toBeUndefined();
     expect(builder.calculate().calculation?.rootValue).toBe(6);
   });
 

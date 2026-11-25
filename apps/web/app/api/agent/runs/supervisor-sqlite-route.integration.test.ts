@@ -2,7 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { AgentRunEventOutbox, type AgentSessionBinding } from "@vdt-studio/vdt-agent-runtime";
+import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { openVdtDatabase } from "@vdt-studio/storage";
+import { AgentRunEventOutbox, type AgentSessionBinding, type VdtAgentOutcome } from "@vdt-studio/vdt-agent-runtime";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-supervisor-route-"));
@@ -63,40 +65,77 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
         }
       }
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({
-        turnId: "turn-1",
-        sessionState: "Goal: build Ore hauled VDT. Pending: confirm the reporting period.",
-        assistantMessage: {
-          messageId: "message-1",
-          text: "The persistent Model Agent session is ready."
-        },
-        action: {
-          type: "question",
-          messageId: "question-message-1",
-          questionSetId: "question-set-1",
-          questions: [{
-            id: "period",
-            question: "Which reporting period should be used?",
-            reason: "The model needs one time basis.",
-            required: true,
-            expectedAnswerType: "text"
-          }]
-        }
-      }) } }]
-    }), {
-      status: 200,
-      headers: { "content-type": "application/json" }
-    })));
+    const fetchFixture = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      const requestBody = String(init?.body ?? "");
+      const isReopenedQuestion = requestBody.includes("What output scope did we agree?");
+      const answer = requestBody.includes("saleable tonnes") ? "The agreed output is saleable tonnes." : "Output scope is unspecified.";
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          turnId: "turn-1",
+          sessionState: "Goal: build Ore hauled VDT. Pending: confirm the reporting period.",
+          assistantMessage: {
+            messageId: "message-1",
+            text: isReopenedQuestion ? answer : "The persistent Model Agent session is ready. Old formula = legacy_mined_tonnes."
+          },
+          action: {
+            type: "question",
+            messageId: "question-message-1",
+            questionSetId: "question-set-1",
+            questions: [{
+              id: "period",
+              question: "Which reporting period should be used?",
+              reason: "The model needs one time basis.",
+              required: true,
+              expectedAnswerType: "text"
+            }]
+          }
+        }) } }]
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchFixture);
 
     let startedRunId: string | undefined;
     try {
+      const scope = {
+        projectId: "route_conversation_project",
+        vdtId: "route_conversation_vdt",
+        conversationId: "route_conversation"
+      };
+      const database = openVdtDatabase(process.cwd(), { dataDir });
+      try {
+        const projectId = database.createProject({ id: scope.projectId, name: "Mine" }).id;
+        const conversationVdt = database.createVdt({ id: scope.vdtId, projectId, name: "Ore", rootKpi: "Ore" });
+        const otherVdt = database.createVdt({ id: "route_other_vdt", projectId, name: "Waste", rootKpi: "Waste" });
+        const conversation = database.createConversation({ id: scope.conversationId, projectId, vdtId: conversationVdt.id });
+        const denied = await POST(new Request("http://localhost:3000/api/agent/runs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "continue_project",
+            input: { prompt: "Continue this conversation." },
+            workspace: { projectId, vdtId: otherVdt.id },
+            conversationId: conversation.id,
+            executionBindingId: bindingId
+          })
+        }));
+        expect(denied.status).toBe(404);
+        expect(await denied.json()).toMatchObject({ error: { code: "VDT_NOT_FOUND" } });
+        expect(database.listAgentRuns(projectId)).toEqual([]);
+        expect(fetch).not.toHaveBeenCalled();
+      } finally {
+        database.close();
+      }
       const response = await POST(new Request("http://localhost:3000/api/agent/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           mode: "generate_vdt",
-          input: { rootKpi: "Ore hauled" },
+          input: { rootKpi: "Ore hauled", prompt: "Define output as saleable tonnes." },
+          workspace: { projectId: scope.projectId, vdtId: scope.vdtId },
+          conversationId: scope.conversationId,
           executionBindingId: bindingId
         })
       }));
@@ -119,6 +158,9 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
       try {
         db.exec("PRAGMA foreign_keys = ON;");
         expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 });
+        expect(db.prepare("SELECT conversation_id, vdt_id FROM agent_runs WHERE id = ?").get(body.runId)).toEqual({
+          conversation_id: scope.conversationId, vdt_id: scope.vdtId
+        });
         expect(db.prepare(`
           SELECT binding.project_id AS binding_project_id,
                  run.project_id AS run_project_id,
@@ -127,8 +169,8 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
           JOIN agent_runs run ON run.id = binding.run_id
           WHERE binding.run_id = ?
         `).get(body.runId)).toEqual({
-          binding_project_id: "project_agent_workspace",
-          run_project_id: "project_agent_workspace",
+          binding_project_id: scope.projectId,
+          run_project_id: scope.projectId,
           initial_epoch: 1
         });
         const normalizedCounts = db.prepare(`
@@ -156,6 +198,137 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
         });
       } finally {
         db.close();
+      }
+
+      const { GET: getRun } = await import("./[runId]/route");
+      const get = (runId: string) => getRun(new Request(`http://localhost:3000/api/agent/runs/${runId}`), {
+        params: Promise.resolve({ runId })
+      });
+      const switchBinding = `${bindingId}_switched`;
+      const disposeSwitched = runtime.agentExecutionBindingRegistry.register({
+        ...runtime.agentExecutionBindingRegistry.resolve(bindingId),
+        bindingId: switchBinding,
+        modelId: "switched-test-model"
+      });
+      let continuedRun: string | undefined;
+      try {
+        await supervisorRuntime.cancelStructuredModelAgentRun(body.runId, true);
+        expect(await (await get(body.runId)).json()).toMatchObject({
+          snapshot: { request: { conversationId: scope.conversationId }, status: "cancelled" }
+        });
+        const currentProject = openVdtDatabase(process.cwd(), { dataDir });
+        try {
+          currentProject.saveVdtRevision({
+            id: "route_user_revision",
+            projectId: scope.projectId,
+            vdtId: scope.vdtId,
+            revisionNo: 1,
+            source: "user",
+            project: productionVolumeProject
+          });
+        } finally {
+          currentProject.close();
+        }
+        const start = async (prompt: string, conversationId?: string, priorConversationRunId?: string, outcome?: VdtAgentOutcome) => {
+          const result = await POST(new Request("http://localhost:3000/api/agent/runs", {
+            method: "POST",
+            body: JSON.stringify({
+              mode: "continue_project",
+              outcome,
+              input: { prompt },
+              workspace: { projectId: scope.projectId, vdtId: scope.vdtId },
+              conversationId,
+              priorConversationRunId,
+              executionBindingId: switchBinding
+            })
+          }));
+          const resultBody = await result.json();
+          expect(result.status, JSON.stringify(resultBody)).toBe(200);
+          continuedRun = resultBody.runId;
+          return resultBody;
+        };
+
+        fetchFixture.mockClear();
+        const reopened = await start("What output scope did we agree?", undefined, body.runId);
+        expect(reopened.snapshot.visibleContext.threadId).toBe(scope.conversationId);
+        expect(runtime.agentRuntime.store.getState(reopened.runId).request.conversationContext?.unresolvedQuestions)
+          .toContainEqual(expect.objectContaining({ id: "period", source: expect.objectContaining({ runId: body.runId }) }));
+        await vi.waitFor(() => expect(runtime.agentRuntime.store.getState(reopened.runId).chatMessages)
+          .toContainEqual(expect.objectContaining({ role: "assistant", text: "The agreed output is saleable tonnes." })));
+        await supervisorRuntime.cancelStructuredModelAgentRun(reopened.runId, true);
+
+        fetchFixture.mockClear();
+        const correction = await start("Correction: output = run-of-mine tonnes", scope.conversationId);
+        expect(correction.runId).not.toBe(body.runId);
+        expect(correction.snapshot.request).toMatchObject({ executionBindingId: switchBinding, conversationId: scope.conversationId });
+        expect(correction.snapshot.request).not.toHaveProperty("conversationContext");
+        expect(correction.snapshot.chatMessages).toContainEqual(expect.objectContaining({
+          runId: body.runId, text: "Define output as saleable tonnes."
+        }));
+        await vi.waitFor(() => expect(JSON.stringify(fetchFixture.mock.calls)).toContain("saleable tonnes"));
+        const capturedPrompt = JSON.stringify(fetchFixture.mock.calls);
+        expect(capturedPrompt).toContain("switched-test-model");
+        expect(capturedPrompt).not.toContain("legacy_mined_tonnes");
+        expect(runtime.agentRuntime.store.getState(correction.runId).request.input.project?.graph)
+          .toEqual(productionVolumeProject.graph);
+        await supervisorRuntime.cancelStructuredModelAgentRun(correction.runId, true);
+
+        fetchFixture.mockClear();
+        const followUp = await start("What is our definition of output?", scope.conversationId);
+        const carried = runtime.agentRuntime.store.getState(followUp.runId).request.conversationContext;
+        expect(carried?.decisions).toEqual([{
+          topic: "output",
+          value: "run-of-mine tonnes",
+          source: { messageId: expect.any(String), runId: correction.runId },
+          supersedes: { messageId: expect.any(String), runId: body.runId }
+        }]);
+        expect(JSON.stringify(carried)).not.toContain("saleable tonnes");
+        await vi.waitFor(() => expect(JSON.stringify(fetchFixture.mock.calls)).toContain("run-of-mine tonnes"));
+        await supervisorRuntime.cancelStructuredModelAgentRun(followUp.runId, true);
+
+        let answerTurn = 0;
+        fetchFixture.mockImplementationOnce(async (_url, init) => {
+          expect(String(init?.body)).toContain("answer");
+          answerTurn += 1;
+          return modelTurnResponse(answerTurn, { type: "action_batch", batch: { calls: [{
+            externalCallId: "forbidden-edit", toolName: "vdt.update_node",
+            args: { nodeId: productionVolumeProject.rootNodeId, patch: { name: "Modified by answer run" } }
+          }] } });
+        }).mockImplementationOnce(async (_url, init) => {
+          expect(String(init?.body)).toContain("TOOL_NOT_ALLOWED_IN_PHASE");
+          answerTurn += 1;
+          return modelTurnResponse(answerTurn, { type: "action_batch", batch: { calls: [{
+            externalCallId: "finish-answer", toolName: "run.request_finish", args: {}
+          }] } });
+        }).mockImplementationOnce(async (_url, init) => {
+          const finishReceiptId = String(init?.body).match(/finish-receipt-[a-f0-9]{32}/)?.[0];
+          expect(finishReceiptId).toBeDefined();
+          answerTurn += 1;
+          return modelTurnResponse(answerTurn, { type: "final", messageId: "final-answer",
+            finishReceiptId, text: "The agreed output is run-of-mine tonnes." });
+        });
+        const readOnly = await start("Explain the existing output scope.", scope.conversationId, undefined, "answer");
+        await vi.waitFor(() => expect(runtime.agentRuntime.store.getState(readOnly.runId)).toMatchObject({
+          status: "succeeded", finishOutcome: { outcome: "answer", state: "final_persisted", policyVersion: "workspace-v1" }
+        }), { timeout: 5_000 });
+        await vi.waitFor(() => expect(supervisorRuntime.isStructuredModelAgentRunActive(readOnly.runId)).toBe(false));
+        const loaded = runtime.agentRuntime.store.reloadPersistedRun(readOnly.runId);
+        expect(loaded.supervisorPersistenceV2?.finishReceipt).toMatchObject(loaded.finishOutcome!);
+        expect(await (await get(readOnly.runId)).json()).toMatchObject({ snapshot: { finishOutcome: loaded.finishOutcome } });
+        const readOnlyDatabase = openVdtDatabase(process.cwd(), { dataDir });
+        try {
+          expect(readOnlyDatabase.listVdtRevisions(scope.vdtId)).toHaveLength(1);
+          expect(loaded.draftProject?.graph).toEqual(productionVolumeProject.graph);
+        } finally {
+          readOnlyDatabase.close();
+        }
+
+        const fresh = await start("What is our definition of output?");
+        expect(fresh.snapshot.request.conversationId).not.toBe(scope.conversationId);
+        expect(runtime.agentRuntime.store.getState(fresh.runId).request.conversationContext).toBeUndefined();
+      } finally {
+        if (continuedRun) await supervisorRuntime.cancelStructuredModelAgentRun(continuedRun, true).catch(() => undefined);
+        disposeSwitched();
       }
 
       // Simulate a crash after normalized commit but before the V1 JSON
@@ -245,3 +418,13 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
     }
   });
 });
+
+
+function modelTurnResponse(turn: number, action: object) {
+  return Response.json({ choices: [{ message: { content: JSON.stringify({
+    turnId: `turn-${turn}`,
+    sessionState: "Read the workspace and answer the user's question.",
+    assistantMessage: turn === 1 ? { messageId: "opening-answer", text: "I will review the existing scope." } : null,
+    action
+  }) } }] });
+}

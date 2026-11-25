@@ -1,3 +1,4 @@
+import { presentConversation } from "../../conversation-context";
 import { agentRuntime, jsonError } from "../../runtime";
 import { compactPublicAgentSnapshot } from "../../public-snapshot";
 import { AgentSupervisorPersistenceError } from "@vdt-studio/vdt-agent-runtime";
@@ -17,7 +18,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
       const options = await request.json().catch(() => ({})) as { awaitTerminal?: unknown };
       const awaitTerminal = options?.awaitTerminal === true;
       const snapshot = await cancelStructuredModelAgentRun(runId, awaitTerminal);
-      return Response.json({ ok: true, status: snapshot.status, snapshot, ...(awaitTerminal ? { terminalCleanupConfirmed: true } : {}) });
+      return Response.json({ ok: true, status: snapshot.status, snapshot: presentConversation(snapshot), ...(awaitTerminal ? { terminalCleanupConfirmed: true } : {}) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);
@@ -29,5 +30,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     }
   }
   const snapshot = compactPublicAgentSnapshot(agentRuntime.cancelRun(runId));
-  return Response.json({ ok: true, status: snapshot.status, snapshot });
+  return Response.json({ ok: true, status: snapshot.status, snapshot: presentConversation(snapshot) });
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { VdtWarning } from "@vdt-studio/vdt-core";
-import { validateGraph } from "@vdt-studio/vdt-core";
+import { evaluateModelReadiness } from "@vdt-studio/vdt-core";
 import type { AgentTool } from "../tool-registry";
 
 export function createAiTaskTools(): AgentTool[] {
@@ -26,7 +26,7 @@ const checkUnitsTool: AgentTool = {
   run(context) {
     const project = context.store.getSnapshot(context.runId).draftProject;
     if (!project) throw new Error("No draft project is available.");
-    const validation = validateGraph(project);
+    const validation = evaluateModelReadiness(project, { purpose: "structural_model" }).validation;
     const warnings = [...validation.errors, ...validation.warnings]
       .filter((warning) => warning.type === "unit_mismatch" || warning.type === "unknown_reference" || warning.type === "formula_parse_error")
       .map(toAdvisoryWarning);
@@ -96,7 +96,7 @@ const reviewModelTool: AgentTool = {
   run(context) {
     const project = context.store.getSnapshot(context.runId).draftProject;
     if (!project) throw new Error("No draft project is available.");
-    const validation = validateGraph(project);
+    const validation = evaluateModelReadiness(project, { purpose: "structural_model" }).validation;
     const assumptions = [
       "The first draft uses skill recipes and should be refined with actual business values.",
       "Formula structure is validated syntactically, but numeric assumptions still need owner review."

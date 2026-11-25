@@ -30,6 +30,7 @@ import { PanelToggleButton } from "@/components/ui/panel";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent, countDecimalPlacesFromNumber, countDecimalPlacesFromString } from "@/lib/format";
 import { parseScenarioNumberInput, stepScenarioNumberInput } from "@/lib/scenario-number-input";
+import { FactorProbePanel } from "./factor-probe-panel";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./scenario-modal.module.css";
 
@@ -367,6 +368,7 @@ function ScenarioModalContent() {
             <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
           </div>
         </div>
+        <FactorProbePanel key={project.id} project={project} inputs={rankedInputNodes} />
         <div className={styles.sectionHeading}>
           <Sigma className="h-4 w-4" />
           <h3>Overrides</h3>

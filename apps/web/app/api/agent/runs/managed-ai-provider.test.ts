@@ -78,6 +78,53 @@ it.each([true, false])("constrains a redundant opening question during construct
   expect(() => recovery.decode({ action: { type: "question" } })).toThrow("Action does not match");
 });
 
+it("admits a structural process question before the first plan but keeps repair turns tool-only", () => {
+  const schema = toProviderJsonSchema(modelAgentStructuredTurnSchema);
+  const catalog = [{ name: "vdt.set_decomposition_plan", inputJsonSchema: { type: "object", properties: {} } }];
+  const observation = { nodeCount: 1, constructingTree: true, needsStructure: true, readinessPurpose: "structural_model" };
+  const structural = buildOpenAiModelTurn(schema, catalog, observation, "exchange-1", undefined)!;
+  expect(structural.decode({ action: { type: "question" } })).toMatchObject({ action: { type: "question" } });
+  for (const options of [{ reviewInitialPlan: true }, { continueWithoutQuestion: true }]) {
+    const repair = buildOpenAiModelTurn(schema, catalog, observation, "exchange-2", undefined, options)!;
+    expect(() => repair.decode({ action: { type: "question" } })).toThrow("Action does not match");
+  }
+});
+
+it("projects typed workspace actions and keeps finish and approval in singleton batches", () => {
+  const schema = toProviderJsonSchema(modelAgentStructuredTurnSchema);
+  const empty = { type: "object", properties: {} };
+  const native = buildOpenAiModelTurn(schema, [
+    { name: "export.excel", inputJsonSchema: { type: "object", properties: { scenarioId: { type: "string" } } } },
+    { name: "scenario.list", inputJsonSchema: empty },
+    { name: "run.request_finish", inputJsonSchema: empty },
+    { name: "approval.request", inputJsonSchema: empty }
+  ], { nodeCount: 3, constructingTree: false, projectReadyForFinish: true }, "workspace-1", undefined)!;
+  expect(native.schema).toMatchObject({
+    properties: { action: { anyOf: expect.arrayContaining([expect.objectContaining({
+      properties: expect.objectContaining({
+        batch: expect.objectContaining({ properties: { calls: { anyOf: [
+          expect.objectContaining({ items: { $ref: "#/$defs/toolCall" } }),
+          { type: "array", minItems: 1, maxItems: 1, items: { $ref: "#/$defs/controlCall" } }
+        ] } } })
+      })
+    })]) } },
+    $defs: {
+      toolCall: { anyOf: [
+        { properties: { toolName: { const: "export.excel" } } },
+        { properties: { toolName: { const: "scenario.list" } } }
+      ] },
+      controlCall: { anyOf: [
+        { properties: { toolName: { const: "run.request_finish" } } },
+        { properties: { toolName: { enum: ["approval.request"] } } }
+      ] }
+    }
+  });
+  const omission = { action: { type: "action_batch", batch: { calls: [{ toolName: "export.excel", args: { scenarioId: null } }] } } };
+  expect(native.decode(omission)).toEqual({ action: { type: "action_batch", batch: {
+    calls: [{ toolName: "export.excel", args: {}, externalCallId: "workspace-1:call:1" }]
+  } } });
+});
+
 it("uses the actual root and accepted plan IDs for construction calls", () => {
   const string = { type: "string" };
   const object = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties) });

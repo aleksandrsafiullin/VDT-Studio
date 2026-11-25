@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE,
   AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
   AGENT_DECISION_FINISH_VALUE_PROMPT_RULE,
   AGENT_DECISION_QUESTION_PROMPT_RULE,
@@ -44,6 +45,14 @@ describe("agent prompt writeback and finish rules", () => {
     expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_DECISION_FINISH_ORDER_PROMPT_RULE);
     expect(AGENT_DECISION_SYSTEM_PROMPT).not.toMatch(/action_batch|run\.request_finish|finishReceiptId|action\.type/);
     expect(AGENT_FIRST_RESPONSE_SYSTEM_PROMPT).toContain(AGENT_QUESTION_WRITEBACK_PROMPT_RULE);
+    expect(AGENT_FIRST_RESPONSE_SYSTEM_PROMPT).toContain(AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE);
+  });
+
+  it("prompts the agent to resolve material relationships independently of numeric estimates", () => {
+    expect(AGENT_QUESTION_PROMPT_RULE).toContain(AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE);
+    expect(AGENT_DECISION_QUESTION_PROMPT_RULE).toContain(AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE);
+    expect(AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE).toContain("Before committing a formula");
+    expect(AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE).toContain("vdt.record_decomposition_assumption");
   });
 
   it("does not tell the model to skip retrying rate-limit or unavailable research", () => {

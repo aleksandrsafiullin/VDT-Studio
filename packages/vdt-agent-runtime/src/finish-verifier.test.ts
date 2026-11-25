@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy,validateGraph } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
-import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
+import { finishReceiptV2Schema, type AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
 import { unboundQuotedFormulaFacts } from "./model-acceptance-contract";
 
@@ -23,6 +23,42 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("distinguishes missing measurements, zero, an invalid model, and an answer", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Capacity", projectTitle: "Capacity", unit: "t/h" });
+    const { rootNodeId } = builder.getProject();
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "stage_a", name: "Stage A", unit: "t/h", baselineValue: 0 });
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "stage_b", name: "Stage B", unit: "t/h" });
+    builder.setFormula({ nodeId: rootNodeId, formula: "min(stage_a, stage_b)" });
+    const input = { ...readyInput(), project: builder.getProject(), mode: "continue_project" as const };
+    const structural = verifyDeterministicRunFinish({ ...input, outcome: "structural_model" });
+    expect(structural).toMatchObject({ accepted: true, finishReceipt: {
+      outcome: "structural_model", projectRevision: 7, policyVersion: "workspace-v1",
+      missingInputs: [{ nodeId: "stage_b", explicit: true, requiredForRoot: true }], missingInputCount: 1
+    } });
+    expect(structural.payload).not.toHaveProperty("rootValue");
+    const decoded = finishReceiptV2Schema.parse(JSON.parse(JSON.stringify(structural.finishReceipt)));
+    expect(verifyDeterministicRunFinish({ ...input, outcome: "structural_model", existingFinishReceipt: decoded }).finishReceipt)
+      .toEqual(decoded);
+    expect(verifyDeterministicRunFinish({ ...input, outcome: "calculated_baseline", existingFinishReceipt: decoded }))
+      .toMatchObject({ accepted: false, code: "CALCULATION_ERRORS" });
+    builder.updateNode({ nodeId: "stage_b", patch: { baselineValue: 90 } });
+    const calculated = verifyDeterministicRunFinish({ ...input, project: builder.getProject(), outcome: "calculated_baseline" });
+    expect(calculated).toMatchObject({ accepted: true, finishReceipt: { outcome: "calculated_baseline", rootValue: 0 } });
+    expect(calculated.receiptHash).not.toBe(structural.receiptHash);
+
+    const broken = builder.getProject();
+    broken.graph.nodes.find(node => node.id === rootNodeId)!.formula = "missing_reference";
+    for (const outcome of ["structural_model", "calculated_baseline"] as const) {
+      expect(verifyDeterministicRunFinish({ ...input, project: broken, outcome })).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    }
+    const answer = verifyDeterministicRunFinish({ ...input, project: broken, outcome: "answer" });
+    expect(answer).toMatchObject({ accepted: true, finishReceipt: { outcome: "answer" } });
+    expect(answer.payload).not.toHaveProperty("rootValue");
+    expect(verifyDeterministicRunFinish({ ...input, project: broken, outcome: "answer", expectedHeadRevision: 6 }))
+      .toMatchObject({ accepted: false, code: "STALE_PROJECT_REVISION" });
+  });
+
   it("withholds a finish receipt for conflicting source bindings in a calculable draft", () => {
     const issue = { code: "DUPLICATE_SOURCE_FACT" as const, nodeId: "discount", usedBy: "quantity", value: 120,
       quote: "Sold 120 items", detail: "Quantity already owns the quoted measurement." };
@@ -31,16 +67,26 @@ describe("verifyDeterministicRunFinish", () => {
     expect(result.finishReceipt).toBeUndefined();
   });
 
-  it("requires percent scaling before issuing a receipt for a new tree", () => {
-    const b = new VdtBuilderSession();
-    b.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
-    b.addDriver({ nodeId: "gross", parentNodeId: "revenue", name: "Gross", unit: "USD", baselineValue: 100 });
-    b.addDriver({ nodeId: "discount", parentNodeId: "revenue", name: "Discount", unit: "%", baselineValue: 10 });
-    b.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount)" });
-    const input = { ...readyInput(), requireDerivedRoot: true, enforcePercentageScale: true };
-    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
-    b.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount / 100)" });
-    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: true, payload: { rootValue: 90 } });
+  it.each([
+    ["gross * (1 - discount)", false],
+    ["gross * (1 - discount / 100)", true]
+  ])("checks the same percentage scale at calculated and structural finish for %s", (formula, accepted) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
+    builder.addDriver({ nodeId: "gross", parentNodeId: "revenue", name: "Gross", unit: "USD", baselineValue: 100 });
+    builder.addDriver({ nodeId: "discount", parentNodeId: "revenue", name: "Discount", unit: "%", baselineValue: 10 });
+    builder.setFormula({ nodeId: "revenue", formula });
+    const project = builder.getProject();
+    for (const purpose of ["calculated_baseline", "structural_model"] as const) {
+      const result = verifyDeterministicRunFinish({ ...readyInput(), project, purpose });
+      expect(result.accepted).toBe(accepted);
+      if (accepted) expect(result.payload.rootValue).toBe(90);
+      else expect(result).toMatchObject({ code: "GRAPH_INVALID", payload: {
+        readinessIssues: [expect.objectContaining({ code: "UNIT_MISMATCH" })]
+      } });
+    }
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project, mode: "review_project" }).accepted).toBe(accepted);
+    if (accepted) expect(verifyDeterministicRunFinish({ ...readyInput(), project, requireHierarchy: true }).code).toBe("HIERARCHY_INCOMPLETE");
   });
 
   it("withholds the finish receipt for minutes presented as hours, including a missing operand unit", () => {
@@ -103,7 +149,7 @@ describe("verifyDeterministicRunFinish", () => {
     builder.addDriver({ nodeId: "refunds", parentNodeId: "revenue", name: "Refunds", unit: "USD", baselineValue: 500 });
     builder.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount / 100) - refunds" });
     expect(unboundQuotedFormulaFacts(builder.getProject(), request)).toEqual([]);
-    expect(verifyDeterministicRunFinish({ ...readyInput(), project: builder.getProject(), enforcePercentageScale: true }))
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project: builder.getProject() }))
       .toMatchObject({ accepted: true, payload: { rootValue: 400 } });
   });
 

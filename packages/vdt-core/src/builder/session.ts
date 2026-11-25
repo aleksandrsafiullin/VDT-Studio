@@ -1,3 +1,4 @@
+import { applyNodePatch, newInputValueStatus } from "../changeset/node-patch";
 import { applyChangeSet } from "../changeset/apply";
 import type { VdtChangeSet, VdtNodePatch } from "../changeset/types";
 import { calculateGraph } from "../formula/calculate";
@@ -106,15 +107,18 @@ export class VdtBuilderSession {
     const nodeId = uniqueId(stableSnakeId(input.nodeId ?? input.name, "driver"), nodeIds);
     const edgeIds = new Set(this.project.graph.edges.map((edge) => edge.id));
     const edgeId = uniqueId(`edge_${input.parentNodeId}_${nodeId}`, edgeIds);
+    const type = input.type ?? "input";
+    const valueStatus = newInputValueStatus({ ...input, type });
     const node: VdtNode = {
       id: nodeId,
       name: input.name.trim(),
       description: input.description?.trim() || undefined,
-      type: input.type ?? "input",
+      type,
       status: "ai_suggested",
       unit: input.unit?.trim() || undefined,
       formula: input.formula?.trim() || undefined,
       baselineValue: input.baselineValue,
+      ...(valueStatus ? { valueStatus } : {}),
       aiGenerated: true,
       aiConfidence: 0.72,
       aiRationale: input.aiRationale?.trim() || "Added by the VDT builder as an agent driver.",
@@ -147,6 +151,7 @@ export class VdtBuilderSession {
           unit: node.unit,
           formula: node.formula,
           baselineValue: node.baselineValue,
+          ...(valueStatus ? { valueStatus } : {}),
           aiConfidence: node.aiConfidence,
           aiRationale: node.aiRationale,
           assumptions: node.assumptions
@@ -186,6 +191,7 @@ export class VdtBuilderSession {
   updateNode(input: UpdateNodeInput): VdtBuilderOperationResult {
     this.requireNode(input.nodeId);
     if (input.patch.formula?.trim()) parseFormula(input.patch.formula);
+    const patch = cleanNodePatch(input.patch);
     const timestamp = this.now();
     this.project = {
       ...this.project,
@@ -194,13 +200,13 @@ export class VdtBuilderSession {
         ...this.project.graph,
         nodes: this.project.graph.nodes.map((node) =>
           node.id === input.nodeId
-            ? { ...node, ...cleanNodePatch(input.patch), updatedAt: timestamp }
+            ? applyNodePatch(node, patch, timestamp)
             : node
         )
       }
     };
     const changeSet = this.changeSet({
-      updates: [{ id: `update_${input.nodeId}_${this.revision + 1}`, nodeId: input.nodeId, patch: cleanNodePatch(input.patch) }]
+      updates: [{ id: `update_${input.nodeId}_${this.revision + 1}`, nodeId: input.nodeId, patch }]
     });
     return this.commit("update_node", "Node updated", `Updated node "${input.nodeId}".`, {
       changeSet,
@@ -483,6 +489,7 @@ function collectChangeIds(changeSet: VdtChangeSet): Set<string> {
     ...changeSet.additions.map((entry) => entry.id),
     ...changeSet.updates.map((entry) => entry.id),
     ...changeSet.deletions.map((entry) => entry.id),
-    ...changeSet.edgeChanges.map((entry) => entry.id)
+    ...changeSet.edgeChanges.map((entry) => entry.id),
+    ...(changeSet.workspaceChange ? [changeSet.workspaceChange.id] : [])
   ]);
 }

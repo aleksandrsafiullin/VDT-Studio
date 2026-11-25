@@ -1,17 +1,21 @@
 import { z } from "zod";
 import {
+  applyInputValueOperation,
   constructionNodeUpdateTypes,
+  evaluateModelReadiness,
   extractFormulaReferences,
-  inspectDecompositionHierarchy,
   plannedAdditionCandidates,
   plannedFactorNodeTypes,
   plannedFormulaTargets,
   plannedOrphanLinks,
+  prepareEdgeEdit,
   parseValidationUnit,
+  readDecompositionAssumptions,
   serializeFormulaTokens,
   stableSnakeId,
   tokenizeFormula,
   uniqueId,
+  type InputValueCommand,
   type VdtBuilderSession,
   type VdtChangeSet,
   type VdtEdge,
@@ -22,8 +26,8 @@ import {
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
-import { unboundQuotedFormulaFacts } from "../model-acceptance-contract";
-import { constructionSourceFacts, isRunCreatedInputLeaf, matchesQuotedSourceUnit, sourceBindingIssue } from "../construction-source-facts";
+import { requiresDerivedRootForRun, unboundQuotedFormulaFacts } from "../model-acceptance-contract";
+import { constructionFinishEvidence, constructionSourceFacts, isRunCreatedInputLeaf, matchesQuotedSourceUnit, sourceBindingIssue } from "../construction-source-facts";
 import { normalizeQuotedInputUnit } from "../value-provenance-contract";
 import { AgentToolError, isAgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import type { VdtAgentRunState } from "../types";
@@ -121,6 +125,16 @@ const valueSourceSchema = z.object({
   range: optionalInput(z.tuple([z.number().finite(), z.number().finite()]))
 }).strict();
 
+const isRelationshipNote = (note: string) => readDecompositionAssumptions({ assumptions: [note] }).length > 0;
+function appendInputAssumption(existing: string[], note: string): string[] {
+  const ordinary = existing.filter(candidate => !isRelationshipNote(candidate));
+  const relationships = existing.filter(isRelationshipNote);
+  return [...[...new Set([...ordinary, note])].slice(-20), ...relationships];
+}
+
+const ordinaryAssumptionSchema = z.string().max(300).refine(note => !isRelationshipNote(note),
+  "Use vdt.record_decomposition_assumption for relationship evidence.");
+
 const nodePatchSchema = z.object({
   name: optionalInput(z.string().min(1).max(200)),
   description: optionalInput(z.string().max(1_000)),
@@ -132,7 +146,7 @@ const nodePatchSchema = z.object({
   valueStatus: optionalInput(valueStatusSchema),
   valueSource: optionalInput(valueSourceSchema),
   status: optionalInput(nodeStatusSchema),
-  assumptions: optionalInput(z.array(z.string().max(300)).max(20)),
+  assumptions: optionalInput(z.array(ordinaryAssumptionSchema).max(20)),
   tags: optionalInput(z.array(z.string().max(80)).max(20)),
   controllability: optionalInput(z.enum(["high", "medium", "low", "none"])),
   materiality: optionalInput(z.enum(["high", "medium", "low", "unknown"]))
@@ -169,6 +183,7 @@ export function createVdtBuilderTools(): AgentTool[] {
     addDriversBatchTool,
     instantiateSubtreeTool,
     addEdgeTool,
+    editEdgeTool,
     updateNodeTool,
     setInputValuesBatchTool,
     deleteNodeTool,
@@ -190,7 +205,7 @@ const addDriverInputSchema = z.object({
   baselineValue: optionalInput(z.number().finite()),
   description: optionalInput(z.string().max(1_000)),
   aiRationale: optionalInput(z.string().max(800)),
-  assumptions: optionalInput(z.array(z.string().max(300)).max(20))
+  assumptions: optionalInput(z.array(ordinaryAssumptionSchema).max(20))
 });
 
 type AddDriverToolInput = z.infer<typeof addDriverInputSchema>;
@@ -534,15 +549,16 @@ const addEdgeTool: AgentTool = {
         });
       }
     }
-    const previewBuilder = cloneBuilder(context);
-    const result = previewBuilder.addEdge(input);
-    const changeSet = requireChangeSet(result.changeSet);
-    const edgeId = result.changeSet?.edgeChanges[0]?.action === "add"
-      ? result.changeSet.edgeChanges[0].edge.id
-      : "";
+    const edit = prepareEdgeEdit(project, { kind: "add", ...input }, {
+      id: `edge_add_${builder.getRevision()}`,
+      backendId: context.getRun().request.providerId,
+      createdAt: new Date().toISOString()
+    }, { aiGenerated: true });
+    if (!edit.ok) throw new AgentToolError(edit.code, edit.message);
+    const { edgeId, changeSet } = edit;
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Edge added",
-      summary: result.event.message,
+      summary: `Added edge "${edgeId}".`,
       changeSet,
       targetNodeId: input.sourceNodeId
     });
@@ -552,6 +568,58 @@ const addEdgeTool: AgentTool = {
       validation: mutation.validation,
       mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
+  }
+};
+
+const editEdgeTool: AgentTool = {
+  name: "vdt.edit_edge",
+  description: "Change the relation or remove a link by its edge ID without changing any KPI formula. The draft must remain reachable and cycle-free.",
+  inputSchema: z.object({
+    kind: z.enum(["set_relation", "remove"]),
+    edgeId: z.string().min(1).max(500),
+    relation: optionalInput(edgeRelationSchema).describe("Required for set_relation. Omit for remove.")
+  }).strict(),
+  outputSchema: z.record(z.string(), z.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "repairing_graph",
+  run(context, input) {
+    const builder = requireBuilder(context.builder);
+    const project = builder.getProject();
+    if (input.kind === "set_relation" ? !input.relation : input.relation !== undefined) {
+      throw new AgentToolError("INVALID_EDGE_EDIT", "Set relation requires a relation. Remove accepts only an edge ID.");
+    }
+    const edit = prepareEdgeEdit(project, input.kind === "remove" ? {
+      kind: "remove", edgeId: input.edgeId
+    } : { kind: "set_relation", edgeId: input.edgeId, relation: input.relation }, {
+      id: `edge_edit_${builder.getRevision()}`,
+      backendId: context.getRun().request.providerId,
+      createdAt: new Date().toISOString()
+    });
+    if (!edit.ok) throw new AgentToolError(edit.code, edit.message);
+    const root = project.graph.nodes.find(node => node.id === project.rootNodeId);
+    if (context.requirePlanOperands || (context.requireDecompositionPlan && root?.decompositionPlan)) {
+      const primary = root?.decompositionPlan?.nodes.find(entry =>
+        entry.nodeId === edit.targetNodeId && entry.parentNodeId === edit.sourceNodeId);
+      if (primary) {
+        const expectsContext = primary.kind === "context";
+        const retainsPrimaryRelation = input.kind === "remove" ? project.graph.edges.some(edge =>
+          edge.id !== edit.edgeId && edge.sourceNodeId === edit.sourceNodeId && edge.targetNodeId === edit.targetNodeId
+            && (edge.relation === "contextual_influence") === expectsContext
+        ) : (input.relation === "contextual_influence") === expectsContext;
+        if (!retainsPrimaryRelation) {
+          throw new AgentToolError("CONSTRUCTION_EDGE_NOT_ADMITTED", "Preserve the declared primary link and its contextual or mathematical kind. Revise the plan and reparent the branch if its primary parent has changed.");
+        }
+      }
+    }
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      title: input.kind === "remove" ? "Link removed" : "Link relation changed",
+      summary: `Edited link "${edit.edgeId}".`,
+      changeSet: edit.changeSet,
+      targetNodeId: edit.sourceNodeId
+    });
+    return { edgeId: edit.edgeId, revision: mutation.revision, validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status } };
   }
 };
 
@@ -597,10 +665,21 @@ function assertDraftEstimateAllowed(context: AgentToolContext, nodeId: string): 
   }
 }
 
+function inputValuePatch(context: AgentToolContext, project: VdtProject, command: InputValueCommand): VdtNodePatch {
+  const operation = applyInputValueOperation(project, command, {
+    operationId: `${context.runId}:input:${command.nodeId}`,
+    now: new Date().toISOString()
+  });
+  if (operation.status === "error") throw new AgentToolError(operation.code, operation.message);
+  return operation.patch;
+}
+
 const updateNodeTool: AgentTool = {
   name: "vdt.update_node",
-  description: "Update allowed fields on an existing node.",
-  inputSchema: z.object({ nodeId: z.string().min(1), patch: nodePatchSchema }),
+  description: "Update allowed fields on an existing node. Use patch.clearInputValue=true to remove its input value and provenance.",
+  inputSchema: z.object({ nodeId: z.string().min(1), patch: nodePatchSchema.extend({
+    clearInputValue: optionalInput(z.literal(true))
+  }) }),
   outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
@@ -639,7 +718,35 @@ const updateNodeTool: AgentTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
-    const patch: VdtNodePatch = { ...input.patch };
+    const requested: VdtNodePatch = input.patch.assumptions === undefined ? input.patch : {
+      ...input.patch,
+      assumptions: [...input.patch.assumptions, ...(node.assumptions ?? []).filter(isRelationshipNote)]
+    };
+    let patch: VdtNodePatch = { ...requested };
+    if (requested.clearInputValue) {
+      if (node.formula?.trim() || node.goalSeek || node.type === "calculated") {
+        throw new AgentToolError("INPUT_VALUE_READ_ONLY", `Node "${node.id}" is calculated.`);
+      }
+      if (requested.value !== undefined || requested.baselineValue !== undefined
+        || requested.valueStatus !== undefined || requested.valueSource !== undefined || requested.formula !== undefined
+        || requested.type !== undefined || requested.status !== undefined) {
+        throw new AgentToolError("CONFLICTING_INPUT_VALUE_EDIT", "Clear an input value separately from setting its value, provenance, status, type or formula.");
+      }
+      patch = { ...requested, ...inputValuePatch(context, project, { nodeId: node.id, value: null }) };
+    } else {
+      const value = requested.baselineValue ?? requested.value;
+      const singleValue = requested.baselineValue === undefined || requested.value === undefined || requested.value === requested.baselineValue;
+      if (value !== undefined && singleValue && !node.goalSeek && !node.formula?.trim() && !requested.formula?.trim()
+        && node.type !== "calculated" && requested.type !== "calculated") {
+        const valuePatch = inputValuePatch(context, project, { nodeId: node.id, value, evidence: requested.valueSource });
+        patch = {
+          ...requested,
+          ...valuePatch,
+          valueStatus: requested.valueStatus ?? valuePatch.valueStatus,
+          ...(requested.status ? { status: requested.status } : {})
+        };
+      }
+    }
     const writesEstimate = patch.valueStatus === "default_assumption"
       || (patch.valueStatus === undefined && node.valueStatus === "default_assumption"
         && (patch.baselineValue !== undefined || patch.value !== undefined));
@@ -649,7 +756,7 @@ const updateNodeTool: AgentTool = {
     let correction: ReturnType<typeof sourceUnitCorrection>;
     const sourceFacts = context.requirePlanOperands || context.requireDecompositionPlan
       ? constructionSourceFacts(project, context.store.getState(context.runId)) : undefined;
-    const checksSourceWrite = sourceFacts?.inputIds.has(node.id) && (patch.valueStatus ?? node.valueStatus) === "user_provided_value"
+    const checksSourceWrite = !patch.clearInputValue && sourceFacts?.inputIds.has(node.id) && (patch.valueStatus ?? node.valueStatus) === "user_provided_value"
       && (patch.valueStatus !== undefined || patch.value !== undefined || patch.baselineValue !== undefined
         || patch.valueSource !== undefined || patch.unit !== undefined);
     if (sourceFacts && checksSourceWrite) {
@@ -708,7 +815,8 @@ const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
     nodeId: vdtNodeIdSchema,
     value: z.number().finite(),
     provenance: z.enum(["user_provided_value", "default_assumption"]),
-    note: z.string().trim().min(4).max(160)
+    note: z.string().trim().min(4).max(160).refine(note => !isRelationshipNote(note),
+      "Use vdt.record_decomposition_assumption for relationship evidence.")
   }).strict()).min(1).max(8) }).strict(),
   outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
@@ -771,17 +879,20 @@ const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
     const changes = values.map((item) => requireChangeSet(preview.updateNode({
       nodeId: item.nodeId,
       patch: {
+        ...inputValuePatch(context, project, {
+          nodeId: item.nodeId,
+          value: item.value,
+          evidence: {
+            sourceTier: item.provenance === "default_assumption" ? "default_assumption" : "user_input",
+            note: item.provenance === "default_assumption" ? `Editable draft assumption: ${item.note}` : item.note,
+            editableInDialog: true,
+            acceptedByUserInDialog: item.provenance === "user_provided_value"
+          }
+        }),
         ...(quotedUnits.has(item.nodeId) ? { unit: quotedUnits.get(item.nodeId) } : {}),
-        value: item.value, baselineValue: item.value, valueStatus: item.provenance,
         status: item.provenance === "default_assumption" ? "assumption" : "accepted",
-        valueSource: {
-          sourceTier: item.provenance === "default_assumption" ? "default_assumption" : "user_input",
-          note: item.provenance === "default_assumption" ? `Editable draft assumption: ${item.note}` : item.note,
-          editableInDialog: true,
-          acceptedByUserInDialog: item.provenance === "user_provided_value"
-        },
         ...(item.provenance === "default_assumption" ? {
-          assumptions: [...new Set([...(nodes.get(item.nodeId)?.assumptions ?? []), item.note])].slice(-20)
+          assumptions: appendInputAssumption(nodes.get(item.nodeId)?.assumptions ?? [], item.note)
         } : {})
       }
     }).changeSet));
@@ -878,8 +989,10 @@ const setFormulaTool: AgentTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.formula, input.nodeId);
-    if (context.requirePlanOperands) {
-      const unboundSourceFacts = unboundQuotedFormulaFacts(project, context.getRun().request, input);
+    const state = context.store.getState(context.runId);
+    if (requiresDerivedRootForRun(state.request)) {
+      const { quantities } = constructionSourceFacts(project, state);
+      const unboundSourceFacts = unboundQuotedFormulaFacts(project, state.request, input, quantities);
       if (unboundSourceFacts.length) {
         throw new AgentToolError("SOURCE_PROVENANCE_INCOMPLETE", "This formula inlines supplied values. Keep each quoted amount or percentage in an editable input leaf. Revise the plan, add and fill the leaves, then reference their IDs in the formula.", {
           nodeId: input.nodeId, unboundSourceFacts
@@ -934,10 +1047,27 @@ const validateTool: AgentTool = {
   requiresDraftProject: true,
   phase: "validating_graph",
   run(context) {
-    const builder=requireBuilder(context.builder);
-    const graphValidation=summarizeValidation(builder.validate().validation);
-    const hierarchy=inspectDecompositionHierarchy(builder.getProject());
-    const validation=context.requireDecompositionPlan?{...graphValidation,valid:graphValidation.valid&&hierarchy.valid,errors:[...graphValidation.errors,...hierarchy.errors.slice(0,20).map(message=>({type:"invalid_graph" as const,severity:"error" as const,message}))]}:graphValidation;
+    const project = requireBuilder(context.builder).getProject();
+    const state = context.store.getState(context.runId);
+    const requireDerivedRoot = requiresDerivedRootForRun(state.request);
+    const readiness = evaluateModelReadiness(project, {
+      purpose: "structural_model", requireDerivedRoot, requireHierarchy: context.requireDecompositionPlan
+    });
+    const evidence = requireDerivedRoot ? constructionFinishEvidence(project, state) : undefined;
+    const sourceIssue = { severity: "error", type: "invalid_value" } as const;
+    const issues = [
+      ...(evidence?.unbound.length ? [{
+        ...sourceIssue, code: "SOURCE_PROVENANCE_INCOMPLETE", id: "validation-construction-provenance",
+        message: `Use each quoted measurement as an input leaf in the result's dependency tree. ${evidence.unbound.map(({ quote }) => quote).join(". ")}`
+      }] : []),
+      ...evidence?.issues.map(issue => ({
+        ...sourceIssue, code: "SOURCE_GROUNDING_CONFLICT", id: `validation-construction-source-${issue.nodeId}`,
+        nodeId: issue.nodeId, message: issue.detail
+      })) ?? [],
+      ...readiness.issues.filter(issue => issue.severity === "error")
+    ];
+    const { hierarchy } = readiness;
+    const validation = summarizeValidation({ valid: issues.length === 0, errors: issues, warnings: readiness.validation.warnings });
     context.store.updateRun(context.runId, { validationState: validation });
     context.emit({
       type: "graph_validation",
@@ -948,7 +1078,11 @@ const validateTool: AgentTool = {
         : `Graph validation found ${validation.errors.length} error${validation.errors.length === 1 ? "" : "s"}.`,
       metadata: { errors: validation.errors.length, warnings: validation.warnings.length }
     });
-    return {...validation,...(context.requireDecompositionPlan?{hierarchy:{...hierarchy,errors:hierarchy.errors.slice(0,20),errorCount:hierarchy.errors.length}}:{})};
+    return {
+      ...validation,
+      readinessIssues: issues.slice(0, 12),
+      ...(hierarchy ? { hierarchy: { ...hierarchy, errors: hierarchy.errors.slice(0, 20), errorCount: hierarchy.errors.length } } : {})
+    };
   }
 };
 
@@ -1187,7 +1321,7 @@ function subtreeAddition(input: {
     valueSource,
     aiConfidence: sourceNode.aiConfidence,
     aiRationale: override?.aiRationale ?? `Instantiated from source node "${sourceNode.id}".`,
-    assumptions: override?.assumptions ?? sourceNode.assumptions,
+    assumptions: override?.assumptions ?? sourceNode.assumptions?.filter(note => !isRelationshipNote(note)),
     tags: override?.tags ?? sourceNode.tags,
     owner: sourceNode.owner,
     controllability: override?.controllability ?? sourceNode.controllability,

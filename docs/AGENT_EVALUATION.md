@@ -1,5 +1,10 @@
 # Agent Evaluation
 
+The AI-first professional and novice cases use versioned user requests and
+separate evaluator-only expectations. The procedure defines the saved
+revision evidence, workbook checks and matched Excel tasks.
+[Workspace journey evaluation](../eval/agent-autonomy/WORKSPACE_JOURNEYS.md)
+
 Implemented on 2026-10-27: ten versioned business requests, separate evaluator
 oracles and an offline saved-result evaluator. **Live acceptance with these
 natural requests has not been run.** Tests of this evaluator establish its

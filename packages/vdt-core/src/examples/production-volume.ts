@@ -130,7 +130,7 @@ export const productionVolumeProject: VdtProject = {
         description: "Share of produced material counted as useful or saleable output.",
         type: "input",
         status: "ai_suggested",
-        unit: "%",
+        unit: "1",
         baselineValue: 0.96,
         aiGenerated: true,
         aiConfidence: 0.72,

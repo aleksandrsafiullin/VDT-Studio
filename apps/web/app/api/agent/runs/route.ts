@@ -31,6 +31,8 @@ import {
   isExternalCliExecutionBinding,
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
+import { openAgentRunPersistenceDatabase } from "./persistence";
+import { bindStartConversation, presentConversation } from "./conversation-context";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
 import { pinAvailableSkill, resolveVdtSkill } from "@vdt-studio/vdt-agent";
 import { requireVdt } from "../../skills/service";
@@ -104,8 +106,24 @@ export async function POST(request: Request) {
   let resolved: ReturnType<typeof resolveAgentStartRequest>;
   try {
     resolved = resolveAgentStartRequest(parsed.data as VdtAgentPublicStartRequest);
+    if (resolved.request.outcome && (!resolved.binding
+      || (!isStructuredModelExecutionBinding(resolved.binding) && !isExternalCliExecutionBinding(resolved.binding)))) {
+      return jsonError(
+        "Selecting a run outcome requires a Supervisor execution binding.",
+        409,
+        "AGENT_OUTCOME_REQUIRES_SUPERVISOR"
+      );
+    }
     const workspace = resolved.request.workspace;
     if (workspace?.vdtId) requireVdt(workspace.projectId, workspace.vdtId);
+    if (workspace?.vdtId) {
+      const database = openAgentRunPersistenceDatabase(process.cwd());
+      try {
+        bindStartConversation(database, resolved.request);
+      } finally {
+        database.close();
+      }
+    }
     resolved.request.input.personalisation = bindUserInstructions(resolved.request.input.personalisation);
     if (resolved.binding && (isStructuredModelExecutionBinding(resolved.binding) || isExternalCliExecutionBinding(resolved.binding))
       && requiresDerivedRootForRun(resolved.request)) {
@@ -145,7 +163,7 @@ export async function POST(request: Request) {
         bindingDefinition: resolved.binding,
         requestUrl: request.url
       });
-      return Response.json({ ok: true, runId: snapshot.runId, snapshot });
+      return Response.json({ ok: true, runId: snapshot.runId, snapshot: presentConversation(snapshot) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);
@@ -173,7 +191,7 @@ export async function POST(request: Request) {
         engine,
         allowUnqualifiedExternalCanary: isCliSessionCanaryEnabled()
       });
-      return Response.json({ ok: true, runId: snapshot.runId, snapshot });
+      return Response.json({ ok: true, runId: snapshot.runId, snapshot: presentConversation(snapshot) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);
@@ -216,7 +234,7 @@ export async function POST(request: Request) {
     const snapshot = compactPublicAgentSnapshot(
       agentRuntime.store.getSnapshot(initialSnapshot.runId)
     );
-    return Response.json({ ok: true, runId: snapshot.runId, snapshot });
+    return Response.json({ ok: true, runId: snapshot.runId, snapshot: presentConversation(snapshot) });
   } catch (error) {
     return storageWriteErrorResponse(
       error,

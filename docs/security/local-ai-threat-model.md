@@ -294,6 +294,8 @@ BYOK retention uses the separate encrypted origin-local vault in [ADR-007](../ad
 
 The host derives file ownership from the admitted run and validates immutable retained bytes/hash; `data.*` arguments cannot carry filesystem, project or execution authority. Full-table bounded aggregation uses no SQL/eval. Numeric materialization accepts a query and empty-leaf bindings only and enters the existing approval/revision Gateway. File cells and search results are untrusted observations, never instructions. Semantic units/grain and file retention/privacy gaps remain unresolved. The trusted-local upload route enforces a streamed byte and read-time limit before multipart decoding. Retained sources are parsed in a separate child with bounded input, V8 heap, time, output and concurrency. Workbook checks cover archive expansion, sheet count and rectangular dimensions. The V8 cap covers the managed heap. Buffers and native allocations remain outside that cap. Child termination and watchdog behavior still require packaged-app qualification on both platforms.
 
+The portable VDT JSON browser import bounds the file to 4 MiB and 32 nested levels. Before review and submission, the client detaches external source definitions, mappings and file catalog references from the model and its named versions. The user confirms creation of a new VDT in the active workspace. The creation endpoint retains its server-side model validation and workspace revision checks.
+
 An explicitly admitted OpenAI research session retains its key only inside a provider closure in trusted-local process memory for at most one hour (timer plus lazy expiry), with fixed Responses endpoint, `store:false`, required search and cited-result checks. No env/file key writes or public key projection are introduced. Explicit environment research configuration takes precedence. This is not hosted multi-user credential authorization. Codex private output-schema files contain only the public wire contract/allowlisted tool names, use owner-only creation and are removed after child completion. Serialized arguments still face canonical validation. Shell feature disabling and schema framing do not establish hard native tool isolation.
 
 
@@ -311,6 +313,12 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 - Data upload is not approved for hosted/public or trusted production use in the current alpha.
 
 Trusted-local server catalog discovery admits only manifest-owned Ollama/LM Studio/vLLM model bindings. Hosted mode and production-build evaluation do not probe local catalogs; VDT_LOCAL_MODEL_AGENT_ENABLED=false opts out. Local bindings reject providerConfig endpoint overrides. Direct structured turns disable redirects, use no cloud credentials and remain subject to deterministic schema and Gateway validation. This wiring does not promote native packaging, model quality or performance qualification.
+
+Workspace chat resolves scenario, version and workbook requests within the
+admitted VDT. Workbook descriptors identify a saved revision and scenario. The
+local download route rechecks run and VDT scope before generating the bytes.
+Editor handoffs name finite, scoped controls. File selection, mapping Apply,
+and destructive confirmations remain explicit user actions.
 
 ## Protected Assets
 

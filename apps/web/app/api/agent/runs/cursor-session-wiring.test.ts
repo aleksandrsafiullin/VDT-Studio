@@ -180,7 +180,9 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
     expect((await POST(request("http://127.0.0.1:37542"))).status).toBe(403);
     expect((await POST(request("", JSON.stringify({ operation: "sign_in" })))).status).toBe(403);
     expect((await POST(request(undefined, JSON.stringify({ operation: "sign_in", executable: "/other" })))).status).toBe(400);
-    expect((await POST(request(undefined, " ".repeat(129)))).status).toBe(413);
+    const { CHAT_STARTER_LIMITS } = await import("@vdt-studio/vdt-core");
+    expect((await POST(request(undefined, " ".repeat(129)))).status).toBe(400);
+    expect((await POST(request(undefined, " ".repeat(CHAT_STARTER_LIMITS.requestBytes + 1)))).status).toBe(413);
     const response = await POST(request());
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({ ok: true, status: "unsupported", models: [] });

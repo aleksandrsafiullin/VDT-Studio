@@ -4,7 +4,7 @@ export * from "./agent-event-outbox";
 export * from "./agent-execution-contracts";
 export * from "./agent-supervisor-persistence";
 export * from "./event-bus";
-export { constructionSourceFacts, excavationDowntimeCoverage, excludedExcavationSkillIds, unusedConstructionSourceFacts, type ConstructionSourceIssue } from "./construction-source-facts";
+export { constructionFinishEvidence, constructionSourceFacts, excavationDowntimeCoverage, excludedExcavationSkillIds, unusedConstructionSourceFacts, type ConstructionSourceIssue } from "./construction-source-facts";
 export * from "./feedback";
 export * from "./finish-verifier";
 export * from "./in-product-model-agent-engine";

@@ -4,6 +4,8 @@
 
 Implemented for the trusted local alpha: **Project → Files** accepts multiple uploads before any VDT exists and lists client files with original name, editable library label, size, upload date and attached trees. Search, tree filtering, original download, attach/detach and archive/restore are available. The editor **Files** dialog opens **This VDT** and **Add from project** views. One source can serve multiple trees within its owning project; selecting a source never copies or rewrites its payload. Arbitrary files may be retained, but the incoming-KPI chooser offers only the structured formats listed below. Unsupported files remain download-only.
 
+For a portable model snapshot, **Import JSON** in the project workspace accepts a user-selected VDT file up to 4 MiB. It reviews the model before creating a new VDT. The new model and its named versions retain materialized values and source notes. Imported external bindings and private catalog pointers are detached before saving. Use **Files** to attach sources to the new VDT.
+
 The builder retains a computer file immediately when selected, before any model analysis. Selecting a saved source immediately attaches it to the pinned VDT. Closing/discarding the review leaves retention and attachment intact. Project-only uploads are not exposed to VDT agent tools until explicitly attached. Existing uploads with a legacy metadata `vdtId` remain attached to that original tree and automatically appear in its project library.
 
 File API contract:
@@ -50,6 +52,8 @@ Raw-data discovery is **experimental and local-only**. It prepares bounded scala
 The current checkout parses supported files, profiles rows and accepts provider-assisted table, category and additive value suggestions. The selected KPI's **From file** workflow can build a complete hierarchy from ordered category columns, using additive numeric values in a confirmed KPI-compatible unit, a numeric duration or explicit start/end timestamp columns. Required mapping, format, period, denominator and model clarification decisions block staging. The local deterministic compiler reads the complete retained source, calculates each category Baseline and records its provenance in the generated KPI's Description.
 
 The formula engine reads materialized Baselines. Joins, automatic refresh, reconciliation and recurring calculations remain unimplemented. Truncated tables, invalid numeric/duration rows, incomplete partitions and hierarchies above the configured limits block a partial breakdown.
+
+Chat can open the same **Create incoming KPIs from file** review through **Choose source for [KPI]**. The user chooses a local file or a retained project source, reviews the mapping and stages the result for explicit **Apply**. A KPI named in the handoff stays pinned. Without a named KPI, the button uses the current selection or the root. The chooser uses the same scope, validation and provenance as **From file**. Archive and restore remain in project **Files**, and original downloads use the file controls.
 
 Do not use current import results for operational KPI decisions.
 

@@ -11,8 +11,11 @@ import {
   writeWindowsStorageProfileFile,
   VdtStorageError,
   type ActorContextV1,
+  type AgentConversationProjection,
+  type ConversationScope,
   type CreateVdtWithInitialSnapshotCommandV1,
   type JsonValue,
+  type MessageRecord,
   type ProjectRuntimeStateV1,
   type RevisionCommitCommandV2,
   type RevisionCommitIntentV1,
@@ -48,6 +51,14 @@ const STORAGE_REPLAY_STATE_KEY = "__vdtStorageReplayStateV1";
 export function openAgentRunPersistenceDatabase(projectRoot: string): VdtDatabase {
   const dataDir = process.env.VDT_DATA_DIR ?? defaultAgentRunDataDir(projectRoot);
   return openVdtDatabase(projectRoot, { dataDir });
+}
+
+export function loadScopedConversationMessages(
+  database: VdtDatabase,
+  scope: ConversationScope,
+  limit?: number
+): MessageRecord[] {
+  return database.listScopedConversationMessages(scope, limit);
 }
 
 export { resolveConfiguredDataDir } from "./agent-data-dir";
@@ -186,13 +197,13 @@ export function createSqliteAgentRunPersistence(
           state, projectContext.projectId, database.getVdtRevisionHead(vdtId), requireProjectRuntimeState(database, projectContext.projectId)
         );
       }
-      ensureStorageProject(database, state, projectContext);
-      const conversationId = ensureConversation(database, projectContext.projectId, state);
+      const conversationId = state.request.conversationId ?? storageConversationId(state);
+      if (!state.request.conversationId) ensureStorageProject(database, state, projectContext);
       const payload = persistedRunPayload(state);
       database.createAgentRun({
         id: state.runId,
         projectId: projectContext.projectId,
-        vdtId: vdtIdFromState(state),
+        vdtId: state.request.conversationId ? projectContext.vdtId : vdtIdFromState(state),
         conversationId,
         status: state.status,
         phase: state.phase,
@@ -200,8 +211,7 @@ export function createSqliteAgentRunPersistence(
         publicSnapshot: payload.publicSnapshot,
         internalState: payload.internalState,
         completedAt: state.completedAt
-      });
-      persistConversationMessages(database, state, conversationId);
+      }, conversationProjection(state));
       const artifacts = persistRunArtifacts(
         database,
         state,
@@ -221,15 +231,13 @@ export function createSqliteAgentRunPersistence(
       assertLegacySupervisorWrite(database, state);
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
-      ensureStorageProject(database, state, projectContext);
+      const conversationId = existingRunConversation(database, state, projectContext);
       const artifacts = persistRunArtifacts(
         database,
         state,
         projectContext,
         actor
       );
-      const conversationId = ensureConversation(database, projectContext.projectId, state);
-      persistConversationMessages(database, state, conversationId);
       updatePersistedAgentRun(
         database,
         state,
@@ -243,7 +251,7 @@ export function createSqliteAgentRunPersistence(
       assertLegacySupervisorWrite(database, state);
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
-      ensureStorageProject(database, state, projectContext);
+      const conversationId = existingRunConversation(database, state, projectContext);
       appendEventIfNew(database, event);
       const artifacts = persistRunArtifacts(
         database,
@@ -251,8 +259,6 @@ export function createSqliteAgentRunPersistence(
         projectContext,
         actor
       );
-      const conversationId = ensureConversation(database, projectContext.projectId, state);
-      persistConversationMessages(database, state, conversationId);
       updatePersistedAgentRun(
         database,
         state,
@@ -323,7 +329,7 @@ function persistRunArtifacts(
 ): { replayState?: AgentStorageReplayStateV1 | undefined; workspaceRevision?: AgentWorkspaceRevision | undefined } {
   const project = state.draftProject ?? state.project;
   const existingReplayState = replayStateForRun(database, state.runId);
-  if (!project) return { replayState: existingReplayState };
+  if (!project || state.request.outcome === "answer") return { replayState: existingReplayState };
 
   const initial = ensureInitialAgentVdt(
     database,
@@ -1399,7 +1405,7 @@ function updatePersistedAgentRun(
   workspaceRevision?: AgentWorkspaceRevision | undefined
 ): void {
   const payload = persistedRunPayload({ ...state, workspaceRevision }, replayState);
-  const requestedVdtId = vdtIdFromState(state);
+  const requestedVdtId = state.request.conversationId ? state.request.workspace?.vdtId : vdtIdFromState(state);
   const persistedVdtId =
     requestedVdtId && database.getVdt(requestedVdtId)
       ? requestedVdtId
@@ -1413,7 +1419,7 @@ function updatePersistedAgentRun(
     publicSnapshot: payload.publicSnapshot,
     internalState: payload.internalState,
     completedAt: state.completedAt
-  });
+  }, conversationId ? conversationProjection(state) : undefined);
 }
 
 function requireProjectRuntimeState(database: VdtDatabase, projectId: string) {
@@ -1605,48 +1611,36 @@ function trimOptional(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function ensureConversation(database: VdtDatabase, projectId: string, state: VdtAgentRunState): string {
-  const conversationId = storageConversationId(state);
-  const vdtId = vdtIdFromState(state);
-  const existing = database.getConversation(conversationId);
-  if (existing) {
-    if (vdtId && existing.vdtId !== vdtId) {
-      database.updateConversation(conversationId, { vdtId });
-    }
-    return conversationId;
+function existingRunConversation(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  workspace: StorageProjectContext
+): string {
+  const run = database.getAgentRun(state.runId);
+  if (!run || run.projectId !== workspace.projectId
+    || (workspace.vdtId && run.vdtId && workspace.vdtId !== run.vdtId)
+    || (state.request.conversationId && (run.conversationId !== state.request.conversationId || run.vdtId !== workspace.vdtId))) {
+    throw new VdtStorageError("VDT_NOT_FOUND", "Agent run was not found in this workspace.");
   }
-  database.createConversation({
-    id: conversationId,
-    projectId,
-    ...(vdtId ? { vdtId } : {}),
-    title: conversationTitle(state),
-    mode: state.request.mode
-  });
-  return conversationId;
+  return run.conversationId ?? storageConversationId(state);
 }
 
-function conversationTitle(state: VdtAgentRunState): string {
+function conversationProjection(state: VdtAgentRunState): AgentConversationProjection {
   const rootKpi = state.visibleContext.brief.rootKpi || state.request.input.rootKpi || "Value driver tree";
-  return `${rootKpi} agent thread`;
-}
-
-function persistConversationMessages(database: VdtDatabase, state: VdtAgentRunState, conversationId: string): void {
-  const existingIds = new Set(database.listMessages(conversationId).map((message) => message.id));
-  state.chatMessages.forEach((message, index) => {
-    const messageId = storageMessageId(message);
-    if (existingIds.has(messageId)) return;
-    database.appendMessage({
-      id: messageId,
-      conversationId,
+  return {
+    title: `${rootKpi} agent thread`,
+    mode: state.request.mode,
+    scoped: Boolean(state.request.conversationId),
+    messages: state.chatMessages.map((message) => ({
+      id: `message_run_${createHash("sha256").update(JSON.stringify([state.runId, message.id])).digest("hex")}`,
+      legacyMessageId: storageMessageId(message),
       role: message.role,
       content: chatMessageContent(message),
-      agentRunId: state.runId,
       runContext: chatMessageRunContext(message),
-      position: index + 1,
       startedAt: message.createdAt,
       endedAt: message.createdAt
-    });
-  });
+    }))
+  };
 }
 
 function chatMessageContent(message: AgentChatMessage): string {

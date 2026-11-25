@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentRunStore } from "@vdt-studio/vdt-agent-runtime";
+import { productionVolumeProject, type VdtNode } from "@vdt-studio/vdt-core";
 import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
 import { GenerateActivityPanel } from "./generate-activity-panel";
+import { StructuralOutcome } from "./structural-outcome";
 import { WebSearchControl, researchModeTooltip } from "./web-search-control";
 
 const localStorageMock = (() => {
@@ -29,6 +32,7 @@ const { useVdtStudioStore } = await import("./vdt-store");
 describe("SetupRail agent composer", () => {
   beforeEach(() => {
     localStorageMock.clear();
+    useVdtStudioStore.setState(useVdtStudioStore.getInitialState(), true);
     useVdtStudioStore.setState({
       isGenerating: false,
       generateActivity: undefined,
@@ -55,6 +59,84 @@ describe("SetupRail agent composer", () => {
     expect(html).not.toContain('data-testid="agent-chat-empty"');
     expect(html).not.toContain('data-testid="agent-chat-starters"');
     expect(html).toContain('data-testid="agent-instruction-input"');
+  });
+
+  it("offers each chat outcome with Automatic selected by default", () => {
+    const html = renderToStaticMarkup(<SetupRail />);
+    const select = html.match(/<select[^>]*data-testid="agent-chat-outcome"[^>]*>([\s\S]*?)<\/select>/)?.[1];
+    expect(select).toContain('<option value="" selected="">Automatic</option>');
+    expect(select).toContain('<option value="answer">Answer</option>');
+    expect(select).toContain('<option value="structural_model">Build structure</option>');
+    expect(select).toContain('<option value="calculated_baseline">Calculate baseline</option>');
+  });
+
+  it("reopens a verified structure and updates its checklist from the current tree after editing an input", () => {
+    const date = "2026-11-24T10:00:00.000Z";
+    const node = (id: string, name: string, fields: Partial<VdtNode> = {}): VdtNode => ({
+      id, name, type: "input", unit: "t/h", status: "accepted", aiGenerated: true,
+      createdAt: date, updatedAt: date, ...fields
+    });
+    const verifiedProject = {
+      ...structuredClone(productionVolumeProject), id: "project", rootNodeId: "throughput",
+      graph: { nodes: [
+        node("throughput", "Throughput", { type: "root_kpi", formula: "min(stage_a, stage_b) - loss", assumptions: ["Decomposition assumption: The stages operate in series.\nReconsider if: Either stage can operate independently.\nEvidence: Provisional"] }),
+        node("stage_a", "Stage A rate", { valueStatus: "unknown", baselineValue: 88, controllability: "high" }),
+        node("stage_b", "Stage B rate", { type: "external_factor", valueStatus: "default_assumption", baselineValue: 90 }),
+        node("loss", "Transfer loss", { valueStatus: "user_provided_value", baselineValue: 0 })
+      ], edges: [] }
+    };
+    const runs = new AgentRunStore();
+    const { runId } = runs.createRun({
+      providerId: "openai", mode: "continue_project", outcome: "structural_model", input: {},
+      workspace: { projectId: "workspace", vdtId: "saved_tree" }
+    });
+    const snapshot = {
+      ...runs.getSnapshot(runId), status: "succeeded" as const, project: verifiedProject,
+      finishOutcome: {
+        state: "final_persisted" as const, outcome: "structural_model" as const, policyVersion: "workspace-v1",
+        projectRevision: 1, projectHash: `sha256:${"a".repeat(64)}`,
+        missingInputCount: 1, missingInputs: [{ nodeId: "stage_a", nodeName: "Stage A rate", explicit: true, requiredForRoot: true }]
+      }
+    };
+    const state = useVdtStudioStore.getState();
+    useVdtStudioStore.setState({
+      project: structuredClone(verifiedProject),
+      workspace: { ...state.workspace, activeVdtId: "saved_tree", activeProjectId: "workspace" },
+      generateActivity: {
+        runId, requestId: runId, status: "ready", phase: "ready", phaseStartedAt: date, startedAt: date,
+        updatedAt: date, providerId: "openai_compatible", providerLabel: "OpenAI", appMode: "development_web",
+        canCancel: false, cancelRequested: false, runtimeAgentRun: snapshot
+      }
+    });
+
+    const renderReopenedStructure = () => {
+      const reopened = useVdtStudioStore.getState();
+      const snapshot = reopened.generateActivity?.runtimeAgentRun;
+      expect(snapshot?.finishOutcome?.outcome).toBe("structural_model");
+      return renderToStaticMarkup(<StructuralOutcome verifiedProject={snapshot!.project!}
+        currentProject={reopened.project} onSelectNode={reopened.selectNode} />);
+    };
+    expect(state.startNewAgentChat()).toBe(true);
+    expect(useVdtStudioStore.getState().generateActivity).toBeUndefined();
+    expect(state.openAgentChat(runId)).toBe(true);
+    let html = renderReopenedStructure();
+    expect(html).toContain("min(Stage A rate, Stage B rate) - Transfer loss");
+    expect(html).toContain("The stages operate in series.");
+    expect(html).toContain("Provisional · Reconsider if Either stage can operate independently.");
+    expect(html).toContain("Actionable · high control · Missing measurement · needed for root");
+    expect(html).toContain("External factor");
+    expect(html).toContain("Illustrative estimate · 90");
+    expect(html).toContain('tabular-nums">0</p>');
+    expect(html).not.toContain('tabular-nums">88</p>');
+
+    state.selectNode("stage_a");
+    state.updateNodeBaselineValue("stage_a", 70);
+    expect(state.startNewAgentChat()).toBe(true);
+    expect(state.openAgentChat(runId)).toBe(true);
+    html = renderReopenedStructure();
+    expect(html).toContain('tabular-nums">70</p>');
+    expect(html).not.toContain("Missing measurement · needed for root");
+    expect(useVdtStudioStore.getState().generateActivity?.runtimeAgentRun?.finishOutcome).toEqual(snapshot.finishOutcome);
   });
 
   it("shows the welcome panel and the prepared prompts together", () => {

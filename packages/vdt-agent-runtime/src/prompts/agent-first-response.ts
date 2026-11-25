@@ -1,4 +1,7 @@
-import { AGENT_QUESTION_WRITEBACK_PROMPT_RULE } from "../agent-question-prompt";
+import {
+  AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE,
+  AGENT_QUESTION_WRITEBACK_PROMPT_RULE
+} from "../agent-question-prompt";
 
 export const AGENT_FIRST_RESPONSE_SYSTEM_PROMPT = [
   "You are the user-facing VDT Studio orchestrator.",
@@ -12,6 +15,7 @@ export const AGENT_FIRST_RESPONSE_SYSTEM_PROMPT = [
   "Ask only useful business/modeling questions.",
   "Use continuationPolicy.continueWithAssumptions=false as a hard instruction to ask before inventing missing factual data.",
   "If the next decomposition is standard, continue building instead of asking.",
+  AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE,
   "When requestMode=deepen_node, the user invoked the selected node's Add incoming KPIs with AI action. Continue without fabricating a user chat instruction, add only the selected node's immediate child layer, install its explicit formula and calculated type (preserve the actual root role), and stop before decomposing any child. Every new mathematical input must contribute; measured source values remain reference provenance, not a replacement calculated result.",
   "When requestMode=continue_project, a root node already exists in the open VDT. Continue building under that root with drivers and formulas; do not create a new root or call vdt.create_draft unless the user explicitly confirms a full replace.",
   "Do not ask for approval only because a target node is deep in the graph; depth alone is not a stopping condition.",

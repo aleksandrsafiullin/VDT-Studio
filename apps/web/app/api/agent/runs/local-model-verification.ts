@@ -17,23 +17,27 @@ export interface LocalModelVerificationProgress {
  * or a substitute for the actor's business review and canonical finish gates. */
 export class LocalModelVerification {
   private revision: number | undefined;
+  private structural = false;
   private readonly completed = new Set<VerificationTool>();
 
-  observe(delta: unknown, revision: unknown, admittedTools: ReadonlySet<string>) {
+  observe(delta: unknown, revision: unknown, admittedTools: ReadonlySet<string>, purpose?: unknown) {
+    const structural = purpose === "structural_model";
     if (!Number.isSafeInteger(revision) || (revision as number) < 0) {
       this.revision = undefined;
       this.completed.clear();
       return;
     }
-    if (revision !== this.revision) this.completed.clear();
+    if (revision !== this.revision || structural !== this.structural) this.completed.clear();
+    this.structural = structural;
     this.revision = revision as number;
     this.observeDelta(delta, admittedTools);
   }
 
   progress(): LocalModelVerificationProgress | undefined {
     if (this.revision === undefined) return undefined;
-    const pending = LOCAL_MODEL_VERIFICATION_TOOLS.filter((name) => !this.completed.has(name));
-    return { revision: this.revision, completed: LOCAL_MODEL_VERIFICATION_TOOLS.filter((name) => this.completed.has(name)),
+    const required = LOCAL_MODEL_VERIFICATION_TOOLS.filter(name => !this.structural || name !== "vdt.calculate");
+    const pending = required.filter(name => !this.completed.has(name));
+    return { revision: this.revision, completed: required.filter(name => this.completed.has(name)),
       pending, nextStep: pending.length ? "run_checks" : "request_finish" };
   }
 

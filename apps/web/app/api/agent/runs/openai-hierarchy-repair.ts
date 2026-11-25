@@ -1,6 +1,6 @@
 import {
   calculateGraph, calculationsWithoutPlannedInputs, decompositionPlanErrors, extractFormulaReferences, inspectDecompositionHierarchy,
-  parseFormula, parseValidationUnit, validateGraph, type VdtDecompositionPlan, type VdtNode, type VdtProject
+  parseFormula, parseValidationUnit, evaluateModelReadiness, type VdtDecompositionPlan, type VdtNode, type VdtProject
 } from "@vdt-studio/vdt-core";
 import { requiresDerivedRootForRun, type VdtAgentRunState, type VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
 
@@ -238,6 +238,6 @@ export function suggestHierarchyRepair(
     edges: graph.edges.filter(({ targetNodeId }) => !duplicateIds.has(targetNodeId))
       .map((edge) => ({ ...edge, sourceNodeId: moves.get(edge.targetNodeId) ?? edge.sourceNodeId }))
   } };
-  if (!inspectDecompositionHierarchy(preview).valid || !validateGraph(preview, undefined, { enforcePercentageScale: true }).valid) return;
+  if (!evaluateModelReadiness(preview, { purpose: "structural_model", requireDerivedRoot: true, requireHierarchy: true }).accepted) return;
   return calls;
 }

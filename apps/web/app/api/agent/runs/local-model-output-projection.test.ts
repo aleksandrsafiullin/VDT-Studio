@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { projectNativeInputBatchSchema, restoreNativeLocalModelOutput } from "./local-model-output-projection";
+import { constructionPlanArguments, projectNativeInputBatchSchema, restoreNativeLocalModelOutput } from "./local-model-output-projection";
 
 describe("native numeric input wire projection", () => {
+  it("separates the implicit root and mathematical parent IDs from newly planned inputs", () => {
+    const schema = { properties: { plan: { properties: { nodes: { items: {
+      type: "object", required: ["nodeId", "parentNodeId", "kind"], properties: {
+        nodeId: { type: "string" }, parentNodeId: { type: "string" }, kind: { enum: ["input", "calculated", "context"] }
+      }
+    } } } } } };
+    const branches = constructionPlanArguments(schema, "factor_product", true, true) as typeof schema;
+    const input = (branches.properties.plan.properties.nodes.items as unknown as { anyOf: Array<{
+      properties: { nodeId: { pattern: string }; parentNodeId: { anyOf: Array<{ const?: string; pattern?: string }> } }
+    }> }).anyOf[0]!.properties;
+    const ids = new RegExp(input.nodeId.pattern);
+    expect(ids.test("factor_product")).toBe(false);
+    expect(ids.test("driver_input_capacity")).toBe(true);
+    expect(input.parentNodeId.anyOf).toContainEqual({ type: "string", const: "factor_product" });
+    const plannedParent = new RegExp(input.parentNodeId.anyOf.find(choice => choice.pattern)!.pattern!);
+    expect(plannedParent.test("driver_input_capacity")).toBe(false);
+    expect(plannedParent.test("driver_calculated_subtotal")).toBe(true);
+  });
+
   it("presents bounded unique target keys while preserving model-chosen values and provenance constraints", () => {
     const item = { type: "object", properties: { nodeId: { type: "string" }, value: { type: "number", const: 4 },
       provenance: { const: "user_provided_value" }, note: { enum: ["4 machines"] } }, required: ["nodeId", "value", "provenance", "note"], additionalProperties: false };

@@ -28,6 +28,8 @@ export interface AgentToolContext {
   requirePlanOperands?: boolean | undefined;
   /** Trusted legacy decision policy for a run that must construct a tree. */
   requireDerivedRoot?: boolean | undefined;
+  /** Identity of the admitted Gateway operation, assigned from the durable reservation. */
+  invocation?: { operationId: string; reservedAt: string } | undefined;
   signal: AbortSignal;
 }
 

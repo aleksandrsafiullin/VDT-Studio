@@ -1,10 +1,14 @@
-import { collectLiteralUserQuantities, type LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
+import { agentHumanInputSchema, collectLiteralUserQuantities, type AgentHumanInput, type LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => !!value && typeof value === "object" && !Array.isArray(value);
 
 type SkillVersion = { id: string; version: number; contentHash: string };
 type SkillReadReceipt = SkillVersion & { readReceiptId: string };
+type UserAnswer = Extract<AgentHumanInput, { type: "user_answer" }>;
+
+const MAX_RETAINED_ANSWER_SETS = 4;
+const MAX_RETAINED_ANSWER_CHARS = 4_000;
 
 export type LocalSkillResolution = {
   catalogBrowsed: boolean;
@@ -14,6 +18,7 @@ export type LocalSkillResolution = {
   selectedSkillId: string | undefined;
   gapReported: boolean;
   readReceipts: Array<{ skillId: string; readReceiptId: string }>;
+  searchCandidateIds?: string[];
 };
 
 function skillVersion(value: unknown): SkillVersion | undefined {
@@ -39,11 +44,15 @@ export class LocalModelKnowledge {
   private readonly quantities: LiteralUserQuantity[] = [];
   private quantitiesTruncated = false;
   private brief: RecordValue | undefined;
+  private conversationContext: RecordValue | undefined;
   private receivedHumanInput = false;
+  private readonly recentUserAnswers = new Map<string, UserAnswer>();
+  private userAnswersTruncated = false;
   private readonly topologies = new Map<string, { skillId: string; defaultInputIds: string[] }>();
   private readonly readIds = new Set<string>();
   private nextCatalogOffset: number | null | undefined;
   private catalogSearchConfirmed = false;
+  private structuralSearchCandidateIds: string[] | undefined;
   private readonly pendingCatalogSearchReads = new Set<string>();
   private readonly skillReadReceipts = new Map<string, SkillReadReceipt>();
   private selectedSkillId: string | undefined;
@@ -65,7 +74,8 @@ export class LocalModelKnowledge {
       pinnedSkillId: pin?.id,
       selectedSkillId: pin ? (matchesVersion(pin, this.skillReadReceipts.get(pin.id)) ? pin.id : undefined) : this.selectedSkillId,
       gapReported: !pin && this.gapReported,
-      readReceipts: [...this.skillReadReceipts.values()].map(({ id, readReceiptId }) => ({ skillId: id, readReceiptId }))
+      readReceipts: [...this.skillReadReceipts.values()].map(({ id, readReceiptId }) => ({ skillId: id, readReceiptId })),
+      ...(this.structuralSearchCandidateIds ? { searchCandidateIds: [...this.structuralSearchCandidateIds] } : {})
     };
   }
   private canReportSkillGap(): boolean {
@@ -79,6 +89,13 @@ export class LocalModelKnowledge {
       const input: unknown = JSON.parse(prompt);
       if (record(input) && record(input.delta)) this.observe(input.delta);
     } catch { /* Non-agent provider input has no Gateway evidence. */ }
+  }
+
+  structuralSkillReadMetadata() {
+    return [...this.excerpts.values()].map(({ id, excerpt }) => ({
+      id,
+      scopeExcerpt: typeof excerpt === "string" ? excerpt.slice(0, 650) : undefined
+    }));
   }
 
   context(): RecordValue {
@@ -116,13 +133,37 @@ export class LocalModelKnowledge {
       retained.unshift(item);evidenceChars+=chars;
     }
     if(retained.length)result.confirmedSourceObservations={untrustedData:true,entries:retained,truncated:retained.length<evidence.length};
+    if (this.conversationContext) result.conversation = this.conversationContext;
+    if (this.recentUserAnswers.size) result.recentUserAnswers = [...this.recentUserAnswers.values()];
+    if (this.userAnswersTruncated) result.recentUserAnswersTruncated = true;
     return result;
+  }
+
+  private rememberHumanInput(input: unknown): void {
+    const parsed = agentHumanInputSchema.safeParse(input);
+    if (!parsed.success) return;
+    this.receivedHumanInput = true;
+    if (parsed.data.type !== "user_answer") return;
+
+    const answer = parsed.data;
+    this.recentUserAnswers.delete(answer.questionSetId);
+    if (JSON.stringify([answer]).length > MAX_RETAINED_ANSWER_CHARS) {
+      this.userAnswersTruncated = true;
+      return;
+    }
+    this.recentUserAnswers.set(answer.questionSetId, answer);
+    while (this.recentUserAnswers.size > MAX_RETAINED_ANSWER_SETS
+      || JSON.stringify([...this.recentUserAnswers.values()]).length > MAX_RETAINED_ANSWER_CHARS) {
+      this.recentUserAnswers.delete(this.recentUserAnswers.keys().next().value!);
+      this.userAnswersTruncated = true;
+    }
   }
 
   private observe(delta: RecordValue): void {
     if (delta.type === "initial_context" && record(delta.context) && Array.isArray(delta.context.tools)) {
       if (this.initialized) return;
       this.initialized = true;
+      if (record(delta.context.conversationContext)) this.conversationContext = structuredClone(delta.context.conversationContext);
       for (const tool of delta.context.tools) if (record(tool) && typeof tool.name === "string") this.admitted.add(tool.name);
       if (record(delta.context.brief)) {
         this.brief = structuredClone(delta.context.brief);
@@ -131,11 +172,13 @@ export class LocalModelKnowledge {
         this.quantities.push(...quantities);
         this.quantitiesTruncated = truncated;
       }
+    } else if (delta.type === "human_input") {
+      this.rememberHumanInput(delta.input);
     } else if (delta.type === "checkpoint_inputs" && record(delta.checkpointDelta)) {
-      if (Array.isArray(delta.inputs) && delta.inputs.some((input) => record(input) && ["user_answer", "user_instruction"].includes(String(input.type)))) this.receivedHumanInput = true;
       this.observe(delta.checkpointDelta);
+      if (Array.isArray(delta.inputs)) for (const input of delta.inputs) this.rememberHumanInput(input);
     } else if (delta.type === "human_inputs" && Array.isArray(delta.inputs)) {
-      this.receivedHumanInput = true;
+      for (const input of delta.inputs) this.rememberHumanInput(input);
     } else if ((delta.type === "tool_results" || delta.type === "manual_reconciliation") && Array.isArray(delta.results)) {
       for (const result of delta.results) {
         if (!record(result) || !this.admitted.has(String(result.toolName)) || !["succeeded", "replayed"].includes(String(result.status))
@@ -176,10 +219,13 @@ export class LocalModelKnowledge {
             }
             const scopedSearch = result.toolName === "skill.search" && typeof this.nextCatalogOffset === "number";
             if (scopedSearch) this.catalogSearchConfirmed = true;
+            const candidateIds: string[] = [];
             for (const skill of candidates.slice(0, 50)) {
               const id = this.rememberSkill(skill);
+              if (id) candidateIds.push(id);
               if (scopedSearch && id && !this.skillReadReceipts.has(id)) this.pendingCatalogSearchReads.add(id);
             }
+            if (result.toolName === "skill.search" && this.brief?.outcome === "structural_model") this.structuralSearchCandidateIds = candidateIds;
           }
         }
         if (result.toolName === "skill.read" && typeof output.id === "string") {

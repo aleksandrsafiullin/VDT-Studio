@@ -41,8 +41,8 @@ afterEach(() => {
 });
 
 describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
-  it("persists all seven Sequence 4 projections and reloads terminal receipts after restart", async () => {
-    const fixture = createFixture("restart");
+  it.each(["legacy", "structural_model"] as const)("reloads %s terminal receipts and the other Sequence 4 projections after restart", async (outcome) => {
+    const fixture = createFixture(`restart-${outcome}`);
     const first = createAuthority(fixture.database.databasePath);
     const binding = modelBinding(fixture.runId, fixture.projectId);
     await first.createBinding(binding);
@@ -64,7 +64,15 @@ describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
 
     const tool = completedToolReceipt(binding, 1);
     await first.appendToolOperationReceipt(tool);
-    const verified = finishReceipt(binding, "verified");
+    const verified: FinishReceiptV2 = {
+      ...finishReceipt(binding, "verified"),
+      ...(outcome === "structural_model" ? {
+        outcome,
+        policyVersion: "workspace-v1",
+        missingInputs: [{ nodeId: "stage_b", nodeName: "Stage B", explicit: true, requiredForRoot: true }],
+        missingInputCount: 1
+      } : {})
+    };
     await first.appendFinishReceipt(verified);
     const finalPersisted: FinishReceiptV2 = {
       ...verified,
@@ -120,6 +128,10 @@ describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
     // Same terminal callback after a lost response is a read-equivalent no-op.
     await restarted.appendToolOperationReceipt(tool);
     await restarted.appendFinishReceipt(finalPersisted);
+    if (outcome === "structural_model") {
+      await expect(restarted.appendFinishReceipt({ ...finalPersisted, missingInputCount: 2 }))
+        .rejects.toMatchObject({ code: "FINISH_RECEIPT_CONFLICT" });
+    }
     expect(tableCount(fixture.database.databasePath, "agent_tool_operation_receipts_v2")).toBe(1);
     expect(tableCount(fixture.database.databasePath, "agent_finish_receipts_v2")).toBe(2);
 

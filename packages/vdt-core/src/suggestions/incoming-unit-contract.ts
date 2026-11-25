@@ -19,7 +19,7 @@ const clean = (value: Record<string, number>) => Object.fromEntries(Object.entri
 
 /** FM-01 unit grammar/scale representation only. FM-02 composes these records
  * through an AST; this parser does not authorize a formula or certify scope.
- * No unit conversion is implemented, even with an explicit numeric multiplier. */
+ * The formula validator checks explicit scale conversion in the expression. */
 export function parseIncomingKpiUnit(unit: string, period: KpiSuggestionPeriod): IncomingKpiUnitExpression {
   smartAssert(typeof unit === "string" && unit.trim().length > 0 && unit.length <= 80, "UNSUPPORTED_UNIT", "Enter a unit.");
   const text = unit.trim();

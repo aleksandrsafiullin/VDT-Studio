@@ -6,8 +6,8 @@ import { ArrowLeft, CircleAlert, FileSpreadsheet, Folder, Route, ShieldCheck } f
 import {
   calculateGraph,
   EXCEL_MIME_TYPE,
-  exportProjectExcel,
-  validateGraph
+  createExcelWorkbook,
+  evaluateModelReadiness
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -17,6 +17,7 @@ import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
 import { VersionHistoryPanel } from "./version-history-panel";
 import { VdtFilesButton } from "./project-files-dialog";
+import { VdtExportMenu } from "./vdt-export-menu";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 import { WorkspaceNavigationLink } from "./workspace-navigation-link";
 import styles from "./workspace-shell.module.css";
@@ -72,7 +73,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
   }
 
   const calculation = calculateGraph(project);
-  const validation = validateGraph(project.graph, project.rootNodeId);
+  const validation = evaluateModelReadiness(project, { purpose: "structural_model" }).validation;
   const graphIssues = [...validation.errors, ...validation.warnings,
     ...(calculation.rootValue === undefined ? calculation.errors : [])];
   const graphStatusLabel = graphIssues.length ? `${graphIssues.length} model issue${graphIssues.length === 1 ? "" : "s"}` : "Model graph valid";
@@ -147,7 +148,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
             try {
               downloadBinaryFile(
                 getExcelDownloadFilename(project.name),
-                exportProjectExcel(project, { scenarioId: activeScenarioId }),
+                createExcelWorkbook(project, activeScenarioId),
                 EXCEL_MIME_TYPE
               );
               setExportError(undefined);
@@ -158,6 +159,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
         >
           <span className="hidden sm:inline">Export to Excel</span>
         </Button>
+        <VdtExportMenu key={workspace.activeVdtId} project={project} />
         <VersionHistoryPanel />
         <SettingsModal />
         <ScenarioModal triggerRef={scenarioModalTriggerRef} />

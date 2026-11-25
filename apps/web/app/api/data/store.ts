@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertSafeId, getWindowsStorageForProfile, openVdtDatabase, projectDir, publishWindowsStorageFileIfAbsent, type WindowsStorageDirectory } from "@vdt-studio/storage";
+import { assertSafeId, getWindowsStorageForProfile, openVdtDatabase, publishWindowsStorageFileIfAbsent, type WindowsStorageDirectory } from "@vdt-studio/storage";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { DataParserError, PARSER_RESOURCE_LIMITS, type DataDiscoveryFileMetadata, type DataDiscoveryRunSnapshot } from "@vdt-studio/data-harness";
 
@@ -593,8 +593,7 @@ async function runParent(owner: DatasetFileOwner | undefined, create: boolean): 
 async function projectDirectory(owner: DatasetFileOwner, segments: string[], create: boolean): Promise<string> {
   requireDataId(owner.projectId, "projectId");
   if (owner.vdtId !== undefined) requireDataId(owner.vdtId, "vdtId");
-  const directory = projectDir(owner.dataDir, owner.projectId);
-  return checkedDirectory(owner.dataDir, path.relative(owner.dataDir, directory).split(path.sep).concat(segments), create);
+  return checkedDirectory(owner.dataDir, ["projects", owner.projectId, ...segments], create);
 }
 
 async function checkedDirectory(root: string, segments: string[], create: boolean): Promise<string> {

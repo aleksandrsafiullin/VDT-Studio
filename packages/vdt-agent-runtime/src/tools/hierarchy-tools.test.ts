@@ -51,6 +51,24 @@ describe("hierarchy tools use normal mutation authority",()=>{
   const before=builder.getRevision();expect((await tools.run("vdt.reparent_branch",{nodeId:"b",parentNodeId:"a"},context)).ok).toBe(false);expect(builder.getRevision()).toBe(before);
   expect((await tools.run("vdt.reparent_branch",{nodeId:"b",fromParentNodeId:"output",parentNodeId:"a"},context)).ok).toBe(true);expect(builder.getProject().graph.edges.filter(e=>e.targetNodeId==="b").map(e=>e.sourceNodeId)).toEqual(["a"]);
  });
+ it("repairs a planned link relation and protects the corrected primary edge", async () => {
+  const { tools, builder, context } = setup();
+  builder.addDriver({ nodeId: "reference", parentNodeId: "output", name: "Reference", baselineValue: 5 });
+  const planned = { version: 1, goal: "Keep the reference separate", nodes: [
+    { nodeId: "reference", parentNodeId: "output", kind: "context", rationale: "Comparison only" }
+  ] };
+  expect(await tools.run("vdt.set_decomposition_plan", { plan: planned }, context)).toMatchObject({ ok: true });
+  const edgeId = builder.getProject().graph.edges[0]!.id;
+  expect(await tools.run("vdt.edit_edge", { kind: "set_relation", edgeId, relation: "contextual_influence" }, context))
+    .toMatchObject({ ok: true });
+  const corrected = builder.getProject();
+  expect(corrected.graph.edges[0]).toMatchObject({ id: edgeId, relation: "contextual_influence" });
+  for (const edit of [{ kind: "remove", edgeId }, { kind: "set_relation", edgeId, relation: "formula_dependency" }]) {
+    expect(await tools.run("vdt.edit_edge", edit, context))
+      .toMatchObject({ ok: false, error: { code: "CONSTRUCTION_EDGE_NOT_ADMITTED" } });
+    expect(builder.getProject()).toEqual(corrected);
+  }
+ });
  it("cannot silently drop existing nodes from a revised plan",async()=>{
   const {tools,builder,context}=setup();builder.addDriver({nodeId:"existing",parentNodeId:"output",name:"Existing"});const before=builder.getProject();
   expect((await tools.run("vdt.set_decomposition_plan",{plan},context)).ok).toBe(false);expect(builder.getProject()).toEqual(before);

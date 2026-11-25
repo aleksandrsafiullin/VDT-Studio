@@ -86,7 +86,7 @@ export function parseIncomingKpiFormula(raw: string, authorship: IncomingKpiForm
   const references = new Set<IncomingKpiAlias>();
   const model = authorship === "model" || authorship === "recipe";
   const occurrences = new Map<string, number>();
-  const visit = (node: FormulaExpression, level: number): number | undefined => {
+  const visit = (node: FormulaExpression, level: number, percentageDivisor = false): number | undefined => {
     nodes++; depth = Math.max(depth, level);
     smartAssert(nodes <= limits.astNodes && level <= limits.astDepth, "FORMULA_COMPLEXITY", "Simplify the formula.");
     if (node.type === "reference") {
@@ -94,7 +94,7 @@ export function parseIncomingKpiFormula(raw: string, authorship: IncomingKpiForm
       references.add(node.name as IncomingKpiAlias); occurrences.set(node.name, (occurrences.get(node.name) ?? 0) + 1); return;
     }
     if (node.type === "number") {
-      smartAssert(!model || node.raw === "1", "MODEL_COEFFICIENT", "Enter weights as measured KPI inputs."); return node.value;
+      smartAssert(!model || node.raw === "1" || (percentageDivisor && node.raw === "100"), "MODEL_COEFFICIENT", "Enter weights as measured KPI inputs."); return node.value;
     }
     let constant: number | undefined;
     if (node.type === "unary") { const value = visit(node.expression, level + 1); constant = value === undefined ? undefined : -value; }
@@ -103,7 +103,7 @@ export function parseIncomingKpiFormula(raw: string, authorship: IncomingKpiForm
       const values = node.args.map(child => visit(child, level + 1));
       if (values.every(v => v !== undefined)) constant = (node.name === "min" ? Math.min : Math.max)(...(values as number[]));
     } else {
-      const left = visit(node.left, level + 1), right = visit(node.right, level + 1);
+      const left = visit(node.left, level + 1), right = visit(node.right, level + 1, node.operator === "/");
       if (left !== undefined && right !== undefined) constant = node.operator === "+" ? left + right : node.operator === "-" ? left - right : node.operator === "*" ? left * right : left / right;
     }
     smartAssert(!model || constant === undefined || constant === 1, "MODEL_COEFFICIENT", "Enter weights as measured KPI inputs.");

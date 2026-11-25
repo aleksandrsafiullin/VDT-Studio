@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {calculationsWithoutPlannedInputs,decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,plannedFactorTypeConflicts,type VdtChangeSet,type VdtNodeType} from "@vdt-studio/vdt-core";
+import {calculationsWithoutPlannedInputs,decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,plannedFactorTypeConflicts,prepareBranchReparent,type VdtNodeType} from "@vdt-studio/vdt-core";
 import {AgentToolError,type AgentTool,type AgentToolContext} from "../tool-registry";
 import {proposeAndMaybeApplyMutation} from "../mutation-pipeline";
 import {cloneBuilder,requireBuilder,requireChangeSet} from "./builder-mutation-utils";
@@ -52,19 +52,14 @@ const reparentBranch:AgentTool={
  run(context,input){
   if(context.getRun().request.mode==="deepen_node")throw new AgentToolError("MUTATION_SCOPE_VIOLATION","A selected-node deepen step cannot reparent an existing branch.");
   const builder=requireBuilder(context.builder),project=builder.getProject();
-  if(input.nodeId===project.rootNodeId)throw new AgentToolError("ROOT_NODE_PROTECTED","The root KPI cannot be moved.");
-  if(!project.graph.nodes.some(n=>n.id===input.nodeId)||!project.graph.nodes.some(n=>n.id===input.parentNodeId))throw new AgentToolError("NODE_NOT_FOUND","Both the branch node and its new parent must exist.");
-  const descendants=new Set<string>();const queue=[input.nodeId];
-  while(queue.length){const n=queue.pop()!;if(descendants.has(n))continue;descendants.add(n);queue.push(...project.graph.edges.filter(e=>e.sourceNodeId===n).map(e=>e.targetNodeId));}
-  if(descendants.has(input.parentNodeId))throw new AgentToolError("HIERARCHY_CYCLE","The new parent is inside the moved branch.");
-  const incoming=project.graph.edges.filter(e=>e.targetNodeId===input.nodeId);
-  const candidates=input.fromParentNodeId?incoming.filter(e=>e.sourceNodeId===input.fromParentNodeId):incoming;
-  if(candidates.length!==1)throw new AgentToolError("AMBIGUOUS_PARENT","Specify the exact current fromParentNodeId; exactly one matching edge is required.");
-  const old=candidates[0]!;
-  if(old.sourceNodeId===input.parentNodeId&&(!input.relation||input.relation===old.relation))throw new AgentToolError("PARENT_UNCHANGED","This node already has that parent and edge relation.");
-  const target=incoming.find(e=>e.id!==old.id&&e.sourceNodeId===input.parentNodeId);
-  const changeSet:VdtChangeSet={id:`reparent_${input.nodeId}_${builder.getRevision()}`,taskType:"generate_tree",backendId:context.getRun().request.providerId,createdAt:new Date().toISOString(),additions:[],updates:[],deletions:[],edgeChanges:target?[{id:`remove_${old.id}`,action:"remove",edgeId:old.id},...(input.relation?[{id:`relation_${target.id}`,action:"update" as const,edgeId:target.id,patch:{relation:input.relation}}]:[])]:[{id:`move_${old.id}`,action:"update",edgeId:old.id,patch:{sourceNodeId:input.parentNodeId,...(input.relation?{relation:input.relation}:{})}}],assumptions:[],questions:[],warnings:[]};
-  const mutation=proposeAndMaybeApplyMutation(context,{title:old.sourceNodeId===input.parentNodeId?"Branch edge updated":"Branch moved",summary:old.sourceNodeId===input.parentNodeId?`Corrected the edge relation for ${input.nodeId}; nodes and source lineage are unchanged.`:`Moved ${input.nodeId} from ${old.sourceNodeId} to ${input.parentNodeId}; descendants and input provenance are preserved.`,changeSet,targetNodeId:input.nodeId});
-  return {nodeId:input.nodeId,fromParentNodeId:old.sourceNodeId,parentNodeId:input.parentNodeId,revision:mutation.revision,mutationProposal:{id:mutation.proposal.id,status:mutation.proposal.status}};
+  const move = prepareBranchReparent(project, input, {
+    id: `reparent_${input.nodeId}_${builder.getRevision()}`,
+    backendId: context.getRun().request.providerId,
+    createdAt: new Date().toISOString()
+  });
+  if (!move.ok) throw new AgentToolError(move.code, move.message);
+  const { fromParentNodeId, changeSet } = move;
+  const mutation=proposeAndMaybeApplyMutation(context,{title:fromParentNodeId===input.parentNodeId?"Branch edge updated":"Branch moved",summary:fromParentNodeId===input.parentNodeId?`Corrected the edge relation for ${input.nodeId}; nodes and source lineage are unchanged.`:`Moved ${input.nodeId} from ${fromParentNodeId} to ${input.parentNodeId}; descendants and input provenance are preserved.`,changeSet,targetNodeId:input.nodeId});
+  return {nodeId:input.nodeId,fromParentNodeId,parentNodeId:input.parentNodeId,revision:mutation.revision,mutationProposal:{id:mutation.proposal.id,status:mutation.proposal.status}};
  }
 };

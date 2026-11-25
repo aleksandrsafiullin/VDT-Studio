@@ -1,5 +1,42 @@
 # Production Readiness
 
+## AI-first workspace
+
+Both the professional scenario/version/export journey and the novice
+structure/reopen/calculate journey passed deterministic Chrome, SQLite and
+independent business checks. The downloaded Recovery workbook recalculated in
+Excel for Mac. The evidence includes stale approval, duplicate delivery,
+read-only follow-up, cancellation and an adapter switch in one conversation.
+Live Codex produced the professional result and passed the novice retry.
+All 26 T15 inventory rows now have evidence, with browser checks for the last
+three. Both tested Ollama models reported the correct Recovery comparison.
+The Qwen3.5 4B professional retry passed through Chrome with a rejected stale
+restore, a reopened 110 h correction, one named version and the exact-revision
+Recovery workbook. The Qwen3.5 9B continuation verified the correction and
+workbook route. Its duplicate versions and browser download timeout are
+recorded in the T18 evidence.
+Chrome verified four English and Russian min/max spellings through edit, save
+and reopen. The shared agent formula tool and Excel export also passed focused
+checks, and the regenerated desktop sidecar passed integrity verification.
+The live Ollama novice gate remains open. Both models saved measurements as
+unknown. A 9B retry calculated the correct bottleneck during independent replay,
+with an unused shared dependency still blocking hierarchy validation. The
+latest 4B retry reached a valid plan and blank inputs, then submitted invalid
+formula calls. An Ollama structural finish, reopen and measured baseline
+remain open for this case.
+The GPT-5.4 mini API repair retry preserved the corrected named version and
+exported Recovery from the reopened saved revision. Excel for Mac verified
+editable downtime and recalculation on the first repair download. In the live API
+delayed-approval check, the second retry opened the restore approval using the
+saved version ID. The approval handler recorded `STALE_REVISION` after the
+110 h manual correction, which survived save and reopen. The second retry
+passed the independent assessment for that case. The API novice retry asked
+the material process question, reopened two unknowns and verified the later
+70 t/h baseline with zero gain from raising Stage B to 100 t/h.
+Three-provider rollout remains **HOLD**. Packaged installation and signing retain
+their existing gates.
+[AI-first execution evidence](implementation/AI_FIRST_WORKSPACE_EXECUTION_2026-11-24.md)
+
 ## GitHub, Mac and Windows remediation (2026-11-14)
 
 The user-confirmed feedback-release scope includes the public repository and both

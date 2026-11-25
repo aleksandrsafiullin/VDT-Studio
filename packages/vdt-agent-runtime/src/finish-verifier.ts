@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { DERIVED_ROOT_REQUIREMENT, hasDerivedRoot } from "./model-acceptance-contract";
+import { DERIVED_ROOT_REQUIREMENT } from "./model-acceptance-contract";
 import {
   calculateGraph,
-  validateGraph,
-  inspectDecompositionHierarchy,
+  WORKSPACE_MODEL_READINESS_POLICY_VERSION,
+  evaluateModelReadiness,
+  type ModelReadinessPurpose,
   validateIncomingKpiLayer,
   type GraphCalculationResult,
   type VdtProject
@@ -15,7 +16,7 @@ import type {
   FinishReceiptV2
 } from "./agent-supervisor-persistence";
 import { buildFormulaBacklog, summarizeCalculation, summarizeValidation } from "./summaries";
-import type { VdtAgentMode } from "./types";
+import type { AgentFinishOutcome, VdtAgentMode, VdtAgentOutcome } from "./types";
 
 export interface DeterministicFinishVerificationInput {
   binding: AgentSessionBinding;
@@ -23,10 +24,11 @@ export interface DeterministicFinishVerificationInput {
   currentRevision: number;
   expectedHeadRevision: number;
   mode: VdtAgentMode;
+  outcome?: VdtAgentOutcome | undefined;
   /** Server-derived for a run that started from an empty placeholder KPI. */
   requireDerivedRoot?: boolean | undefined;
   requireHierarchy?: boolean | undefined;
-  enforcePercentageScale?: boolean | undefined;
+  purpose?: ModelReadinessPurpose | undefined;
   unboundSourceFacts?: readonly { quote: string }[] | undefined;
   sourceGroundingIssues?: readonly ConstructionSourceIssue[] | undefined;
   pendingQuestion: boolean;
@@ -76,6 +78,10 @@ export function verifyDeterministicRunFinish(
   )) {
     blockers.push({ code: "OPERATION_LEDGER_NOT_SETTLED", detail: "An engine or tool operation is unfinished or ambiguous." });
   }
+  if (input.outcome === "answer") {
+    if (blockers.length) return rejected(blockers);
+    return issueReceipt(input, hashJson(null), hashJson(null));
+  }
   if (!input.project) blockers.push({ code: "PROJECT_MISSING", detail: "No draft VDT exists." });
   if (input.unboundSourceFacts?.length) blockers.push({
     code: "SOURCE_PROVENANCE_INCOMPLETE",
@@ -91,9 +97,15 @@ export function verifyDeterministicRunFinish(
     ? { sourceGroundingIssues: input.sourceGroundingIssues.slice(0, 8) } : undefined);
 
   const project = input.project;
-  if (input.requireHierarchy) {
-    const hierarchy = inspectDecompositionHierarchy(project);
-    if (!hierarchy.valid) return rejected([{code:"HIERARCHY_INCOMPLETE",detail:hierarchy.errors.slice(0,12).join(" ")}],{hierarchy:{...hierarchy,errors:hierarchy.errors.slice(0,20),errorCount:hierarchy.errors.length}});
+  const purpose = input.outcome ?? input.purpose ?? finishReadinessPurpose(input.mode);
+  const readiness = evaluateModelReadiness(project, {
+    purpose, requireDerivedRoot: input.requireDerivedRoot, requireHierarchy: input.requireHierarchy
+  });
+  const { hierarchy, validation } = readiness;
+  if (hierarchy && !hierarchy.valid) {
+    return rejected([{ code: "HIERARCHY_INCOMPLETE", detail: hierarchy.errors.slice(0, 12).join(" ") }], {
+      hierarchy: { ...hierarchy, errors: hierarchy.errors.slice(0, 20), errorCount: hierarchy.errors.length }
+    });
   }
   const backlog = buildFormulaBacklog(project);
   if (backlog.length > 0) {
@@ -107,38 +119,57 @@ export function verifyDeterministicRunFinish(
     catch (error) { return rejected([{ code: "TARGET_FORMULA_REQUIRED", detail: error instanceof Error ? error.message : "Check the selected incoming formula." }]); }
   }
 
-  const validation = validateGraph(project, undefined, {
-    enforcePercentageScale: input.enforcePercentageScale === true, requireTimeInputUnits: input.requireDerivedRoot === true
-  });
   const validationSummary = summarizeValidation(validation);
   if (!validation.valid) {
     return rejected([{
       code: "GRAPH_INVALID",
       detail: validation.errors.slice(0, 8).map((error) => error.message).join("; ") || "Graph validation failed."
-    }], { validation: validationSummary });
+    }], { validation: validationSummary, readinessIssues: readiness.issues.filter(issue => issue.severity === "error").slice(0, 8) });
   }
 
-  if (input.requireDerivedRoot && !hasDerivedRoot(project)) {
+  if (readiness.issues.some(issue => issue.code === "ROOT_NOT_DERIVED")) {
     return rejected([{ code: "ROOT_NOT_DERIVED", detail: DERIVED_ROOT_REQUIREMENT }]);
   }
 
-  const calculation = calculateGraph(project);
+  if (input.outcome === "structural_model") {
+    if (!readiness.accepted) return rejected(readiness.issues.filter(issue => issue.severity === "error")
+      .map(issue => ({ code: issue.code, detail: issue.message })));
+    const missingInputs = readiness.missingInputs
+      .slice()
+      .sort((left, right) => Number(right.requiredForRoot) - Number(left.requiredForRoot));
+    return issueReceipt(input, hashJson(validationSummary), hashJson(null), {
+      missingInputs: missingInputs.slice(0, 24),
+      missingInputCount: missingInputs.length
+    });
+  }
+
+  const calculation = readiness.calculation ?? calculateGraph(project);
   const calculationSummary = summarizeCalculation(calculation);
-  if (calculation.errors.some(error => input.mode !== "deepen_node" || error.type !== "missing_value")) {
+  const errors = readiness.issues.filter(issue => issue.severity === "error" && issue.code !== "ROOT_VALUE_NOT_FINITE");
+  if (errors.length || (input.mode === "deepen_node" && calculation.errors.some(error => error.type !== "missing_value"))) {
     return rejected([{
       code: "CALCULATION_ERRORS",
-      detail: calculation.errors.slice(0, 8).map((error) => error.message).join("; ")
-    }], { calculation: calculationSummary });
+      detail: (errors.length ? errors : calculation.errors).slice(0, 8).map(error => error.message).join("; ")
+    }], { calculation: calculationSummary, readinessIssues: errors.slice(0, 8) });
   }
-  if (
-    input.mode !== "deepen_node" && (calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue))
-  ) {
+  if (!readiness.accepted) {
     return rejected([{ code: "ROOT_VALUE_NOT_FINITE", detail: "Calculated root value is missing or non-finite." }]);
   }
 
-  const projectHash = hashJson(project);
-  const validationHash = hashJson(validationSummary);
-  const calculationHash = hashJson(calculationSummary);
+  return issueReceipt(input, hashJson(validationSummary), hashJson(calculationSummary),
+    input.outcome === "calculated_baseline" ? { rootValue: calculation.rootValue } : {}, calculation);
+}
+
+function issueReceipt(
+  input: DeterministicFinishVerificationInput,
+  validationHash: string,
+  calculationHash: string,
+  evidence: Pick<AgentFinishOutcome, "missingInputs" | "missingInputCount" | "rootValue"> = {},
+  calculation?: GraphCalculationResult
+): DeterministicFinishVerificationResult {
+  const projectHash = hashJson(input.project);
+  const policyVersion = input.outcome ? WORKSPACE_MODEL_READINESS_POLICY_VERSION : undefined;
+  const outcomeFields = policyVersion ? { outcome: input.outcome, policyVersion, ...evidence } : {};
   const existing = input.existingFinishReceipt;
   if (
     existing
@@ -148,6 +179,8 @@ export function verifyDeterministicRunFinish(
     && existing.projectHash === projectHash
     && existing.validationHash === validationHash
     && existing.calculationHash === calculationHash
+    && existing.outcome === input.outcome
+    && existing.policyVersion === policyVersion
   ) {
     return accepted(existing, calculation);
   }
@@ -162,6 +195,7 @@ export function verifyDeterministicRunFinish(
     projectHash,
     validationHash,
     calculationHash,
+    ...outcomeFields,
     verifiedAt
   };
   const receiptHash = hashJson(receiptSeed);
@@ -177,11 +211,16 @@ export function verifyDeterministicRunFinish(
     projectHash,
     validationHash,
     calculationHash,
+    ...outcomeFields,
     finalMessageHash: null,
     verifiedAt,
     finalPersistedAt: null
   };
   return accepted(finishReceipt, calculation);
+}
+
+export function finishReadinessPurpose(mode: VdtAgentMode): ModelReadinessPurpose {
+  return mode === "deepen_node" || mode === "review_project" ? "structural_model" : "calculated_baseline";
 }
 
 function hasUnsettledOperation(
@@ -255,9 +294,9 @@ function rejected(
 
 function accepted(
   receipt: FinishReceiptV2,
-  calculation: GraphCalculationResult
+  calculation?: GraphCalculationResult
 ): DeterministicFinishVerificationResult {
-  const { rootValue } = calculation;
+  const rootValue = calculation?.rootValue;
   return {
     accepted: true,
     code: "FINISH_VERIFIED",
@@ -269,6 +308,8 @@ function accepted(
       receiptId: receipt.receiptId,
       receiptHash: receipt.receiptHash,
       projectRevision: receipt.projectRevision,
+      ...(receipt.outcome ? { outcome: receipt.outcome, policyVersion: receipt.policyVersion, projectHash: receipt.projectHash } : {}),
+      ...(receipt.missingInputs ? { missingInputs: receipt.missingInputs, missingInputCount: receipt.missingInputCount } : {}),
       ...(rootValue !== undefined && Number.isFinite(rootValue) ? { rootValue } : {})
     }
   };

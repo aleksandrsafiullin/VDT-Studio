@@ -1024,9 +1024,18 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         expect(delta.results.at(-1).payload.feedback.suggestedNextTools).toEqual(["vdt.add_driver"]);
         expect(delta.results.at(-1).payload.error.message).toContain("expected>=2");
       }
-      const action = scenario === "correct_single_driver" && index === 2
+      const questionReview = scenario === "correct_single_driver" && index === 3;
+      if (questionReview) {
+        const requestBody = JSON.parse(String(init.body));
+        const prompt = JSON.parse(requestBody.messages.filter((message: { role: string }) => message.role === "user").at(-1).content);
+        expect(prompt.hostQuestionReview.proposedQuestions).toEqual([
+          { question: "Which operating period should this output model cover?", reason: "The measurement period is missing." }
+        ]);
+      }
+      const action = scenario === "correct_single_driver" && index >= 2
         ? { type: "question", messageId: "question-loop", questionSetId: "questions-loop", questions: [{
-            id: "next", question: "Continue with the next layer?", reason: "The single driver was added.", required: true, expectedAnswerType: "text"
+            id: "next", question: "Which operating period should this output model cover?",
+            reason: "The measurement period is missing.", required: true, expectedAnswerType: "text"
           }] }
         : { type: "action_batch", batch: { calls: [
           ...(index === 0 ? [{ externalCallId: "describe-loop-tools", toolName: "tools.describe", args: { toolNames: ["vdt.add_driver", "vdt.add_drivers_batch"] } }] : []),
@@ -1036,8 +1045,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
             args: shouldRepair ? driver : { drivers: [{ ...driver, name: `Payload attempt ${index}` }] }
           }] } };
       return Response.json({ done: true, message: { content: JSON.stringify({
-        turnId: `loop-turn-${index}`, sessionState: "Goal: add the payload driver. Correct the rejected batch before continuing.",
-        assistantMessage: { messageId: `loop-message-${index}`, text: "I will add the payload driver." }, action
+        turnId: `loop-turn-${questionReview ? 2 : index}`, sessionState: "Goal: add the payload driver and establish its period.",
+        assistantMessage: null, action, ...(questionReview ? { questionDisposition: "ask_user" } : {})
       }) } });
     });
     vi.stubGlobal("fetch", providerFetch);
@@ -1060,7 +1069,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         : snapshot.status === "failed");
       const state = agentRuntime.store.getState(body.runId!);
       expect(snapshot.draftProject?.graph.nodes.find((node) => node.id === "retained_input")?.baselineValue).toBe(42);
-      expect(providerFetch).toHaveBeenCalledTimes(scenario === "turn_budget" ? 2 : 3);
+      expect(providerFetch).toHaveBeenCalledTimes(scenario === "turn_budget" ? 2 : scenario === "correct_single_driver" ? 4 : 3);
       expect(state.supervisorPersistenceV2?.finishReceipt).toBeNull();
       if (scenario === "correct_single_driver") {
         expect(snapshot.draftProject?.graph.nodes.find((node) => node.id === "payload")?.baselineValue).toBe(50);

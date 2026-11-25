@@ -185,6 +185,7 @@ function validateSingleLayerRunScope(
   targetNodeId?: string | undefined
 ): string | undefined {
   if (state.request.mode !== "deepen_node") return undefined;
+  if (changeSet.workspaceChange) return "A selected KPI task can only change that KPI's incoming layer.";
   const selectedNodeId = state.request.input.selectedNodeId;
   if (!selectedNodeId) {
     return "Single-level decomposition requires a selected KPI.";
@@ -494,10 +495,12 @@ function requiresApproval(
   changeSet: VdtChangeSet,
   existing: MutationProposal[]
 ): boolean {
+  if (changeSet.workspaceChange?.command.kind === "restore" || changeSet.workspaceChange?.command.kind === "delete") return true;
   if (!policy.autoApply) return true;
   if (policy.askBeforeFirstPatch && existing.every((proposal) => proposal.status !== "applied")) return true;
   if (policy.requireApprovalForDelete && changeSet.deletions.length > 0) return true;
-  if (policy.requireApprovalForFormulaChanges && changeSet.updates.some((update) => update.patch.formula !== undefined)) return true;
+  if (policy.requireApprovalForFormulaChanges && changeSet.updates.some(({ patch }) =>
+    patch.formula !== undefined || patch.goalSeek !== undefined || patch.clearGoalSeek)) return true;
   if (policy.requireApprovalForGraphStructure) {
     return changeSet.additions.length > 0 || changeSet.deletions.length > 0 || changeSet.edgeChanges.length > 0;
   }
@@ -608,7 +611,8 @@ function collectChangeIds(changeSet: VdtChangeSet): string[] {
     ...changeSet.additions.map((entry) => entry.id),
     ...changeSet.updates.map((entry) => entry.id),
     ...changeSet.deletions.map((entry) => entry.id),
-    ...changeSet.edgeChanges.map((entry) => entry.id)
+    ...changeSet.edgeChanges.map((entry) => entry.id),
+    ...(changeSet.workspaceChange ? [changeSet.workspaceChange.id] : [])
   ];
 }
 

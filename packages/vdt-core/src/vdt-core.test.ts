@@ -85,6 +85,24 @@ describe("min/max formula parsing", () => {
     });
   });
 
+  it.each(["MIN", "mIn", "МИН", "мИн"])("normalizes a %s call and preserves its argument IDs", (name) => {
+    const formula = `${name} (Stage_A, Stage_B)`;
+    expect(parseFormula(formula)).toEqual(parseFormula("min(Stage_A, Stage_B)"));
+    expect(evaluateFormula(formula, { Stage_A: 95, Stage_B: 85 }).value).toBe(85);
+  });
+
+  it.each(["MAX", "mAx", "МАКС", "мАкС"])("normalizes a %s call without changing number syntax", (name) => {
+    expect(parseFormula(`${name}(1,2)`)).toEqual(parseFormula("max(1,2)"));
+    expect(evaluateFormula(`${name}(1.5, 2.5)`, {}).value).toBe(2.5);
+  });
+
+  it("keeps case-sensitive identifiers and rejects unrecognized spellings and malformed calls", () => {
+    expect(extractFormulaReferences("MIN + МиН(Stage_A, MiN)")).toEqual(["MIN", "Stage_A", "MiN"]);
+    for (const invalid of ["МАКС", "МАКСИМУМ(a, b)", "MИН(a, b)", "sqrt(a)", "МИН(a,)", "МИН(1,5; 2,5)"]) {
+      expect(() => parseFormula(invalid)).toThrow(FormulaParseError);
+    }
+  });
+
   it("parses min(a, b, c) as a call with three args", () => {
     expect(parseFormula("min(a, b, c)")).toEqual({
       type: "call",

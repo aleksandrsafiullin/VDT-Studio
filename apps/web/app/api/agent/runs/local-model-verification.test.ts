@@ -10,6 +10,15 @@ const checks = () => LOCAL_MODEL_VERIFICATION_TOOLS.map((name) => result(name));
 const delta = (results: unknown[]) => ({ type: "tool_results", results });
 
 describe("local model verification progress", () => {
+  it("finishes structural verification with unknown measurements and rechecks a numerical goal", () => {
+    const progress = new LocalModelVerification();
+    const structureChecks = [result("vdt.validate"), result("vdt.inspect_hierarchy")];
+    progress.observe(delta(structureChecks), 5, admitted, "structural_model");
+    expect(progress.progress()).toMatchObject({ completed: ["vdt.validate", "vdt.inspect_hierarchy"], pending: [], nextStep: "request_finish" });
+    progress.observe(delta(structureChecks), 5, admitted, "calculated_baseline");
+    expect(progress.progress()).toMatchObject({ pending: ["vdt.calculate"], nextStep: "run_checks" });
+  });
+
   it("retains only successful current-revision Gateway checks, including replayed receipts", () => {
     const progress = new LocalModelVerification();
     progress.observe(delta([result("vdt.validate")]), 5, admitted);

@@ -1,5 +1,5 @@
 import type { FormulaExpression } from "../formula/ast";
-import type { IncomingKpiDraftBinding, IncomingKpiFormulaAnalysis, IncomingKpiUnitExpression } from "./incoming-types";
+import { INCOMING_KPI_UNIT_POLICY, type IncomingKpiDraftBinding, type IncomingKpiFormulaAnalysis, type IncomingKpiUnitExpression } from "./incoming-types";
 import type { KpiSuggestionPeriod } from "./types";
 import { parseIncomingKpiUnit } from "./incoming-unit-contract";
 import { kpiCanonicalJson } from "./identity";
@@ -11,27 +11,34 @@ const combine = (a: Record<string, number>, b: Record<string, number>, sign: num
 };
 const same = (a: unknown, b: unknown) => kpiCanonicalJson(a) === kpiCanonicalJson(b);
 
-export function validateIncomingKpiModelConstants(analysis: IncomingKpiFormulaAnalysis): void {
-  const visit = (node: FormulaExpression, complement = false): void => {
-    if (node.type === "number") smartAssert(complement && node.raw === "1", "MODEL_COEFFICIENT", "Use measured inputs for weights or thresholds.");
-    else if (node.type === "unary") visit(node.expression);
-    else if (node.type === "call") node.args.forEach(child => visit(child));
-    else if (node.type === "binary") { visit(node.left, node.operator === "-"); visit(node.right); }
-  };
-  visit(analysis.ast);
-}
+const percentScale = "fraction:percent";
 
-/** No scale conversion is inferred from numeric constants. */
-export function validateIncomingKpiUnits(analysis: IncomingKpiFormulaAnalysis, bindings: readonly IncomingKpiDraftBinding[], targetUnit: string, period: KpiSuggestionPeriod): void {
+/** Keep measurement scales explicit. Division by 100 converts a stored percent to a fraction. */
+export function validateIncomingKpiUnits(
+  analysis: IncomingKpiFormulaAnalysis,
+  bindings: readonly IncomingKpiDraftBinding[],
+  targetUnit: string,
+  period: KpiSuggestionPeriod,
+  enforceModelConstants = false
+): void {
   const units = new Map(bindings.map(row => [row.alias, parseIncomingKpiUnit(row.unit, period)]));
-  const visit = (node: FormulaExpression): IncomingKpiUnitExpression => {
-    if (node.type === "number") return { dimensions: {}, scales: {} };
+  const visit = (node: FormulaExpression, complement = false): IncomingKpiUnitExpression => {
+    if (node.type === "number") {
+      smartAssert(!enforceModelConstants || (complement && node.raw === "1"), "MODEL_COEFFICIENT", "Use measured inputs for weights or thresholds.");
+      return { dimensions: {}, scales: {} };
+    }
     if (node.type === "reference") { const unit = units.get(node.name as IncomingKpiDraftBinding["alias"]); smartAssert(unit, "UNKNOWN_REFERENCE", "Choose a known KPI."); return unit; }
     if (node.type === "unary") return visit(node.expression);
     if (node.type === "call") {
-      const args = node.args.map(visit); smartAssert(args.every(unit => same(unit, args[0])), "UNIT_MISMATCH", "Use matching units and scales."); return args[0]!;
+      const args = node.args.map(arg => visit(arg)); smartAssert(args.every(unit => same(unit, args[0])), "UNIT_MISMATCH", "Use matching units and scales."); return args[0]!;
     }
-    const a = visit(node.left), b = visit(node.right);
+    const a = visit(node.left, node.operator === "-");
+    if (node.operator === "/" && node.right.type === "number" && node.right.value === INCOMING_KPI_UNIT_POLICY.percentToFractionDivisor && a.scales[percentScale] === 1) {
+      const scales = { ...a.scales };
+      delete scales[percentScale];
+      return { dimensions: a.dimensions, scales };
+    }
+    const b = visit(node.right);
     if (node.operator === "+" || node.operator === "-") { smartAssert(same(a, b), "UNIT_MISMATCH", "Use matching units and scales."); return a; }
     const sign = node.operator === "*" ? 1 : -1;
     return { dimensions: combine(a.dimensions, b.dimensions, sign), scales: combine(a.scales, b.scales, sign) };

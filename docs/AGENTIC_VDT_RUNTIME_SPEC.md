@@ -196,6 +196,8 @@ of admitted mutation calls. The Gateway owns execution and approvals.
 
 Context containers are informational when declared with context children and left without a number/formula. Numerical calculation and formula backlogs skip those containers, while missing numerical reference leaves still block finish. The model receives their IDs explicitly; web cards/inspector show `Reference group`. Multiple direct root context leaves are a construction/finish error, not an import-shape error: legacy snapshots remain readable, and new agents must keep topical reference groups instead of flattening their columns at the root.
 
+Formula reference renames use parser tokens. When a KPI identifier matches a built-in function name, a repair can change the bare identifier while preserving the function call. A preview from `formula.rename_reference` is read-only. The repair write follows the draft mutation approval policy.
+
 Protected hierarchy acceptance uses effective references after literal-constant folding; references eliminated by multiplication by a literal/folded zero are rejected. Agents must classify independent derived checks as context instead of adding dummy formula terms. This does not replace dimensional or business-model review.
 
 Native Ollama new-tree construction treats routine checking as authorized by the
@@ -308,6 +310,26 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
   The chat shows the recovery reason and the available End interrupted run
   and Continue from saved copy actions. Step retry controls require a live
   run waiting for user input.
+- A Supervisor start may specify a top-level `outcome`. An `answer` run
+  uses read-only project tools. `structural_model` checks graph validity and
+  applicable hierarchy without requiring measurements. Its receipt includes
+  up to 24 outstanding inputs and the full count. Newly created input nodes
+  with no value or formula record `valueStatus: "unknown"`. A `calculated_baseline`
+  requires complete inputs and a finite verified root. The host pins the
+  outcome for the run and records it with the `workspace-v1` policy and
+  verified revision and hash. Final events carry the same evidence, and the
+  run snapshot exposes `finishOutcome` once the final is persisted. When the
+  outcome is omitted, the existing mode-derived rules and receipt format apply.
+- An initial explicit structure task on an empty tree with no user-pinned
+  skill uses a bounded relationship assessment on native OpenAI. A material
+  question goes through the normal Supervisor question and answer path.
+  Confirmed answers guide skill choice and planning. Missing measurements
+  remain outstanding through structural finish.
+- A clear chat request to deliver Excel for a named scenario requires an
+  export artifact for that scenario at the current saved revision before
+  finish. The export uses the current run's user instruction and the saved
+  VDT's scenario names. The saved revision route still validates artifact
+  scope on download.
 - Session binding, engine/tool receipts, finish receipt, checkpoint and Event V2
   form an additive Sequence 4 contract. Sequence 3 bytes and authority remain
   unchanged.
@@ -760,6 +782,14 @@ opaque Cursor session and remains production-disabled with unverified isolation.
 
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged.
 
+Native Ollama turns carry a bounded set of submitted user answers across tool results. The run-local copy preserves question-set IDs and answer fields for planning. Any project write that cites a decision still needs the Gateway's existing evidence and revision checks. In a saved VDT, the current observation includes separate scenario and version IDs for use by the shared scenario, version and Excel tools.
+
+An initial structural request with an unpinned empty tree can use a native read-only relationship assessment before skill discovery. The Ollama assessment distinguishes an unresolved relationship, an immaterial one and a stated one backed by exact user wording. A material question flows through the existing question event. Completed invalid turn envelopes can be regenerated once on the same exchange, with canonical validation required before a tool runs.
+
+Native first-plan review supplies the current root, submitted answers and the shared plan diagnostics. Once the Gateway applies a plan, the local response schema derives available additions from the same ready factor layer used by the Gateway. Structural Ollama construction uses the dedicated formula and plan operand checks. Formula calls use the shared syntax from the [Formula Engine](FORMULA_ENGINE.md).
+
+For an Ollama scenario comparison, the Supervisor can render the final from the shared calculator when a successful compare receipt matches the current user instruction, builder revision and saved revision. The ordinary finish and head checks apply to this report. Exact named workbook requests can also ground the native export selector before canonical validation. An explicit request to save one named version and export one resolved scenario advances based on the applied version mutation and the current-revision workbook artifact. The current user instruction and revision determine which save counts.
+
 Current target-path behavior: a registered server-owned structured Model Agent
 binding selects one public-route Supervisor and one engine. An explicitly
 enabled Cursor checkpoint/resume qualification canary can register a candidate
@@ -806,11 +836,20 @@ uses native JSON-schema format without a duplicate schema in system text, and
 packs project inspection rows under explicit node/edge column names. Every
 returned field/value remains available; null denotes an absent field, and zero
 is preserved. The model projection is labelled separately from unchanged
-canonical Gateway receipts and hashes. Ollama receives every tool card up front
-and reads full argument schemas lazily with read-only `tools.describe` for up
-to six agent-selected catalog names. Hidden tools are refused; neither this
-lookup nor the compact presentation expands the immutable allowlist. The
-original brief remains in context. Native decoding includes introspection, finish and basic structural/value/formula schemas upfront and enables other schemas after discovery and excludes draft creation in continuation mode. Local turns also receive a bounded current-revision `hostObservation` (up to 80 nodes, explicit truncation, unpopulated-input IDs, formula backlog and bounded calculation errors). Native draft/topology/recipe seeding and control calls use singleton batches before the model plans against returned IDs. It is a read-only server observation, not a tool receipt or finish authorization. Ollama streams with a 300-second first-frame limit, 60-second idle limit, 480-second absolute limit and 1 MB byte limit; partial or incomplete responses are rejected. Other providers retain their full initial catalog presentation and 180-second deadline.
+canonical Gateway receipts and hashes. Focused native prompts carry callable
+tool cards and the other admitted names. Read-only `tools.describe` retrieves
+schemas for up to six model-selected names from the immutable allowlist. On
+an existing VDT, scenario, version, workbook and factor-probe tools are
+available directly. Structural edits remain available through discovery. The
+explicit structural outcome allows focused relationship clarification during
+skill resolution while keeping the skill and hierarchy gates before building.
+The original brief stays in context. Local turns also receive a bounded
+current-revision `hostObservation` with node and scenario IDs, missing inputs,
+formula backlog and calculation diagnostics. It carries observations only.
+Native seeding and control calls use singleton batches. Ollama streams with
+a 300-second first-frame limit, 60-second idle limit, 480-second absolute limit
+and 1 MB byte limit. Other providers retain their initial catalog presentation
+and 180-second deadline.
 
 Implementation gap: the Model Agent's turn-budget exhaustion still terminates
 with `MAX_MODEL_TURNS_EXCEEDED`. The target above requires an explicit

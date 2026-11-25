@@ -4,6 +4,9 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   applyChangeSet,
+  applyInputValueOperation,
+  applyScenarioOperation,
+  applyVersionOperation,
   normalizeInstructionPreferences,
   validInstructionPreferences,
   type InstructionPreferences,
@@ -16,14 +19,19 @@ import {
   importProjectJson,
   layoutGraph,
   productionVolumeProject,
+  prepareBranchReparent,
+  prepareEdgeEdit,
   restoreVersionSnapshot as restoreProjectVersionSnapshot,
-  restoreVersionWithCheckpoint,
   stableSnakeId,
   uniqueId,
   VdtBuilderSession,
   validateIncomingKpiChangeSet,
+  type EdgeEditCommand,
+  type ReparentBranchInput,
+  type ScenarioCommand,
   type VdtChangeSet,
   type VdtNode,
+  type VdtNodePatch,
   type VdtProject,
   type VdtScenario
 } from "@vdt-studio/vdt-core";
@@ -79,7 +87,7 @@ import {
   type UiPreferences
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
-import { changeSnapshotName, versionDisplayName } from "./version-presentation";
+import { changeSnapshotName } from "./version-presentation";
 import { scrubPersistedProviderSecrets } from "./provider-persistence";
 import { normalizeRemovedCliAgentIds, reconcileRemovedCliSelections } from "@/lib/cli-subscription-preferences";
 import {
@@ -307,7 +315,14 @@ export interface CreateWorkspaceVdtParams {
   rootKpi?: string;
   unit?: string;
   timePeriod?: string;
+  expectedProjectId?: string;
+  source?: WorkspaceVdtSource;
 }
+
+type WorkspaceVdtSource =
+  | { kind: "duplicate"; vdtId: string }
+  | { kind: "example"; exampleId: ExampleProjectId }
+  | { kind: "import"; project: VdtProject };
 
 export type WorkspacePanelMode = "project" | "vdt";
 
@@ -341,6 +356,14 @@ interface PendingWorkspaceVdtCreate {
   input: CreateStoredVdtInput;
   projectRevision: number;
   localProjectAtStart: VdtProject;
+  source?: Exclude<WorkspaceVdtSource, { kind: "import" }> | { kind: "import" };
+  selection?: Pick<VdtWorkspaceState, "activeVdtId" | "activePanel">;
+}
+
+interface BranchReparentContext {
+  project: VdtProject;
+  workspaceProjectId: string | undefined;
+  vdtId: string | undefined;
 }
 
 export interface VdtStudioState {
@@ -485,6 +508,7 @@ export interface VdtStudioState {
     initialInstruction?: string,
     options?: {
       mode?: VdtAgentStartRequest["mode"];
+      outcome?: VdtAgentStartRequest["outcome"];
       selectedNodeId?: string | null;
       includeCurrentProject?: boolean;
       researchMode?: ResearchMode | undefined;
@@ -512,9 +536,13 @@ export interface VdtStudioState {
   loadExample: (exampleId?: ExampleProjectId) => void;
   selectNode: (nodeId: string) => void;
   clearAgentKpiContext: () => void;
-  updateNode: (nodeId: string, patch: Partial<VdtNode>) => void;
+  updateNode: (nodeId: string, patch: Partial<VdtNode> & Pick<VdtNodePatch, "clearGoalSeek">) => void;
   updateNodeBaselineValue: (nodeId: string, value?: number) => void;
   deleteNode: (nodeId: string) => void;
+  reparentBranch: (input: Omit<ReparentBranchInput, "relation">, expected: BranchReparentContext) =>
+    { ok: true } | { ok: false; code: string; message: string };
+  editGraphEdge: (command: EdgeEditCommand, expected: BranchReparentContext & {selectedNodeId: string}) =>
+    { ok: true; edgeId: string } | { ok: false; code: string; message: string };
   createScenario: () => void;
   setActiveScenarioId: (scenarioId: string) => void;
   setMainScenario: (scenarioId: string) => void;
@@ -781,6 +809,12 @@ function agentExpectedRevision(base: WorkspaceDraftBase) {
     expectedRuntimeGeneration: base.expectedRuntime.runtimeGeneration,
     expectedGenerationVersion: base.expectedRuntime.generationVersion
   };
+}
+
+function activeScenarioForAgent(state: Pick<VdtStudioState, "project" | "activeScenarioId">): string | null {
+  const id = state.activeScenarioId;
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)
+    && state.project.scenarios.some((scenario) => scenario.id === id) ? id : null;
 }
 
 function safeWorkspaceProjectId(source: string): string {
@@ -1445,7 +1479,8 @@ function applyAgentSnapshot(
         ? {
             project,
             selectedNodeId: preservedSelectedNodeId ?? project.rootNodeId,
-            activeScenarioId: resolveMainScenarioId(project),
+            activeScenarioId: project.scenarios.some((scenario) => scenario.id === state.activeScenarioId)
+              ? state.activeScenarioId : resolveMainScenarioId(project),
             projectRevision: state.projectRevision + 1,
             ...(storedVdt ? {
               agentWorkspaceDraft: { runId: snapshot.runId, project, base: nextBase },
@@ -1479,6 +1514,17 @@ function updateProjectNode(project: VdtProject, nodeId: string, update: (node: V
       nodes: project.graph.nodes.map((node) => (node.id === nodeId ? update(node) : node))
     }
   };
+}
+
+function manualNodeEditIdentity(project: VdtProject): string {
+  return kpiCanonicalJson({
+    ...project,
+    updatedAt: null,
+    graph: {
+      ...project.graph,
+      nodes: project.graph.nodes.map((node) => ({ ...node, updatedAt: null }))
+    }
+  });
 }
 
 function nextManualIncomingKpiName(project: VdtProject, parentNodeId: string): string {
@@ -1576,18 +1622,20 @@ function defaultScenario(options?: { isMain?: boolean }): VdtScenario {
   };
 }
 
-function uniqueScenarioCopyName(baseName: string, scenarios: VdtScenario[]): string {
-  const root = `${baseName} copy`;
-  if (!scenarios.some((scenario) => scenario.name === root)) {
-    return root;
-  }
-
-  let suffix = 2;
-  while (scenarios.some((scenario) => scenario.name === `${root} (${suffix})`)) {
-    suffix += 1;
-  }
-
-  return `${root} (${suffix})`;
+function editScenario(state: VdtStudioState, command: ScenarioCommand): Partial<VdtStudioState> {
+  const operation = applyScenarioOperation(state.project, command, { operationId: makeId("edit"), now: nowIso() });
+  if (operation.status === "error" || operation.project === state.project) return {};
+  const { scenarioId, fallbackScenarioId } = operation.result;
+  const activeScenarioId = command.kind === "create" || command.kind === "clone"
+    ? scenarioId
+    : command.kind === "delete" && state.activeScenarioId === scenarioId
+      ? fallbackScenarioId
+      : state.activeScenarioId;
+  return {
+    project: operation.project,
+    projectRevision: state.projectRevision + 1,
+    activeScenarioId: activeScenarioId ?? resolveMainScenarioId(operation.project)
+  };
 }
 
 function ensureMainScenario(project: VdtProject): VdtProject {
@@ -2100,36 +2148,49 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       createWorkspaceVdt: async (input) => {
-        const workspaceBeforeSave = get().workspace;
-        const pendingBeforeSave =
-          workspaceBeforeSave.pendingVdtCreate?.projectId === workspaceBeforeSave.activeProjectId
-            ? workspaceBeforeSave.pendingVdtCreate
-            : undefined;
+        const params: CreateWorkspaceVdtParams =
+          typeof input === "string" ? { name: input } : input ?? {};
+        const beforeSave = get();
+        const workspaceBeforeSave = beforeSave.workspace;
+        const activeProjectId = workspaceBeforeSave.activeProjectId;
+        const pendingCreate = workspaceBeforeSave.pendingVdtCreate;
+        const { source } = params;
+        const fail = (error: string) => {
+          set(current => ({ workspace: { ...current.workspace, error } }));
+          return false;
+        };
+        if (workspaceBeforeSave.isMutating || workspaceBeforeSave.isLoading) return false;
+        if (!activeProjectId) return fail("Create or select a project before adding a VDT.");
+        const sameSelection = (workspace: VdtWorkspaceState, selection: Pick<VdtWorkspaceState, "activeVdtId" | "activePanel"> = workspaceBeforeSave) =>
+          workspace.activeProjectId === activeProjectId &&
+          workspace.activeVdtId === selection.activeVdtId && workspace.activePanel === selection.activePanel;
+        if (params.expectedProjectId && params.expectedProjectId !== activeProjectId) {
+          return fail("The selected project changed. Reopen the original project to create this VDT.");
+        }
+        // Retry the journaled request, never silently substitute another source.
+        if (pendingCreate && (pendingCreate.projectId !== activeProjectId || (input !== undefined && (
+          pendingCreate.source?.kind !== source?.kind ||
+          (source?.kind === "duplicate" && (pendingCreate.source?.kind !== "duplicate" || pendingCreate.source.vdtId !== source.vdtId)) ||
+          (source?.kind === "example" && (pendingCreate.source?.kind !== "example" || pendingCreate.source.exampleId !== source.exampleId)) ||
+          (source?.kind === "import" && JSON.stringify(pendingCreate.input.project) !== JSON.stringify(source.project))
+        )))) {
+          return fail("Retry the pending VDT creation before starting another.");
+        }
         if (
-          !pendingBeforeSave &&
+          !pendingCreate &&
+          !source &&
           hasActiveWorkspaceVdt(workspaceBeforeSave) &&
           !(await get().saveActiveWorkspaceVdt())
         ) {
           return false;
         }
         const state = get();
-        const activeProjectId = state.workspace.activeProjectId;
-        if (!activeProjectId) {
-          set((current) => ({
-            workspace: {
-              ...current.workspace,
-              error: "Create or select a project before adding a VDT."
-            }
-          }));
-          return false;
+        if (!sameSelection(state.workspace)) return false;
+        if (source && state.workspace.activePanel !== "project") {
+          return fail("Return to the project workspace to add a VDT from a saved model.");
         }
-        const params: CreateWorkspaceVdtParams =
-          typeof input === "string" ? { name: input } : input ?? {};
         const rootKpi = params.rootKpi?.trim() || params.name?.trim() || "";
-        const vdtName = params.name?.trim() || params.rootKpi?.trim() || "New VDT";
-        const pendingCreate = state.workspace.pendingVdtCreate?.projectId === activeProjectId
-          ? state.workspace.pendingVdtCreate
-          : undefined;
+        let vdtName = params.name?.trim() || params.rootKpi?.trim() || "New VDT";
         const activeSummary = summaryForProject(state.workspace.projectSummaries, activeProjectId);
         if (!pendingCreate && !activeSummary?.runtimeState) {
           set((current) => ({
@@ -2140,9 +2201,40 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
           return false;
         }
-        const hasExplicitBrief = Boolean(params.rootKpi?.trim());
-        const snapshot = pendingCreate?.input.project ?? (
-          hasActiveWorkspaceVdt(state.workspace) && !hasExplicitBrief
+        let sourceSnapshot: VdtProject | undefined;
+        if (!pendingCreate && source) {
+          try {
+            if (source.kind === "duplicate") {
+              if (!activeSummary?.vdts.some(entry => entry.vdt.id === source.vdtId)) {
+                return fail("Select a saved VDT in this project to duplicate.");
+              }
+              set(current => ({ workspace: { ...current.workspace, isMutating: true, error: undefined } }));
+              try {
+                const loaded = await loadStoredVdt(source.vdtId);
+                const current = get();
+                if (!sameSelection(current.workspace) || current.project !== state.project || current.projectRevision !== state.projectRevision) return false;
+                if (!loaded.activeProject || loaded.vdt.id !== source.vdtId || loaded.summary.project.id !== activeProjectId) {
+                  return fail("The source VDT has no saved model in this project.");
+                }
+                vdtName = params.name?.trim() || `${loaded.vdt.name} copy`;
+                sourceSnapshot = projectSnapshotForVdt(cloneProject(loaded.activeProject), vdtName);
+              } finally {
+                set(current => ({ workspace: { ...current.workspace, isMutating: false } }));
+              }
+            } else if (source.kind === "example") {
+              const example = buildExampleProject(source.exampleId);
+              vdtName = params.name?.trim() || example.name;
+              sourceSnapshot = projectSnapshotForVdt(example, vdtName);
+            } else {
+              vdtName = source.project.name;
+              sourceSnapshot = cloneProject(source.project);
+            }
+          } catch (error) {
+            return fail(workspaceStorageError(error, "The source model could not be loaded."));
+          }
+        }
+        const snapshot = pendingCreate?.input.project ?? sourceSnapshot ?? (
+          hasActiveWorkspaceVdt(state.workspace) && !params.rootKpi?.trim()
             ? projectSnapshotForVdt(state.project, vdtName)
             : buildDraftVdtProject({
                 name: vdtName,
@@ -2157,6 +2249,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           projectId: activeProjectId,
           projectRevision: state.projectRevision,
           localProjectAtStart: cloneProject(state.project),
+          selection: { activePanel: state.workspace.activePanel, activeVdtId: state.workspace.activeVdtId },
+          ...(source ? { source: source.kind === "import" ? { kind: "import" as const } : source } : {}),
           input: {
             idempotencyKey: `create-vdt:${activeProjectId}:${generateRunId()}`,
             expectedRuntime: runtimeCasFromState(activeSummary!.runtimeState),
@@ -2181,7 +2275,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const created = await createStoredVdt(activeProjectId, createOperation.input);
           let localProjectChanged = false;
           set((current) => {
+            const selectionStillCurrent = sameSelection(current.workspace, createOperation.selection ?? workspaceBeforeSave);
             localProjectChanged =
+              !selectionStillCurrent ||
               current.projectRevision !== createOperation.projectRevision ||
               JSON.stringify(current.project) !== JSON.stringify(createOperation.localProjectAtStart);
             if (localProjectChanged) {
@@ -2190,7 +2286,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   ...current.workspace,
                   projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, created.summary),
                   isMutating: false,
-                  error: "The VDT was created from the submitted snapshot, but newer local edits remain open and unsaved.",
+                  error: selectionStillCurrent
+                    ? "The VDT was created from the submitted snapshot, but newer local edits remain open and unsaved."
+                    : current.workspace.error,
                   pendingVdtCreate: undefined
                 }
               };
@@ -3328,18 +3426,28 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const shouldContinue = options?.includeCurrentProject ?? shouldContinueOpenVdt(state);
           const selectedNodeId = options?.selectedNodeId === null ? undefined
             : options?.selectedNodeId ?? (shouldContinue ? selectedNodeForAgentChat(state)?.id : undefined);
+          const activeScenarioId = shouldContinue ? activeScenarioForAgent(state) : null;
           const input: VdtAgentStartRequest["input"] = {
             ...state.brief,
             personalisation: workspacePersonalisation(state),
             ...(prompt ? { prompt } : {}),
             ...(selectedNodeId ? { selectedNodeId } : {}),
+            ...(activeScenarioId ? { activeScenarioId } : {}),
             ...(shouldContinue ? { project: state.project } : {})
           };
           const workspace = buildAgentWorkspaceContext(state);
+          const previous = state.agentRun ?? state.generateActivity?.runtimeAgentRun;
+          const sameWorkspace = workspace.vdtId && previous?.request.workspace?.vdtId === workspace.vdtId
+            && previous.request.workspace.projectId === workspace.projectId;
+          const conversationId = sameWorkspace ? previous?.request.conversationId : undefined;
+          const priorConversationRunId = sameWorkspace && !conversationId ? previous?.runId : undefined;
           const commonRequest = {
             mode: options?.mode ?? (shouldContinue ? "continue_project" : "generate_vdt"),
+            ...(options?.outcome ? { outcome: options.outcome } : {}),
             input,
             workspace,
+            ...(conversationId ? { conversationId } : {}),
+            ...(priorConversationRunId ? { priorConversationRunId } : {}),
             options: {
               autoApplyPatches: true,
               continueWithAssumptions: false,
@@ -3585,7 +3693,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           currentRun?.status === "succeeded" ||
           currentRun?.status === "cancelled"
         ) {
-          return false;
+          return get().startAgentRun(trimmed, {
+            includeCurrentProject: shouldContinueOpenVdt(get()),
+            ...(selectedNodeId !== undefined ? { selectedNodeId } : {}),
+            ...(researchMode ? { researchMode } : {})
+          });
         }
         const activityRunId = activity && isActiveActivity(activity) ? activity.runId : undefined;
         const runId = currentRun?.runId ?? get().activeAgentRunId ?? activityRunId;
@@ -3629,6 +3741,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             text: trimmed,
             personalisation: workspacePersonalisation(get()),
             ...(selectedNodeId !== undefined ? { selectedNodeId } : {}),
+            activeScenarioId: activeScenarioForAgent(get()),
             ...(researchMode ? { researchMode } : {})
           });
           applyAgentSnapshot(set, snapshot);
@@ -3659,14 +3772,23 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       sendManualProjectChange: async (change) => {
-        const runId = get().activeAgentRunId;
+        const before = get();
+        const runId = before.activeAgentRunId;
         if (!runId) return;
         try {
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "manual_project_change",
-            projectRevision: get().projectRevision,
+            projectRevision: before.projectRevision,
             change
           });
+          const draft = snapshot.draftProject;
+          if (change.kind === "node_updated" && draft && before.agentWorkspaceDraft?.runId === runId
+            && manualNodeEditIdentity(draft) === manualNodeEditIdentity(before.project)) {
+            set((state) => state.activeAgentRunId === runId && state.project === before.project
+              && state.workspace.draftRevisionBase === before.workspace.draftRevisionBase
+              ? { agentWorkspaceDraft: { runId, project: before.project, base: before.workspace.draftRevisionBase } }
+              : {});
+          }
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Manual change could not be sent to the agent.";
@@ -4085,13 +4207,19 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       selectNode: (nodeId) => set({ selectedNodeId: nodeId, chatKpiContextExcludedVdtId: undefined }),
       clearAgentKpiContext: () => set({ chatKpiContextExcludedVdtId: get().workspace.activeVdtId }),
       updateNode: (nodeId, patch) => {
+        const { clearGoalSeek, ...fields } = patch;
+        const changesGoalSeek = clearGoalSeek || "goalSeek" in fields;
         set((state) => ({
-          project: updateProjectNode(state.project, nodeId, (node) => ({
-            ...node,
-            ...patch,
-            status: patch.status ?? (node.aiGenerated ? "edited" : node.status),
-            updatedAt: nowIso()
-          })),
+          project: updateProjectNode(state.project, nodeId, (node) => {
+            const updated: VdtNode = {
+              ...node,
+              ...fields,
+              status: fields.status ?? (!changesGoalSeek && node.aiGenerated ? "edited" : node.status),
+              updatedAt: nowIso()
+            };
+            if (clearGoalSeek) delete updated.goalSeek;
+            return updated;
+          }),
           projectRevision: state.projectRevision + 1
         }));
         void get().sendManualProjectChange({
@@ -4102,28 +4230,18 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
       },
       updateNodeBaselineValue: (nodeId, value) => {
-        set((state) => ({
-          project: updateProjectNode(state.project, nodeId, (node) => {
-            if (value === undefined) {
-              const next = { ...node, status: node.aiGenerated ? "needs_data" : node.status, updatedAt: nowIso() };
-              delete next.baselineValue;
-              delete next.value;
-              return next;
-            }
-
-            return {
-              ...node,
-              baselineValue: value,
-              status: node.aiGenerated ? "edited" : node.status,
-              updatedAt: nowIso()
-            };
-          }),
-          projectRevision: state.projectRevision + 1
-        }));
+        const state = get();
+        const operation = applyInputValueOperation(state.project, {
+          nodeId,
+          value: value ?? null,
+          evidence: { sourceTier: "user_input", editableInDialog: true, acceptedByUserInDialog: true }
+        }, { operationId: makeId("input"), now: nowIso() });
+        if (operation.status === "error") return;
+        set({ project: operation.project, projectRevision: state.projectRevision + 1 });
         void get().sendManualProjectChange({
           kind: "node_updated",
           nodeId,
-          patch: { baselineValue: value },
+          patch: operation.patch,
           summary: `User updated node "${nodeId}" baseline value.`
         });
       },
@@ -4160,180 +4278,74 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           });
         }
       },
-      createScenario: () =>
-        set((state) => {
-          const scenario = defaultScenario();
-          return {
-            activeScenarioId: scenario.id,
-            project: {
-              ...state.project,
-              scenarios: [...state.project.scenarios, scenario],
-              updatedAt: nowIso()
-            }
-          };
-        }),
+      reparentBranch: (input, expected) => {
+        const state = get();
+        if (state.project !== expected.project || state.selectedNodeId !== input.nodeId
+          || state.workspace.activeProjectId !== expected.workspaceProjectId || state.workspace.activeVdtId !== expected.vdtId) {
+          return { ok: false, code: "STALE_BRANCH_SELECTION", message: "The KPI or draft changed. Select the parent again." };
+        }
+        if (state.workspace.isLoading || state.workspace.isMutating || state.smartKpiOperation
+          || (!state.workspace.activeVdtId && (state.isGenerating || state.activeAgentRunId))) {
+          return { ok: false, code: "BRANCH_DRAFT_BUSY", message: "Wait for the current draft operation to finish, then try again." };
+        }
+        const move = prepareBranchReparent(state.project, input, {
+          id: makeId("reparent"), backendId: "manual", createdAt: nowIso()
+        });
+        if (!move.ok) return move;
+        const selection = new Set(move.changeSet.edgeChanges.map(change => change.id));
+        const applied = applyChangeSet(state.project, move.changeSet, selection);
+        if (!applied.success) {
+          return { ok: false, code: "MUTATION_VALIDATION_FAILED", message: applied.warnings[0]?.message ?? "The branch could not be moved." };
+        }
+        set({ project: applied.project, projectRevision: state.projectRevision + 1 });
+        void get().sendManualProjectChange({
+          kind: "edge_updated",
+          nodeId: input.nodeId,
+          summary: `User moved the branch from "${move.fromParentNodeId}" to "${input.parentNodeId}".`
+        });
+        return { ok: true };
+      },
+      editGraphEdge: (command, expected) => {
+        const state = get();
+        if (state.project !== expected.project || state.selectedNodeId !== expected.selectedNodeId
+          || state.workspace.activeProjectId !== expected.workspaceProjectId || state.workspace.activeVdtId !== expected.vdtId) {
+          return { ok: false, code: "STALE_EDGE_SELECTION", message: "The selected KPI or draft changed. Select the link again." };
+        }
+        if (state.workspace.isLoading || state.workspace.isMutating || state.smartKpiOperation
+          || (!state.workspace.activeVdtId && (state.isGenerating || state.activeAgentRunId))) {
+          return { ok: false, code: "EDGE_DRAFT_BUSY", message: "Wait for the current draft operation to finish, then try again." };
+        }
+        const edit = prepareEdgeEdit(state.project, command, {
+          id: makeId("edge"), backendId: "manual", createdAt: nowIso()
+        });
+        if (!edit.ok) return edit;
+        if (edit.sourceNodeId !== expected.selectedNodeId) {
+          return { ok: false, code: "EDGE_SELECTION_MISMATCH", message: "Select the KPI that owns this outgoing link." };
+        }
+        const applied = applyChangeSet(state.project, edit.changeSet, new Set(edit.changeSet.edgeChanges.map(change => change.id)));
+        if (!applied.success) {
+          return { ok: false, code: "MUTATION_VALIDATION_FAILED", message: applied.warnings[0]?.message ?? "The link could not be edited." };
+        }
+        set({ project: applied.project, projectRevision: state.projectRevision + 1 });
+        const action = command.kind === "add" ? "added" : command.kind === "remove" ? "removed" : "changed";
+        void get().sendManualProjectChange({
+          kind: "edge_updated",
+          nodeId: edit.sourceNodeId,
+          edgeId: edit.edgeId,
+          summary: `User ${action} the link from "${edit.sourceNodeId}" to "${edit.targetNodeId}".`
+        });
+        return { ok: true, edgeId: edit.edgeId };
+      },
+      createScenario: () => set((state) => editScenario(state, { kind: "create" })),
       setActiveScenarioId: (scenarioId) => set({ activeScenarioId: scenarioId }),
-      setMainScenario: (scenarioId) =>
-        set((state) => {
-          if (!state.project.scenarios.some((scenario) => scenario.id === scenarioId)) {
-            return state;
-          }
-
-          const updatedAt = nowIso();
-          return {
-            project: {
-              ...state.project,
-              updatedAt,
-              scenarios: state.project.scenarios.map((scenario) => ({
-                ...scenario,
-                isMain: scenario.id === scenarioId,
-                updatedAt: scenario.id === scenarioId || scenario.isMain ? updatedAt : scenario.updatedAt
-              }))
-            }
-          };
-        }),
-      renameScenario: (scenarioId, name) =>
-        set((state) => {
-          const trimmed = name.trim();
-          if (!trimmed) {
-            return state;
-          }
-
-          const scenario = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
-          if (!scenario || scenario.name === trimmed) {
-            return state;
-          }
-
-          const updatedAt = nowIso();
-          return {
-            project: {
-              ...state.project,
-              updatedAt,
-              scenarios: state.project.scenarios.map((candidate) =>
-                candidate.id === scenarioId ? { ...candidate, name: trimmed, updatedAt } : candidate
-              )
-            }
-          };
-        }),
-      deleteScenario: (scenarioId) =>
-        set((state) => {
-          if (state.project.scenarios.length <= 1) {
-            return state;
-          }
-
-          const index = state.project.scenarios.findIndex((candidate) => candidate.id === scenarioId);
-          if (index === -1) {
-            return state;
-          }
-
-          const deletedScenario = state.project.scenarios[index];
-          const wasMain = deletedScenario?.isMain === true;
-          let scenarios = state.project.scenarios.filter((candidate) => candidate.id !== scenarioId);
-          if (wasMain) {
-            const promoteId = scenarios[Math.min(index, scenarios.length - 1)]!.id;
-            scenarios = scenarios.map((scenario) => ({
-              ...scenario,
-              isMain: scenario.id === promoteId
-            }));
-          }
-
-          const nextActive =
-            state.activeScenarioId === scenarioId
-              ? scenarios[Math.min(index, scenarios.length - 1)]!.id
-              : state.activeScenarioId;
-
-          return {
-            activeScenarioId: nextActive,
-            project: {
-              ...state.project,
-              scenarios,
-              updatedAt: nowIso()
-            }
-          };
-        }),
-      cloneScenario: (scenarioId) =>
-        set((state) => {
-          const source = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
-          if (!source) {
-            return state;
-          }
-
-          const now = nowIso();
-          const clone: VdtScenario = {
-            id: makeId("scenario"),
-            name: uniqueScenarioCopyName(source.name, state.project.scenarios),
-            description: source.description ?? defaultScenario().description,
-            overrides: source.overrides.map((override) => ({ ...override })),
-            comments: source.comments?.map((comment) => ({ ...comment })),
-            createdAt: now,
-            updatedAt: now
-          };
-
-          return {
-            activeScenarioId: clone.id,
-            project: {
-              ...state.project,
-              scenarios: [...state.project.scenarios, clone],
-              updatedAt: nowIso()
-            }
-          };
-        }),
-      updateScenarioOverride: (scenarioId, nodeId, value) =>
-        set((state) => {
-          if (state.project.graph.nodes.find((n) => n.id === nodeId)?.fixedInScenario === true) {
-            return state;
-          }
-
-          return {
-            project: {
-              ...state.project,
-              updatedAt: nowIso(),
-              scenarios: state.project.scenarios.map((scenario) => {
-                if (scenario.id !== scenarioId) {
-                  return scenario;
-                }
-
-                const overrides = scenario.overrides.filter((override) => override.nodeId !== nodeId);
-                if (value !== undefined) {
-                  overrides.push({ nodeId, value });
-                }
-
-                return {
-                  ...scenario,
-                  overrides,
-                  updatedAt: nowIso()
-                };
-              })
-            }
-          };
-        }),
-      updateScenarioComment: (scenarioId, nodeId, text) =>
-        set((state) => {
-          const scenario = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
-          if (!scenario || !state.project.graph.nodes.some((node) => node.id === nodeId)) {
-            return state;
-          }
-
-          const previous = scenario.comments?.find((comment) => comment.nodeId === nodeId)?.text ?? "";
-          if (previous === text || (!previous && !text.trim())) {
-            return state;
-          }
-
-          const comments = (scenario.comments ?? []).filter((comment) => comment.nodeId !== nodeId);
-          if (text.trim()) {
-            comments.push({ nodeId, text });
-          }
-          const updatedAt = nowIso();
-          return {
-            project: {
-              ...state.project,
-              updatedAt,
-              scenarios: state.project.scenarios.map((candidate) => candidate.id === scenarioId
-                ? { ...candidate, comments: comments.length ? comments : undefined, updatedAt }
-                : candidate)
-            }
-          };
-        }),
+      setMainScenario: (scenarioId) => set((state) => editScenario(state, { kind: "set_main", scenarioId })),
+      renameScenario: (scenarioId, name) => set((state) => editScenario(state, { kind: "rename", scenarioId, name })),
+      deleteScenario: (scenarioId) => set((state) => editScenario(state, { kind: "delete", scenarioId })),
+      cloneScenario: (scenarioId) => set((state) => editScenario(state, { kind: "clone", scenarioId })),
+      updateScenarioOverride: (scenarioId, nodeId, value) => set((state) =>
+        editScenario(state, { kind: "set_override", scenarioId, nodeId, value: value ?? null })),
+      updateScenarioComment: (scenarioId, nodeId, text) => set((state) =>
+        editScenario(state, { kind: "set_comment", scenarioId, nodeId, text })),
       stageDataDiscoveryChangeSet: (changeSet, context) => {
         const current = get();
         const contextError = context ? fileImportContextError(context, current.project, current.workspace) : undefined;
@@ -4414,62 +4426,46 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       discardPendingChangeSet: () => set(clearPendingAiActionState()),
       saveVersionSnapshot: (name) => {
-        const trimmed = name.trim().slice(0, 160);
-        if (!trimmed) return undefined;
-        let versionId: string | undefined;
-        set((state) => {
-          const project = createVersionSnapshot(state.project, { name: trimmed });
-          versionId = project.versions[project.versions.length - 1]!.id;
-          return { project, projectRevision: state.projectRevision + 1 };
-        });
-        return versionId;
+        const state = get();
+        const operation = applyVersionOperation(state.project, { kind: "save", name }, { operationId: makeId("edit"), now: nowIso() });
+        if (operation.status === "error") return undefined;
+        set({ project: operation.project, projectRevision: state.projectRevision + 1 });
+        return operation.result.versionId;
       },
       renameVersionSnapshot: (versionId, name) => {
-        const trimmed = name.trim().slice(0, 160);
-        if (!trimmed) return;
-        set((state) => ({
-          project: { ...state.project, updatedAt: nowIso(), versions: state.project.versions.map((version) =>
-            version.id === versionId ? { ...version, name: trimmed } : version) },
-          projectRevision: state.projectRevision + 1
-        }));
+        const state = get();
+        const operation = applyVersionOperation(state.project, { kind: "rename", versionId, name }, { operationId: makeId("edit"), now: nowIso() });
+        if (operation.status === "error") return;
+        set({ project: operation.project, projectRevision: state.projectRevision + 1 });
       },
       restoreVersionSnapshot: (versionId) => {
-        let success = false;
-        set((state) => {
-          try {
-            const version = state.project.versions.find((entry) => entry.id === versionId);
-            if (!version) throw new Error("This version is no longer available. Select another version.");
-            const restoredVersionName = versionDisplayName(version);
-            const result = restoreVersionWithCheckpoint(state.project, versionId, `Before restoring “${restoredVersionName}”`);
-            const laidOut = ensureScenario(result.project);
-            calculateGraph(laidOut);
-            success = true;
-            return {
-              project: laidOut,
-              projectRevision: state.projectRevision + 1,
-              selectedNodeId: laidOut.rootNodeId,
-              selectedEdgeId: undefined,
-              activeScenarioId: resolveMainScenarioId(laidOut),
-              versionRestoreUndo: {
-                checkpointVersionId: result.checkpointVersionId,
-                restoredVersionName,
-                restoredProject: laidOut,
-                activeVdtId: state.workspace.activeVdtId,
-                previousScenarioId: state.activeScenarioId,
-                previousNodeId: state.selectedNodeId
-              },
-              brief: briefFromProject(laidOut),
-              ...clearPendingAiActionState()
-            };
-          } catch (error) {
-            return {
-              aiActionError:
-                error instanceof Error ? error.message : "Version snapshot could not be restored."
-            };
-          }
+        const state = get();
+        const operation = applyVersionOperation(state.project, { kind: "restore", versionId }, { operationId: makeId("edit"), now: nowIso() });
+        if (operation.status === "error") {
+          set({ aiActionError: operation.message });
+          return false;
+        }
+        if (operation.result.kind !== "restore") return false;
+        const restored = ensureScenario(operation.project);
+        set({
+          project: restored,
+          projectRevision: state.projectRevision + 1,
+          selectedNodeId: restored.rootNodeId,
+          selectedEdgeId: undefined,
+          activeScenarioId: resolveMainScenarioId(restored),
+          versionRestoreUndo: {
+            checkpointVersionId: operation.result.checkpointVersionId,
+            restoredVersionName: operation.result.restoredVersionName,
+            restoredProject: restored,
+            activeVdtId: state.workspace.activeVdtId,
+            previousScenarioId: state.activeScenarioId,
+            previousNodeId: state.selectedNodeId
+          },
+          brief: briefFromProject(restored),
+          ...clearPendingAiActionState()
         });
-        if (success) void get().sendManualProjectChange({ kind: "project_replaced", summary: "User restored a saved model version; the previous state was checkpointed." });
-        return success;
+        void get().sendManualProjectChange({ kind: "project_replaced", summary: "User restored a saved model version; the previous state was checkpointed." });
+        return true;
       },
       undoVersionRestore: () => {
         const state = get();

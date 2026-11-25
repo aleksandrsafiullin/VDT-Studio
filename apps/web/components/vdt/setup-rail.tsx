@@ -6,7 +6,7 @@ import { clsx } from "clsx";
 import type { ChatStarterOutput, VdtNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
-import { Field, TextArea, TextInput } from "@/components/ui/field";
+import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
 import type { CliRequestReadiness } from "@/lib/cli-readiness";
@@ -28,8 +28,18 @@ import { useProviderConnectionCheck } from "@/lib/provider-connection-state";
 import { providerConnectionKey } from "@/lib/provider-connection";
 export { ExecutionReadinessDot } from "./composer-model-picker";
 import type { AgentChatHistoryEntry } from "./vdt-store";
-import type { ResearchMode } from "@/lib/agent-client";
+import type { ResearchMode, VdtAgentStartRequest } from "@/lib/agent-client";
+import { StructuralOutcome } from "./structural-outcome";
 import styles from "./agent-chat.module.css";
+
+type ChatOutcome = NonNullable<VdtAgentStartRequest["outcome"]>;
+
+function selectMeasurement(nodeId: string) {
+  const state = useVdtStudioStore.getState();
+  state.selectNode(nodeId);
+  useVdtStudioStore.setState({ selectedPanelTab: "properties" });
+  if (state.ui.rightPanelCollapsed) state.toggleRightPanel();
+}
 
 function chatStatusLabel(status: AgentChatHistoryEntry["status"]) {
   switch (status) {
@@ -107,6 +117,7 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
+  const [chatOutcome, setChatOutcome] = useState<ChatOutcome | "">("");
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
   const briefRef = useRef<HTMLDetailsElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -124,10 +135,19 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const agentChatHistory = useVdtStudioStore((state) => state.agentChatHistory);
   const activeVdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
+  const project = useVdtStudioStore((state) => state.project);
   const speech = useSpeechSettings();
   const voice = useVoiceDictation(setInstructionText, activeVdtId);
   const scopedAgentChatHistory = useMemo(
-    () => filterAgentChatHistoryForVdt(agentChatHistory, activeVdtId),
+    () => {
+      const seen = new Set<string>();
+      return filterAgentChatHistoryForVdt(agentChatHistory, activeVdtId).filter((entry) => {
+        const id = entry.activity.runtimeAgentRun?.request.conversationId ?? entry.runId;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+    },
     [agentChatHistory, activeVdtId]
   );
   const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
@@ -193,6 +213,19 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const hasRetryableError = Boolean(generateActivity?.retryableError);
   const modelLabel = executionSummary.secondary ?? executionSummary.primary;
   const canStopResponse = generateActivity?.status === "running" && !instructionText.trim() && !voice.active;
+  const activeRun = generateActivity?.runtimeAgentRun;
+  const outcomeLocked = canContinueCurrentAgentRun || generateActivity?.status === "recovery_required";
+  const conversationId = activeRun?.request.conversationId;
+  const verifiedRun = activeRun?.finishOutcome?.outcome === "structural_model"
+    ? activeRun
+    : conversationId ? agentChatHistory.find(({ vdtId, activity }) =>
+      vdtId === activeVdtId && activity.runtimeAgentRun?.request.conversationId === conversationId
+      && activity.runtimeAgentRun.finishOutcome?.outcome === "structural_model"
+    )?.activity.runtimeAgentRun : undefined;
+  const verifiedProject = verifiedRun?.project ?? verifiedRun?.draftProject;
+  const structureInCurrentTree = verifiedProject && (verifiedRun?.request.workspace?.vdtId
+    ? verifiedRun.request.workspace.vdtId === activeVdtId
+    : verifiedProject.id === project.id);
   const latestChatMessage = generateActivity?.agentChatMessages?.at(-1);
 
   useEffect(() => {
@@ -220,7 +253,7 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   useEffect(() => {
     const scroll = activityScrollRef.current;
     if (scroll && followConversationRef.current && !historyOpen) scroll.scrollTop = scroll.scrollHeight;
-  }, [generateActivity?.runId, latestChatMessage?.id, latestChatMessage?.text, generateActivity?.publicStatus?.message, historyOpen]);
+  }, [generateActivity?.runId, latestChatMessage?.id, latestChatMessage?.text, generateActivity?.publicStatus?.message, verifiedProject, historyOpen]);
 
   useEffect(() => {
     const el = instructionInputRef.current;
@@ -255,10 +288,14 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
       const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
       const accepted = await startAgentRun(text, {
         researchMode,
+        ...(chatOutcome ? { outcome: chatOutcome } : {}),
         ...(shouldContinue ? { mode: "continue_project", includeCurrentProject: true } : {}),
         ...(shouldContinue ? { selectedNodeId: selectedNode?.id ?? null } : {})
       });
-      if (accepted) setInstructionText("");
+      if (accepted) {
+        setInstructionText("");
+        setChatOutcome("");
+      }
       return;
     }
     const accepted = await sendAgentInstruction(text, selectedNode?.id ?? null, researchMode);
@@ -433,6 +470,10 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
               />
             ) : null}
 
+            {!historyOpen && structureInCurrentTree && (
+              <StructuralOutcome verifiedProject={verifiedProject} currentProject={project} onSelectNode={selectMeasurement} />
+            )}
+
             {pendingChangeSet ? (
               <div className={clsx("mt-3 border border-neutral-200 bg-white p-3", styles.actionCard)} data-testid="agent-patch-ready">
                 <div className="text-xs font-semibold uppercase tracking-normal text-neutral-700">Patch ready</div>
@@ -505,6 +546,19 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
             }}
             data-testid="agent-instruction-input"
           />
+          <label className="flex items-center gap-2 px-2 pb-1 text-xs text-muted">
+            <span className="shrink-0">Chat outcome</span>
+            <SelectInput className="h-7 max-w-40 py-0 text-xs"
+              disabled={outcomeLocked || isGenerating}
+              value={outcomeLocked ? activeRun?.request.outcome ?? "" : chatOutcome}
+              onChange={(event) => setChatOutcome(event.target.value as ChatOutcome | "")}
+              data-testid="agent-chat-outcome">
+              <option value="">Automatic</option>
+              <option value="answer">Answer</option>
+              <option value="structural_model">Build structure</option>
+              <option value="calculated_baseline">Calculate baseline</option>
+            </SelectInput>
+          </label>
           <div className={styles.composerToolbar}>
             <div className={styles.composerTools}>
               <div ref={contextMenuRef} className={styles.contextMenu}>

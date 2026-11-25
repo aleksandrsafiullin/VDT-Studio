@@ -1,5 +1,7 @@
 import {
   calculateGraph,
+  evaluateModelReadiness,
+  type ValidationResult,
   inspectDecompositionHierarchy,
   validateGraph,
   validateIncomingKpiLayer,
@@ -24,6 +26,8 @@ import {
   feedbackFromZodError,
   type AgentStructuredFeedback
 } from "./feedback";
+import { constructionFinishEvidence } from "./construction-source-facts";
+import { finishReadinessPurpose } from "./finish-verifier";
 import { policySummaryForRun } from "./domain-policies";
 import { DERIVED_ROOT_REQUIREMENT, hasDerivedRoot, requiresDerivedRootForRun } from "./model-acceptance-contract";
 import {
@@ -741,8 +745,10 @@ export class VdtAgentRuntime {
     const candidate = effectiveProject(state);
     const project = candidate?.graph.nodes.length ? candidate : undefined;
     const rootConstruction = rootConstructionForDecision(state.request, project, requirePlan);
-    const validationState = project && !rootConstruction && requirePlan && requiresDerivedRootForRun(state.request)
-      ? this.validateProjectForRun(runId, project, { enforcePercentageScale: true })
+    const validationState = project && !rootConstruction
+      ? this.validateProjectForRun(runId, project, { modelValidation: evaluateModelReadiness(project, {
+          purpose: "structural_model", requireDerivedRoot: requiresDerivedRootForRun(state.request)
+        }).validation })
       : state.validationState;
     const { prompt, businessContext } = state.request.input;
     const { quantities, complete } = collectLiteralUserQuantities(
@@ -768,6 +774,7 @@ export class VdtAgentRuntime {
       mode: state.request.mode,
       step: state.events.filter((event) => event.metadata?.taskType === "agent_decision").length + 1,
       userRequest: state.request.input,
+      ...(state.request.conversationContext ? { conversationContext: state.request.conversationContext } : {}),
       researchPolicy: researchPolicyFromState(state, this.tools.getMetadata().researchProviderStatus),
       briefReadiness: briefReadinessFromState(state),
       continuationPolicy: guidance
@@ -844,11 +851,10 @@ export class VdtAgentRuntime {
   private validateProjectForRun(
     runId: string,
     project: VdtProject,
-    options: { includeSkillValidations?: boolean | undefined; enforcePercentageScale?: boolean } = {}
+    options: { includeSkillValidations?: boolean | undefined; modelValidation?: ValidationResult } = {}
   ): ValidationStateSummary {
     const state = this.store.getState(runId);
-    const generic = options.enforcePercentageScale ? validateGraph(project, undefined, { enforcePercentageScale: true })
-      : state.builder?.validate().validation ?? validateGraph(project);
+    const generic = options.modelValidation ?? state.builder?.validate().validation ?? validateGraph(project);
     const domainValidations = options.includeSkillValidations === false
       ? []
       : domainValidationsForRun(state, project);
@@ -909,10 +915,24 @@ export class VdtAgentRuntime {
     const state = this.store.getState(runId);
     const project = state.builder?.getProject() ?? state.draftProject;
     if (!project) throw new Error("Cannot finish: no draft project exists.");
-    if (requiresDerivedRootForRun(state.request) && !hasDerivedRoot(project)) {
-      throw new Error(`Cannot finish: ${DERIVED_ROOT_REQUIREMENT}`);
+    const requireDerivedRoot = requiresDerivedRootForRun(state.request);
+    const hasPlan = Boolean(project.graph.nodes.find(node => node.id === project.rootNodeId)?.decompositionPlan);
+    const readiness = evaluateModelReadiness(project, {
+      purpose: finishReadinessPurpose(state.request.mode), requireDerivedRoot, requireHierarchy: (requireDerivedRoot || state.request.mode === "continue_project") && hasPlan
+    });
+    if (readiness.issues.some(issue => issue.code === "ROOT_NOT_DERIVED")) {
+      throw new AgentToolError("ROOT_NOT_DERIVED", `Cannot finish: ${DERIVED_ROOT_REQUIREMENT}`);
     }
-    const hierarchy = declaredHierarchyForFinish(state.request, project, requirePlan);
+    if (requireDerivedRoot) {
+      const facts = constructionFinishEvidence(project, state);
+      if (facts.issues.length) {
+        throw new AgentToolError("SOURCE_GROUNDING_CONFLICT", facts.issues.slice(0, 8).map(issue => issue.detail).join(" "));
+      }
+      if (facts.unbound.length) {
+        throw new AgentToolError("SOURCE_PROVENANCE_INCOMPLETE", `Use each quoted measurement as an input leaf in the result's dependency tree. ${facts.unbound.map(({ quote }) => quote).join(". ")}`);
+      }
+    }
+    const hierarchy = readiness.hierarchy ?? (requirePlan ? inspectDecompositionHierarchy(project) : undefined);
     if (hierarchy && !hierarchy.valid) {
       throw new AgentToolError("HIERARCHY_INCOMPLETE",
         `Cannot finish: the declared decomposition plan must match the graph. ${hierarchy.errors.join(" ")} Resolve the missing or inconsistent factors, or revise the plan to describe the valid dependencies you built.`);
@@ -946,36 +966,19 @@ export class VdtAgentRuntime {
       }
     }
 
-    const validation = this.validateProjectForRun(runId, project, {
-      enforcePercentageScale: requirePlan && requiresDerivedRootForRun(state.request)
-    });
+    const validation = this.validateProjectForRun(runId, project, { modelValidation: readiness.validation });
     if (!validation.valid) {
       this.store.updateRun(runId, { phase: "repairing_graph", validationState: validation });
       throw new Error(`Cannot finish: graph is invalid. ${validation.errors.slice(0, 3).map((issue) => issue.message).join(" ")}`);
     }
 
-    const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
-    if (!rootNode) throw new Error("Cannot finish: root node is missing.");
-    if (
-      !isSingleLayerDecomposition &&
-      !rootNode.formula?.trim() &&
-      rootNode.baselineValue === undefined &&
-      rootNode.value === undefined
-    ) {
-      throw new Error("Cannot finish: root node has no formula or value.");
-    }
-
-    const calculation = calculateGraph(project);
+    const calculation = readiness.calculation ?? calculateGraph(project);
     const calculationSummary = summarizeCalculation(calculation);
     this.store.updateRun(runId, { calculationState: calculationSummary });
-    if (!isSingleLayerDecomposition && calculation.errors.length > 0) {
-      throw new Error(`Cannot finish: calculation has errors: ${calculation.errors.map((error) => error.message).join("; ")}`);
-    }
-    if (
-      !isSingleLayerDecomposition &&
-      (calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue))
-    ) {
-      throw new Error("Cannot finish: root value is not finite.");
+    if (!readiness.accepted) {
+      const errors = readiness.issues.filter(issue => issue.severity === "error");
+      throw new AgentToolError(errors[0]?.code ?? "FINISH_REJECTED",
+        `Cannot finish: ${errors.slice(0, 8).map(issue => issue.message).join(" ")}`);
     }
 
     this.store.updateRun(runId, {
@@ -1427,8 +1430,9 @@ function rootConstructionForDecision(
 }
 
 function declaredHierarchyForFinish(request: VdtAgentStartRequest, project: VdtProject, requirePlan: boolean) {
-  if (!requiresDerivedRootForRun(request)
-    || (!requirePlan && !project.graph.nodes.find((node) => node.id === project.rootNodeId)?.decompositionPlan)) return undefined;
+  if (request.mode !== "generate_vdt" && request.mode !== "continue_project") return undefined;
+  if (!(requirePlan && requiresDerivedRootForRun(request))
+    && !project.graph.nodes.find(node => node.id === project.rootNodeId)?.decompositionPlan) return undefined;
   const { valid, errors } = inspectDecompositionHierarchy(project);
   return { valid, errors: errors.slice(0, 12), errorCount: errors.length };
 }

@@ -3,7 +3,7 @@ import {
   type FormulaExpression, type VdtProject
 } from "@vdt-studio/vdt-core";
 import type { VdtAgentStartRequest } from "./types";
-import { collectLiteralUserQuantities } from "./value-provenance-contract";
+import { collectLiteralUserQuantities, type LiteralUserQuantity } from "./value-provenance-contract";
 
 /** The same requirement is shown before inference and by finish verification. */
 export const DERIVED_ROOT_REQUIREMENT =
@@ -12,7 +12,7 @@ export const DERIVED_ROOT_PROMPT_RULE =
   `${DERIVED_ROOT_REQUIREMENT} Put the user's source measurements in separate input leaves with their provenance; do not inline those measured numbers into a constant root formula. Grounding quotes apply to source inputs. Calculate derived outputs from references; do not ask the user to supply or quote the derived root result when its source inputs are already provided. A selected skill is guidance within the user's process boundary, not authority to add another unrequested operation.`;
 
 export function requiresDerivedRootForRun(request: VdtAgentStartRequest): boolean {
-  if (request.mode === "review_project" || request.mode === "deepen_node") return false;
+  if (request.outcome === "answer" || request.mode === "review_project" || request.mode === "deepen_node") return false;
   if (request.mode === "generate_vdt") return true;
   const project = request.input.project;
   const root = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
@@ -87,10 +87,13 @@ function collectFormulaLiterals(expression: FormulaExpression, literals: Formula
 /** A proposed formula is checked on its own dependency branch before a
  * mutation. Finish checks the whole root closure, including older formulas. */
 export function unboundQuotedFormulaFacts(
-  project: VdtProject, request: VdtAgentStartRequest, proposal?: { nodeId: string; formula: string }
+  project: VdtProject,
+  request: VdtAgentStartRequest,
+  proposal?: { nodeId: string; formula: string },
+  observedQuantities?: readonly LiteralUserQuantity[]
 ) {
   const { prompt, businessContext, unit } = request.input;
-  const { quantities } = collectLiteralUserQuantities([prompt, businessContext], unit);
+  const quantities = observedQuantities ?? collectLiteralUserQuantities([prompt, businessContext], unit).quantities;
   const facts = quantities.filter((fact) => !exampleQuote.test(fact.quote)
     && (fact.unit === "%" || currencyUnit.test(fact.unit ?? "") || quotedMoney.test(fact.quote)));
   if (!facts.length) return [];

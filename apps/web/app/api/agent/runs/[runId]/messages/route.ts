@@ -1,3 +1,4 @@
+import { presentConversation } from "../../conversation-context";
 import { agentUserMessageSchema, prepareRetryExecution } from "@vdt-studio/vdt-agent-runtime";
 import {
   AGENT_DECISION_TIMEOUT_FLOOR_MS,
@@ -43,7 +44,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
   if (await isPersistedSupervisorRun(runId)) {
     try {
       const snapshot = await handleStructuredModelAgentMessage(runId, parsed.data);
-      return Response.json({ ok: true, snapshot });
+      return Response.json({ ok: true, snapshot: presentConversation(snapshot) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);
@@ -79,7 +80,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     const snapshot = compactPublicAgentSnapshot(
       agentRuntime.handleMessageInBackground(runId, parsed.data, execution)
     );
-    return Response.json({ ok: true, snapshot });
+    return Response.json({ ok: true, snapshot: presentConversation(snapshot) });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : "Agent message could not be processed.", 500, "AGENT_MESSAGE_FAILED");
   }

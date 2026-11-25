@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { extractFormulaReferences, type VdtProject } from "@vdt-studio/vdt-core";
+import { extractFormulaReferences, readNodeBaselineValue, type VdtProject } from "@vdt-studio/vdt-core";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeManualChanges, summarizeNode, summarizeProject } from "../summaries";
 import type { NodeSummary } from "../types";
@@ -153,8 +153,18 @@ function requireProject(context: Parameters<AgentTool["run"]>[0]): VdtProject {
 }
 
 function nodeNeighborhood(project: VdtProject, nodeId: string) {
-  const node = summarizeNode(project, nodeId);
-  if (!node) throw new AgentToolError("NODE_NOT_FOUND", `Node "${nodeId}" was not found.`);
+  const target = project.graph.nodes.find(candidate => candidate.id === nodeId);
+  const summary = summarizeNode(project, nodeId);
+  if (!target || !summary) throw new AgentToolError("NODE_NOT_FOUND", `Node "${nodeId}" was not found.`);
+  const { baselineValue: _baseline, value: storedValue, ...compactNode } = summary;
+  const baselineValue = readNodeBaselineValue(target);
+  const valueSource = safeValueSource(target.valueSource);
+  const node = {
+    ...compactNode,
+    ...(baselineValue !== undefined ? { baselineValue, ...(storedValue !== undefined ? { value: storedValue } : {}) } : {}),
+    ...(target.valueStatus ? { valueStatus: target.valueStatus } : {}),
+    ...(valueSource ? { valueSource } : {})
+  };
   const children = project.graph.edges
     .filter((edge) => edge.sourceNodeId === nodeId)
     .map((edge) => summarizeNode(project, edge.targetNodeId))
@@ -174,4 +184,30 @@ function nodeNeighborhood(project: VdtProject, nodeId: string) {
     })
     .map((candidate) => candidate.id);
   return { node, children, parents, formulasReferencingNode };
+}
+
+type NodeValueSource = VdtProject["graph"]["nodes"][number]["valueSource"];
+
+// Saved source text can come from an imported snapshot. A path is useful
+// locally in the inspector, but should not be copied into a provider prompt.
+const localPathText = /\bfile:|(?:^|[\s([{"'=,:])(?:[a-z]:[\\/]|[\\/]+|(?:~|\.{1,2})[\\/])\S|\b[^\s/\\]+[\\/][^\s/\\]+\.(?:csv|tsv|xlsx?|pdf|txt|json|parquet)\b/i;
+
+function safeSourceText(value: string | undefined, limit: number): string | undefined {
+  const text = value?.trim();
+  return text && !localPathText.test(text) ? text.slice(0, limit) : undefined;
+}
+
+function safeValueSource(source: NodeValueSource) {
+  if (!source) return undefined;
+  const note = safeSourceText(source.note, 1_000);
+  const sourceTier = safeSourceText(source.sourceTier, 80);
+  const confidence = safeSourceText(source.confidence, 80);
+  const catalogRef = source.catalogRef && /^(?![a-z]:)[a-z0-9][a-z0-9_.:#@-]{0,239}$/i.test(source.catalogRef)
+    ? source.catalogRef : undefined;
+  return note || sourceTier || confidence || catalogRef ? {
+    ...(note ? { note } : {}),
+    ...(sourceTier ? { sourceTier } : {}),
+    ...(confidence ? { confidence } : {}),
+    ...(catalogRef ? { catalogRef } : {})
+  } : undefined;
 }

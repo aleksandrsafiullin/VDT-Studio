@@ -1,3 +1,4 @@
+import { AgentRunStore, type AgentArtifact } from "@vdt-studio/vdt-agent-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -114,6 +115,34 @@ function isDisabledOpeningTag(tag: string | undefined): boolean {
 }
 
 describe("GenerateActivityPanel", () => {
+  it("renders only the current run’s same-origin saved workbook link", () => {
+    const store = new AgentRunStore();
+    const { runId } = store.createRun({ providerId: "mock", mode: "continue_project", input: {} });
+    const revisionId = "revision_saved";
+    const url = `/api/agent/runs/${runId}/excel-workbook?revisionId=${revisionId}`;
+    const artifact: AgentArtifact = {
+      id: "excel_recovery", runId, type: "excel_workbook", summary: "Recovery.xlsx",
+      createdAt: "2026-06-24T10:00:00.000Z",
+      payload: { downloadUrl: url, filename: "Recovery.xlsx", revisionId }
+    };
+    const markup = renderToStaticMarkup(<GenerateActivityPanel
+      activity={activity({
+        runtimeAgentRun: {
+          ...store.getSnapshot(runId), status: "succeeded", artifacts: [
+            artifact,
+            { ...artifact, id: "wrong-run", runId: "another-run" },
+            { ...artifact, id: "external", payload: { filename: "Recovery.xlsx", revisionId, downloadUrl: "https://example.invalid/file" } }
+          ]
+        }
+      })}
+      onCancel={() => {}}
+    />);
+    expect(markup.match(/data-testid="agent-excel-workbook"/g)).toHaveLength(1);
+    expect(markup).toContain(`href="${url}"`);
+    expect(markup).toContain('download="Recovery.xlsx"');
+    expect(markup).toContain(revisionId);
+  });
+
   it("renders the chat transcript and hides diagnostics by default", () => {
     const base = activity();
     const html = renderToStaticMarkup(

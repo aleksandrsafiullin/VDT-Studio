@@ -324,6 +324,7 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
     pendingChangeSet: state.pendingChangeSet,
     pendingMutationProposal: state.pendingMutationProposal,
     finalReport: state.finalReport,
+    finishOutcome: state.finishOutcome,
     executionSummary,
     performanceSummary: state.performanceSummary,
     performanceTelemetry: state.performanceTelemetry,
@@ -394,6 +395,7 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     pendingChangeSet: snapshot.pendingChangeSet,
     pendingMutationProposal: snapshot.pendingMutationProposal,
     finalReport: snapshot.finalReport,
+    finishOutcome: snapshot.finishOutcome,
     executionSummary: supervisorPersistenceV2
       ? summarizeAgentSupervisorPersistenceState(supervisorPersistenceV2)
       : snapshot.executionSummary,
@@ -440,7 +442,7 @@ function normalizeStartRequest(request: VdtAgentStartRequest): VdtAgentStartRequ
 function emptyVisibleContext(runId: string, request: VdtAgentStartRequest): AgentThreadContext {
   const brief = briefFromRequest(request);
   return {
-    threadId: runId,
+    threadId: request.conversationId ?? runId,
     visibleTitle: brief.rootKpi,
     brief,
     visibleMessages: []
@@ -452,7 +454,7 @@ function visibleContextFromState(state: VdtAgentRunState): AgentThreadContext {
   const project = state.project ?? state.draftProject ?? state.request.input.project;
   const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
   return {
-    threadId: state.runId,
+    threadId: state.request.conversationId ?? state.runId,
     visibleTitle: brief.rootKpi,
     brief,
     ...(project && rootNode

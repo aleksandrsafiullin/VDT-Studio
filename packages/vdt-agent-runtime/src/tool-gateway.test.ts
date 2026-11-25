@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { applyInputValueOperation, prepareBackCalculationPatch, VdtBuilderSession } from "@vdt-studio/vdt-core";
 import type {
   AgentCapabilityProfile,
   AgentSessionBinding
 } from "./agent-execution-contracts";
+import { applyPendingMutationProposal, rejectPendingMutationProposal } from "./mutation-pipeline";
 import { AgentRunStore } from "./run-store";
 import { InMemoryAgentSupervisorPersistence } from "./agent-supervisor-persistence";
 import { AgentToolError, ToolRegistry, type AgentToolContext } from "./tool-registry";
@@ -21,6 +22,249 @@ const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 
 describe("VdtToolGateway", () => {
+  it("repairs formula tokens and compares read, add, edit and delete results on one graph", async () => {
+    const fixture = baseFixture();
+    const builder = haulageBuilder();
+    const root = builder.getProject().rootNodeId;
+    const formula = "min(truck_working_time, 50) * min";
+    const repaired = "min(truck_working_time, 50) * truck_count";
+    builder.setFormula({ nodeId: root, formula });
+    const initial = builder.getProject();
+    fixture.store.updateRun(fixture.state.runId, {
+      builder, draftProject: initial,
+      request: {
+        ...fixture.state.request,
+        mode: "continue_project",
+        input: { project: initial, selectedNodeId: root },
+        options: { autoApplyPatches: true }
+      }
+    });
+    const gateway = new VdtToolGateway({
+      binding: fixture.binding, capability: fixture.modelCapability,
+      tools: createDefaultToolRegistry(), toolContext: () => ({ ...fixture.context(), builder }),
+      allowedTools: new Set([
+        "project.get_selected_node", "vdt.validate", "vdt.calculate", "vdt.add_drivers_batch",
+        "formula.rename_reference", "vdt.repair_missing_formula_reference", "vdt.set_formula",
+        "vdt.update_node", "vdt.delete_node"
+      ]),
+      ledger: new InMemoryVdtToolGatewayLedger()
+    });
+    let callId = 0;
+    const call = (toolName: string, args: Record<string, unknown> = {}) =>
+      gateway.execute({ externalCallId: `graph-edit-${++callId}`, toolName, args });
+
+    expect(await call("project.get_selected_node")).toMatchObject({
+      status: "succeeded", payload: { output: { node: { id: root, formula } } }
+    });
+    expect(await call("vdt.validate")).toMatchObject({
+      status: "succeeded", payload: { output: { valid: false } }
+    });
+    expect(await call("formula.rename_reference", { formula, from: "min", to: "truck_count" })).toMatchObject({
+      status: "succeeded", payload: { output: { formula: repaired, changed: true } }
+    });
+    expect(builder.getProject()).toEqual(initial);
+    expect(await call("vdt.repair_missing_formula_reference", {
+      nodeId: root, missingReference: "min", strategy: "rename_to_existing", replacementNodeId: "truck_count"
+    })).toMatchObject({ status: "succeeded" });
+    expect(await call("vdt.validate")).toMatchObject({ status: "succeeded", payload: { output: { valid: true } } });
+    expect(await call("vdt.calculate")).toMatchObject({ status: "succeeded", payload: { output: { rootValue: 20 } } });
+
+    const added = [
+      { nodeId: "first_adjustment", name: "First adjustment", baselineValue: 3 },
+      { nodeId: "second_adjustment", name: "Second adjustment", baselineValue: 4 }
+    ];
+    expect(await call("vdt.add_drivers_batch", { drivers: added.map(driver => ({
+      ...driver, parentNodeId: root, type: "input", relation: "formula_dependency"
+    })) })).toMatchObject({ status: "succeeded" });
+    expect(await call("vdt.set_formula", {
+      nodeId: root, formula: `${repaired} + first_adjustment + second_adjustment`
+    })).toMatchObject({ status: "succeeded" });
+    expect(await call("vdt.calculate")).toMatchObject({ status: "succeeded", payload: { output: { rootValue: 27 } } });
+    for (const driver of added) {
+      expect(builder.getProject().graph.edges).toContainEqual(expect.objectContaining({
+        sourceNodeId: root, targetNodeId: driver.nodeId, relation: "formula_dependency"
+      }));
+    }
+
+    const patch = { name: "Revised adjustment", unit: "1", description: "Revised adjustment description", type: "input" };
+    expect(await call("vdt.update_node", { nodeId: "first_adjustment", patch })).toMatchObject({ status: "succeeded" });
+    expect(builder.getProject().graph.nodes.find(node => node.id === "first_adjustment")).toMatchObject(patch);
+    expect(await call("vdt.delete_node", { nodeId: "first_adjustment", cascadeEdges: true })).toMatchObject({ status: "failed" });
+    expect(await call("vdt.set_formula", { nodeId: root, formula: `${repaired} + second_adjustment` })).toMatchObject({ status: "succeeded" });
+    expect(await call("vdt.delete_node", { nodeId: "first_adjustment", cascadeEdges: true })).toMatchObject({ status: "succeeded" });
+    expect(await call("vdt.delete_node", { nodeId: root, cascadeEdges: true })).toMatchObject({ status: "failed" });
+    expect(builder.getProject().graph.nodes.map(node => node.id)).toEqual([root, "truck_working_time", "truck_count", "second_adjustment"]);
+    expect(builder.getProject().graph.edges.map(edge => edge.targetNodeId)).toEqual(["truck_working_time", "truck_count", "second_adjustment"]);
+    expect(await call("vdt.calculate")).toMatchObject({ status: "succeeded", payload: { output: { rootValue: 24 } } });
+  });
+
+  it("reads bounded value evidence only for the explicitly requested or selected KPI", async () => {
+    const fixture = baseFixture();
+    const builder = haulageBuilder();
+    const root = builder.getProject().rootNodeId;
+    const note = "The confirmed truck count for this period is 0 units.";
+    builder.updateNode({ nodeId: "truck_count", patch: {
+      baselineValue: 0, value: 0, valueStatus: "user_provided_value",
+      valueSource: { sourceTier: "user_input", note: `  ${note}  ` }
+    } });
+    builder.updateNode({ nodeId: "truck_working_time", patch: {
+      baselineValue: 10, value: 9, valueStatus: "unknown",
+      valueSource: { sourceTier: "uploaded_data", catalogRef: "file:///Users/private/rates.xlsx",
+        note: "Read from /Users/private/rates.xlsx" }
+    } });
+    const selectNode = (selectedNodeId?: string) => {
+      const { request } = fixture.store.getState(fixture.state.runId);
+      fixture.store.updateRun(fixture.state.runId, { request: { ...request, input: { ...request.input, selectedNodeId } } });
+    };
+    const gateway = new VdtToolGateway({
+      binding: fixture.binding, capability: fixture.modelCapability,
+      tools: createDefaultToolRegistry(), toolContext: () => ({ ...fixture.context(), builder }),
+      allowedTools: new Set(["project.get_selected_node", "project.get_node", "project.get_current"]),
+      ledger: new InMemoryVdtToolGatewayLedger()
+    });
+    let callId = 0;
+    const call = (toolName: string, args: Record<string, unknown> = {}) =>
+      gateway.execute({ externalCallId: `value-evidence-${++callId}`, toolName, args });
+
+    selectNode("truck_count");
+    expect(await call("project.get_selected_node")).toMatchObject({
+      status: "succeeded", payload: { output: { node: {
+        id: "truck_count", baselineValue: 0, value: 0, valueStatus: "user_provided_value",
+        valueSource: { sourceTier: "user_input", note }
+      } } }
+    });
+    const parent = await call("project.get_node", { nodeId: root });
+    expect(parent).toMatchObject({ payload: { output: { children: expect.arrayContaining([
+      expect.objectContaining({ id: "truck_count", baselineValue: 0 })
+    ]) } } });
+    expect(JSON.stringify(parent)).not.toContain("valueSource");
+    const overview = await call("project.get_current");
+    expect(JSON.stringify(overview)).not.toContain("valueSource");
+    const compactNodes = JSON.parse(JSON.stringify(overview)).payload.output.project.nodes as Array<{ id: string }>;
+    const unknownNeighbor = compactNodes.find(node => node.id === "truck_working_time");
+    expect(unknownNeighbor).toBeDefined();
+    expect(unknownNeighbor).not.toHaveProperty("baselineValue");
+    expect(unknownNeighbor).not.toHaveProperty("value");
+
+    selectNode("truck_working_time");
+    const replacement = await call("project.get_selected_node");
+    expect(replacement).toMatchObject({ status: "succeeded", payload: { output: { node: {
+      id: "truck_working_time", valueStatus: "unknown", valueSource: { sourceTier: "uploaded_data" }
+    } } } });
+    expect(replacement.payload).not.toHaveProperty("output.node.baselineValue");
+    expect(replacement.payload).not.toHaveProperty("output.node.value");
+    expect(replacement.payload).not.toHaveProperty("output.node.valueSource.note");
+    expect(replacement.payload).not.toHaveProperty("output.node.valueSource.catalogRef");
+    expect(JSON.stringify(replacement)).not.toContain("/Users/private/");
+
+    expect(await call("project.get_node", { nodeId: "truck_count" })).toMatchObject({
+      status: "succeeded", payload: { output: { node: { id: "truck_count", baselineValue: 0, valueSource: { note } } } }
+    });
+    selectNode();
+    expect(await call("project.get_selected_node")).toMatchObject({ status: "succeeded", payload: { output: { node: null } } });
+  });
+
+  it("sets, edits and clears the same calibration as the editor, replaying the clear receipt", async () => {
+    const fixture = baseFixture();
+    const builder = haulageBuilder();
+    const initial = builder.getProject();
+    const nodeId = "truck_working_time";
+    const targetNodeId = initial.rootNodeId;
+    const editor = new VdtBuilderSession({ project: initial });
+    fixture.store.updateRun(fixture.state.runId, {
+      builder, draftProject: initial,
+      request: {
+        ...fixture.state.request,
+        mode: "continue_project",
+        input: { project: initial, selectedNodeId: nodeId },
+        options: { autoApplyPatches: true }
+      }
+    });
+    const gateway = new VdtToolGateway({
+      binding: fixture.binding, capability: fixture.modelCapability,
+      tools: createDefaultToolRegistry(), toolContext: () => ({ ...fixture.context(), builder }),
+      allowedTools: new Set(["vdt.read_back_calculation", "vdt.set_back_calculation"]),
+      ledger: new InMemoryVdtToolGatewayLedger()
+    });
+
+    for (const [index, targetValue] of [30, 0, null].entries()) {
+      const setting = targetValue === null ? null : { targetNodeId, targetValue };
+      const operation = prepareBackCalculationPatch(editor.getProject(), { nodeId, setting });
+      if (operation.status === "error") throw new Error(operation.message);
+      editor.updateNode({ nodeId, patch: operation.patch });
+      const { values, rootValue } = editor.calculate().calculation;
+      const write = { externalCallId: `back-calculation-${index}`, toolName: "vdt.set_back_calculation", args: { nodeId, setting } };
+      const receipt = await gateway.execute(write);
+      const measurement = initial.graph.nodes.find(node => node.id === nodeId)?.baselineValue;
+      expect(receipt).toMatchObject({
+        status: "succeeded", payload: { output: { setting, baselineValue: values[nodeId], sourceValue: measurement } }
+      });
+      expect(builder.calculate().calculation.rootValue).toEqual(rootValue);
+      const read = await gateway.execute({ externalCallId: `read-back-calculation-${index}`, toolName: "vdt.read_back_calculation", args: { nodeId } });
+      expect(read).toMatchObject({ status: "succeeded", payload: { output: { setting, baselineValue: values[nodeId] } } });
+      const appliedRevision = builder.getRevision();
+      expect(await gateway.execute(write)).toEqual(receipt);
+      expect(builder.getRevision()).toBe(appliedRevision);
+    }
+  });
+
+  it("edits an identified link through the Gateway with the existing approval and revision fences", async () => {
+    const fixture = baseFixture();
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Total", projectTitle: "Totals" });
+    builder.addDriver({ parentNodeId: "total", nodeId: "count", name: "Count", baselineValue: 4, relation: "formula_dependency" });
+    builder.addDriver({ parentNodeId: "total", nodeId: "reference", name: "Reference", baselineValue: 9, relation: "contextual_influence" });
+    builder.setFormula({ nodeId: "total", formula: "count" });
+    const initial = builder.getProject();
+    fixture.store.updateRun(fixture.state.runId, {
+      builder, draftProject: initial,
+      request: {
+        ...fixture.state.request, mode: "continue_project", input: { project: initial },
+        options: { autoApplyPatches: true }
+      }
+    });
+    const context = () => ({ ...fixture.context(), builder });
+    const gateway = new VdtToolGateway({
+      binding: fixture.binding, capability: fixture.modelCapability,
+      tools: createDefaultToolRegistry(), toolContext: context,
+      allowedTools: new Set(["vdt.add_edge", "vdt.edit_edge"]),
+      ledger: new InMemoryVdtToolGatewayLedger()
+    });
+    const link = { sourceNodeId: "count", targetNodeId: "reference", relation: "contextual_influence" };
+    const call = (externalCallId: string, toolName: string, args: Record<string, unknown>) =>
+      gateway.execute({ externalCallId, toolName, args });
+    const edgeId = "edge_count_reference";
+    expect(await call("link-add", "vdt.add_edge", link)).toMatchObject({
+      status: "succeeded", payload: { output: { edgeId } }
+    });
+    expect(await call("link-duplicate", "vdt.add_edge", link)).toMatchObject({ resultCode: "DUPLICATE_EDGE" });
+    expect(await call("link-cycle", "vdt.add_edge", { ...link, sourceNodeId: "reference", targetNodeId: "count" }))
+      .toMatchObject({ resultCode: "HIERARCHY_CYCLE" });
+    builder.updateNode({ nodeId: "reference", patch: { description: "Manual evidence" } });
+    const before = builder.getProject();
+    const relationEdit = { kind: "set_relation", edgeId, relation: "formula_dependency" };
+    expect(await call("link-stale", "vdt.edit_edge", relationEdit)).toMatchObject({ resultCode: "STALE_REVISION" });
+    expect(builder.getProject()).toEqual(before);
+
+    const state = fixture.store.getState(fixture.state.runId);
+    fixture.store.updateRun(fixture.state.runId, { request: { ...state.request, options: { autoApplyPatches: false } } });
+    expect(await call("link-review", "vdt.edit_edge", relationEdit)).toMatchObject({ status: "waiting_approval" });
+    expect(builder.getProject()).toEqual(before);
+    const proposal = fixture.store.getState(fixture.state.runId).pendingMutationProposal!;
+    await gateway.executeTrustedControlOperation({
+      externalCallId: "approve-link-review", toolName: "control.apply_approved_proposal",
+      args: { proposalId: proposal.id, selectedChangeIds: proposal.selectedChangeIds }
+    }, () => {
+      applyPendingMutationProposal(context());
+      return { status: "succeeded", resultCode: "APPROVED_PROPOSAL_APPLIED", payload: { edgeId }, projectChanged: true };
+    });
+    expect(builder.getProject().graph.edges.find(edge => edge.id === edgeId)).toMatchObject({ relation: "formula_dependency" });
+    expect(builder.getProject().graph.nodes).toEqual(before.graph.nodes);
+    fixture.store.updateRun(fixture.state.runId, { status: "running", request: state.request });
+    expect(await call("link-remove", "vdt.edit_edge", { kind: "remove", edgeId })).toMatchObject({ status: "succeeded" });
+    expect(builder.getProject().graph.edges).toEqual(initial.graph.edges);
+  });
+
   it("deduplicates a stable external call without re-running the tool", async () => {
     const fixture = gatewayFixture();
 
@@ -39,6 +283,84 @@ describe("VdtToolGateway", () => {
     expect(replay).toEqual(first);
     expect(fixture.getExecutions()).toBe(1);
     expect(fixture.ledger.list(fixture.binding.bindingId)).toHaveLength(1);
+  });
+
+  it("applies the editor's input value patch through the Gateway and replays its original receipt", async () => {
+    const fixture = baseFixture();
+    const builder = haulageBuilder();
+    const initialProject = builder.getProject();
+    const nodeId = "truck_working_time";
+    const evidence = {
+      sourceTier: "user_input", note: "0 working hours", editableInDialog: true, acceptedByUserInDialog: true
+    };
+    fixture.store.updateRun(fixture.state.runId, {
+      builder,
+      draftProject: initialProject,
+      request: {
+        ...fixture.state.request,
+        input: { ...fixture.state.request.input, prompt: "Set the baseline to 0 working hours." },
+        options: { autoApplyPatches: true }
+      }
+    });
+    const context = () => ({ ...fixture.context(), builder });
+    const persistence = new InMemoryAgentSupervisorPersistence();
+    await persistence.createBinding(fixture.binding);
+    const ledger = new AgentSupervisorToolGatewayLedger({
+      binding: fixture.binding, persistence, getRevision: () => builder.getRevision()
+    });
+    const makeGateway = () => new VdtToolGateway({
+      binding: fixture.binding,
+      capability: fixture.modelCapability,
+      tools: createDefaultToolRegistry(),
+      toolContext: context,
+      allowedTools: new Set(["vdt.update_node"]),
+      ledger
+    });
+    const gateway = makeGateway();
+    const call = {
+      externalCallId: "zero-input",
+      toolName: "vdt.update_node",
+      args: { nodeId, patch: { baselineValue: 0, valueSource: evidence } }
+    };
+    const editor = applyInputValueOperation(initialProject, { nodeId, value: 0, evidence }, {
+      operationId: "editor-input", now: initialProject.updatedAt
+    });
+    expect(editor).toMatchObject({ status: "ok", patch: { baselineValue: 0, value: 0, valueStatus: "user_provided_value" } });
+    const first = await gateway.execute(call);
+    expect(first).toMatchObject({ status: "succeeded", resultCode: "OK" });
+    expect(fixture.store.getSnapshot(fixture.state.runId).mutationProposals?.at(-1)?.changeSet.updates[0]?.patch)
+      .toEqual(editor.status === "ok" && editor.patch);
+
+    const beforeReject = builder.getProject();
+    const revisionBeforeReject = builder.getRevision();
+    fixture.store.updateRun(fixture.state.runId, {
+      request: { ...fixture.store.getState(fixture.state.runId).request, options: { askBeforeFirstPatch: true, autoApplyPatches: false } }
+    });
+    const clear = {
+      externalCallId: "clear-input",
+      toolName: "vdt.update_node",
+      args: { nodeId, patch: { clearInputValue: true } }
+    };
+    const preview = await gateway.execute(clear);
+    expect(preview).toMatchObject({ status: "waiting_approval" });
+    expect(rejectPendingMutationProposal(context(), "Keep the measured baseline.")).toMatchObject({ status: "rejected" });
+    expect(builder.getProject()).toEqual(beforeReject);
+    expect(builder.getRevision()).toBe(revisionBeforeReject);
+
+    fixture.store.updateRun(fixture.state.runId, {
+      status: "running",
+      request: { ...fixture.store.getState(fixture.state.runId).request, options: { autoApplyPatches: true } }
+    });
+    expect(await gateway.execute({ ...clear, externalCallId: "apply-clear-input" }))
+      .toMatchObject({ status: "succeeded", resultCode: "OK" });
+    const afterClear = builder.getProject().graph.nodes.find((node) => node.id === nodeId);
+    expect(afterClear).toMatchObject({ valueStatus: "unknown" });
+    expect(afterClear).not.toHaveProperty("value");
+    expect(afterClear).not.toHaveProperty("baselineValue");
+    expect(afterClear).not.toHaveProperty("valueSource");
+
+    expect(await makeGateway().execute(call)).toEqual(first);
+    expect(builder.getProject().graph.nodes.find((node) => node.id === nodeId)).toEqual(afterClear);
   });
 
   it("rejects call-id reuse with different canonical arguments", async () => {

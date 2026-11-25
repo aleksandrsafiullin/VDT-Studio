@@ -27,12 +27,15 @@ import {
   vdtRevisionDir,
   writeProjectManifest
 } from "./project-files";
+import { VdtStorageError } from "./types";
 import type {
+  AgentConversationProjection,
   AgentEventRecord,
   AgentRunRecord,
   CreateVdtWithInitialSnapshotInputV1,
   CreateVdtWithInitialSnapshotResultV1,
   ConversationRecord,
+  ConversationScope,
   CreateProjectInput,
   CreateVdtInput,
   CreateVdtRevisionInput,
@@ -669,10 +672,21 @@ export class SqliteVdtDatabase implements VdtDatabase {
     conversationId: string,
     patch: Pick<Partial<ConversationRecord>, "vdtId" | "title" | "mode">
   ): ConversationRecord {
+    return this.transaction(() => this.writeConversationUpdate(conversationId, patch));
+  }
+
+  private writeConversationUpdate(
+    conversationId: string,
+    patch: Pick<Partial<ConversationRecord>, "vdtId" | "title" | "mode">
+  ): ConversationRecord {
     assertSafeId(conversationId, "conversationId");
     if (patch.vdtId) assertSafeId(patch.vdtId, "vdtId");
     const current = this.getConversation(conversationId);
     if (!current) throw new Error(`Conversation not found: ${conversationId}`);
+    if ((current.vdtId && "vdtId" in patch && current.vdtId !== patch.vdtId)
+      || (patch.vdtId && this.getVdt(patch.vdtId)?.projectId !== current.projectId)) {
+      throw conversationNotFound();
+    }
     const updatedAt = this.now();
     const next: ConversationRecord = defined({
       ...current,
@@ -694,6 +708,10 @@ export class SqliteVdtDatabase implements VdtDatabase {
   }
 
   appendMessage(input: Omit<MessageRecord, "createdAt" | "position"> & { position?: number | undefined }): MessageRecord {
+    return this.transaction(() => this.insertMessage(input));
+  }
+
+  private insertMessage(input: Omit<MessageRecord, "createdAt" | "position"> & { position?: number | undefined }): MessageRecord {
     assertSafeId(input.id, "messageId");
     assertSafeId(input.conversationId, "conversationId");
     const createdAt = this.now();
@@ -743,7 +761,85 @@ export class SqliteVdtDatabase implements VdtDatabase {
       .map(messageFromRow);
   }
 
-  createAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">): AgentRunRecord {
+  listScopedConversationMessages(scope: ConversationScope, limit?: number): MessageRecord[] {
+    return this.transaction(() => {
+      const conversation = this.findScopedConversation(scope);
+      if (!conversation || limit === 0) return [];
+      if (limit === undefined) return this.listMessages(conversation.id);
+      if (!Number.isSafeInteger(limit) || limit < 0) throw new RangeError("Invalid message limit.");
+      const rows = this.db.prepare(`
+        SELECT * FROM messages WHERE conversation_id = ?
+        ORDER BY position DESC, created_at DESC, id DESC LIMIT ?
+      `).all(conversation.id, limit) as Row[];
+      return rows.reverse().map(messageFromRow);
+    }, "read");
+  }
+
+  private findScopedConversation(scope: ConversationScope): ConversationRecord | null {
+    const vdt = this.getVdt(scope.vdtId);
+    const conversation = this.getConversation(scope.conversationId);
+    if (vdt?.projectId !== scope.projectId
+      || (conversation && (conversation.projectId !== scope.projectId || conversation.vdtId !== scope.vdtId))) {
+      throw conversationNotFound();
+    }
+    return conversation;
+  }
+
+  private prepareRunConversation(record: Pick<AgentRunRecord, "conversationId" | "projectId" | "vdtId">, projection: AgentConversationProjection): void {
+    const { conversationId, projectId, vdtId } = record;
+    if (!conversationId) throw conversationNotFound();
+    if (projection.scoped && !vdtId) throw conversationNotFound();
+    const existing = projection.scoped && vdtId
+      ? this.findScopedConversation({ conversationId, projectId, vdtId })
+      : this.getConversation(conversationId);
+    if (!existing) {
+      this.createConversation({ id: conversationId, projectId, vdtId, title: projection.title, mode: projection.mode });
+      return;
+    }
+    if (existing.projectId !== projectId || (existing.vdtId && vdtId && existing.vdtId !== vdtId)) {
+      throw conversationNotFound();
+    }
+    if (!existing.vdtId && vdtId && this.getVdt(vdtId)?.projectId === projectId) {
+      this.writeConversationUpdate(conversationId, { vdtId });
+    }
+  }
+
+  private appendRunConversationMessages(run: AgentRunRecord, projection: AgentConversationProjection): void {
+    if (projection.messages.length === 0) return;
+    if (!run.conversationId) throw conversationNotFound();
+    const findMessage = this.db.prepare("SELECT agent_run_id, conversation_id FROM messages WHERE id = ?");
+    let position = nextMessagePosition(this.db, run.conversationId);
+    for (const { legacyMessageId, ...message } of projection.messages) {
+      const current = findMessage.get(message.id) as Row | undefined;
+      if (current) {
+        if (current.agent_run_id !== run.id || current.conversation_id !== run.conversationId) {
+          throw conversationNotFound();
+        }
+        continue;
+      }
+      // Old projections keyed a message by transcript ID alone. Only adopt a
+      // matching row from this run in this same conversation.
+      const legacy = findMessage.get(legacyMessageId) as Row | undefined;
+      if (legacy?.agent_run_id === run.id && legacy.conversation_id === run.conversationId) continue;
+      this.insertMessage({ ...message, conversationId: run.conversationId, agentRunId: run.id, position });
+      position += 1;
+    }
+  }
+
+  createAgentRun(
+    input: Omit<AgentRunRecord, "createdAt" | "updatedAt">,
+    conversation?: AgentConversationProjection
+  ): AgentRunRecord {
+    if (!conversation) return this.insertAgentRun(input);
+    return this.transaction(() => {
+      this.prepareRunConversation(input, conversation);
+      const run = this.insertAgentRun(input);
+      this.appendRunConversationMessages(run, conversation);
+      return run;
+    });
+  }
+
+  private insertAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">): AgentRunRecord {
     assertSafeId(input.id, "agentRunId");
     assertSafeId(input.projectId, "projectId");
     if (input.vdtId) assertSafeId(input.vdtId, "vdtId");
@@ -777,10 +873,34 @@ export class SqliteVdtDatabase implements VdtDatabase {
     return record;
   }
 
-  updateAgentRun(runId: string, patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>): AgentRunRecord {
+  updateAgentRun(
+    runId: string,
+    patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>,
+    conversation?: AgentConversationProjection
+  ): AgentRunRecord {
+    return this.transaction(() => {
+      const run = this.writeAgentRunUpdate(runId, patch);
+      if (conversation) {
+        this.prepareRunConversation(run, conversation);
+        this.appendRunConversationMessages(run, conversation);
+      }
+      return run;
+    });
+  }
+
+  private writeAgentRunUpdate(runId: string, patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>): AgentRunRecord {
     assertSafeId(runId, "agentRunId");
     const current = this.getAgentRun(runId);
     if (!current) throw new Error(`Agent run not found: ${runId}`);
+    if ((current.conversationId && "conversationId" in patch && patch.conversationId !== current.conversationId)
+      || (current.vdtId && "vdtId" in patch && patch.vdtId !== current.vdtId)) {
+      throw conversationNotFound();
+    }
+    if (patch.request && (patch.request.executionBindingId !== current.request.executionBindingId
+      || patch.request.providerId !== current.request.providerId
+      || patch.request.conversationId !== current.request.conversationId)) {
+      throw new VdtStorageError("RUN_BINDING_CONFLICT", "The run already has an immutable execution binding.");
+    }
     const updatedAt = this.now();
     const next: AgentRunRecord = defined({
       ...current,
@@ -981,8 +1101,8 @@ export class SqliteVdtDatabase implements VdtDatabase {
       .map(comparisonFromRow);
   }
 
-  private transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE;");
+  private transaction<T>(fn: () => T, mode: "read" | "write" = "write"): T {
+    this.db.exec(mode === "read" ? "BEGIN;" : "BEGIN IMMEDIATE;");
     try {
       const result = fn();
       this.db.exec("COMMIT;");
@@ -992,6 +1112,10 @@ export class SqliteVdtDatabase implements VdtDatabase {
       throw error;
     }
   }
+}
+
+function conversationNotFound(): VdtStorageError {
+  return new VdtStorageError("VDT_NOT_FOUND", "Conversation was not found in this VDT.");
 }
 
 function manifestFromProject(record: ProjectRecord): ProjectManifest {

@@ -110,7 +110,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
         parentNodeId: "root",
         name: "Number of trucks",
         type: "input",
-        unit: "trucks",
+        unit: "1",
         relation: "multiplicative_driver",
         formula: "",
         description: "Available truck fleet size.",
@@ -122,7 +122,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
         parentNodeId: "root",
         name: "Trips per truck",
         type: "calculated",
-        unit: "trips/truck/year",
+        unit: "trips/year",
         relation: "multiplicative_driver",
         formula: "operating_hours / ((haul_distance_km / loaded_speed_kmh) + (haul_distance_km / empty_speed_kmh))",
         description: "Trips each truck can complete from cycle time and annual operating hours.",
@@ -158,7 +158,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
         parentNodeId: "trips_per_truck",
         name: "Average haul distance",
         type: "input",
-        unit: "km",
+        unit: "km/trip",
         relation: "divisive_driver",
         formula: "",
         description: "Average one-way loaded haul distance.",
@@ -355,8 +355,8 @@ function mockAgentDecision(input: unknown, schemaId: "agent-decision-v1" | "agen
           toolName: "vdt.add_drivers_batch",
           args: {
             drivers: [
-              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 },
-              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" },
+              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "1", relation: "multiplicative_driver", baselineValue: 5 },
+              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/year", relation: "multiplicative_driver" },
               { parentNodeId: "ore_haulage", nodeId: "payload_per_trip_t", name: "Payload per trip", type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload }
             ],
             parentFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t"
@@ -386,7 +386,7 @@ function mockAgentDecision(input: unknown, schemaId: "agent-decision-v1" | "agen
           toolName: "vdt.add_drivers_batch",
           args: {
             drivers: [
-              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 },
+              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km/trip", relation: "formula_dependency", baselineValue: 2.7 },
               { parentNodeId: "loaded_travel_time_h", nodeId: "loaded_speed_kmh", name: "Average loaded speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 }
             ],
             parentFormula: "haul_distance_km / loaded_speed_kmh"
@@ -404,14 +404,14 @@ function mockAgentDecision(input: unknown, schemaId: "agent-decision-v1" | "agen
       statusMessage: "Building the complete truck-cycle tree and its formulas."
     };
   }
-  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
-  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
+  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "1", relation: "multiplicative_driver", baselineValue: 5 });
+  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
   if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
   if (!nodeIds.has("operating_hours")) return add("operating_hours", "Operating hours", "trips_per_truck", { type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours });
   if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver", formula: "loaded_travel_time_h + empty_return_time_h" });
   if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / loaded_speed_kmh" });
   if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / empty_speed_kmh" });
-  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
+  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km/trip", relation: "formula_dependency", baselineValue: 2.7 });
   if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
   if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
   const root = nodes.find((node) => isRecord(node) && node.id === "ore_haulage");

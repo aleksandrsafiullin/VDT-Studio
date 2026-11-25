@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { calculateGraph, validateGraph, type VdtProject } from "@vdt-studio/vdt-core";
+import { calculateGraph, evaluateModelReadiness, type VdtProject } from "@vdt-studio/vdt-core";
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 import type { SubagentReport, SubagentTask, VdtAgentRunState } from "../types";
@@ -267,7 +267,7 @@ function formulaBuilderReport(
 
 function criticReport(task: SubagentTask, project: VdtProject | undefined): SubagentReport {
   if (!project) return noProjectReport(task, "Critic cannot run before a draft VDT exists.");
-  const validation = summarizeValidation(validateGraph(project));
+  const validation = summarizeValidation(evaluateModelReadiness(project, { purpose: "structural_model" }).validation);
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(project)) : undefined;
   const risks = [
     ...validation.errors.map((issue) => issue.message),

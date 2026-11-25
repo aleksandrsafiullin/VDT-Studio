@@ -4,7 +4,7 @@ import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR 
 import { resolveKpiRecipeUnits, verifyKpiRecipeProjection } from "./units";
 import { KpiSuggestionError, smartAssert, validateKpiSuggestionSet } from "./validation";
 import { incomingKpiProposalFormula, incomingKpiProposedAlias, parseIncomingKpiFormula } from "./incoming-contract";
-import { validateIncomingKpiEffectiveReferences, validateIncomingKpiModelConstants, validateIncomingKpiUnits } from "./incoming-formal";
+import { validateIncomingKpiEffectiveReferences, validateIncomingKpiUnits } from "./incoming-formal";
 
 /** Generated from canonical skills. No filesystem/Node dependency enters web. */
 export const KPI_SUGGESTION_RECIPES = generatedCatalog as KpiSuggestionRecipeCatalog;
@@ -22,8 +22,8 @@ export function validateKpiSuggestionForContext(proposal: unknown, context: KpiS
     } else if (group.formula) {
       smartAssert(context.target.unit, "UNSUPPORTED_UNIT", "The parent needs a unit.");
       const analysis = parseIncomingKpiFormula(incomingKpiProposalFormula(parsed, group.id)!, "model");
-      validateIncomingKpiEffectiveReferences(analysis); validateIncomingKpiModelConstants(analysis);
-      validateIncomingKpiUnits(analysis, group.children.map((child, index) => ({ alias: incomingKpiProposedAlias(index), origin: "proposed", name: child.name, unit: child.unit })), context.target.unit, context.period);
+      validateIncomingKpiEffectiveReferences(analysis);
+      validateIncomingKpiUnits(analysis, group.children.map((child, index) => ({ alias: incomingKpiProposedAlias(index), origin: "proposed", name: child.name, unit: child.unit })), context.target.unit, context.period, true);
     }
     for (const child of group.children.filter(child => parsed.origin.kind === "model" && child.existingNodeId)) {
       const observed = [context.root, context.target, ...context.children, ...context.ancestors, ...context.siblings].find(node => node.id === child.existingNodeId);

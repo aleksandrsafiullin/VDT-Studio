@@ -124,6 +124,30 @@ describe("confirmed local model read knowledge", () => {
     expect(knowledge.literalUserQuantities()).toBeUndefined();
   });
 
+  it("keeps submitted answer sets through later tool calls and bounds them to the current run", () => {
+    const knowledge = new LocalModelKnowledge();
+    const answer = (id: string) => ({
+      type: "user_answer", questionSetId: id,
+      answers: { structuredAnswers: [{ questionId: "flow", fields: { answer: "Material flows through A then B." } }] }
+    });
+    const prompt = (delta: unknown) => knowledge.observePrompt(JSON.stringify({ delta }));
+    knowledge.observePrompt(initial);
+    expect(knowledge.literalUserQuantities()).toEqual([]);
+    prompt({ type: "human_input", input: answer("one") });
+    observe(knowledge, [result("skill.list", { skills: [], nextOffset: null })]);
+    expect(knowledge.context().recentUserAnswers).toEqual([answer("one")]);
+    expect(knowledge.literalUserQuantities()).toBeUndefined();
+
+    prompt({ type: "checkpoint_inputs", checkpointDelta: { type: "tool_results", results: [] }, inputs: [answer("two")] });
+    prompt({ type: "human_inputs", inputs: [answer("two"), answer("three"), answer("four"), answer("five"),
+      { ...answer("oversized"), answers: { text: "x".repeat(4_000) } }, { type: "assistant_message", text: "Invented confirmation." }] });
+    expect(knowledge.context()).toMatchObject({
+      recentUserAnswers: ["two", "three", "four", "five"].map(answer),
+      recentUserAnswersTruncated: true
+    });
+    expect(new LocalModelKnowledge().context()).toEqual({});
+  });
+
   it("retains exact learned fields and discovered skill IDs across unrelated later deltas", () => {
     const knowledge = new LocalModelKnowledge(); knowledge.observePrompt(initial);
     const schema = { type: "object", properties: { parentNodeId: { type: "string" } }, required: ["parentNodeId"] };

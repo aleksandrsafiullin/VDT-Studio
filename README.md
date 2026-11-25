@@ -33,6 +33,10 @@ Once you have an accepted desktop build or a working development setup:
 3. Compare scenarios and save a named milestone in **Versions**. Reopen the VDT to check your saved work.
 4. If you want AI assistance, open **Settings → Execution mode**, choose a CLI, local model or API provider, and complete that provider's setup. A successful connection test does not certify every model or workflow; use the support matrix in the release notes.
 
+On a saved tree, reopen a chat from **Chat history** to continue with a different
+model. The next run can use saved business decisions from that conversation.
+Choose **New** for a separate conversation.
+
 Projects are stored locally. AI requests can be sent to the selected provider;
 review the provider setup and the data you include. The source development server
 binds to loopback by default. Public hosted deployment is not supported by this
@@ -225,6 +229,14 @@ model speed and native packaging remain unqualified. See
 [validation](docs/PRODUCTION_READINESS.md#smart-kpi-validation) and
 [ADR-008](docs/adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 
+### Chat outcomes
+
+Choose **Build structure** in the chat composer to model relationships before
+measurements are available, or **Calculate baseline** for a numerical result.
+Reopen the conversation to see the verified formula and current measurement
+checklist. Select a missing input to edit it in the Node Inspector, or give
+the value in chat. The checklist labels illustrative estimates.
+
 ### Planned factor hierarchy (experimental)
 
 New full-tree Supervisor runs record an agent-authored decomposition plan before adding factors, build complete factor layers in order, and verify the plan against visual parents and formula dependencies before finishing. Agents can atomically reparent an existing branch while preserving its values and source lineage. Context metrics and cross-branch shared inputs must be declared explicitly. This structural check does not certify business correctness; see [readiness](docs/PRODUCTION_READINESS.md).
@@ -241,10 +253,12 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 ## Current Product Surface
 
 - Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
+- For project and VDT management, chat can offer **Open project workspace**. The link uses the editor's save and conflict controls. In the workspace, create a blank VDT or start from an example. Use **Duplicate VDT** on a saved card to copy its model. Use **Import JSON** to review and save a local model file as a new VDT.
+- The project workspace's **Comparisons** tab compares two saved VDTs and keeps the result pinned to the selected revisions for later reopening.
 - Cached projects and the home list render immediately while their metadata refreshes in the background. A direct VDT link loads its own payload without fetching every project first. Cold project loads show **Loading project…**; failures provide Retry and Back to projects. The AI-run counter has been removed; saved AI history remains available.
 - The home page has a compact **Projects** heading, consistent-width cards in up to four columns, and a **Search** button that reveals filtering across project names and details. **Create project** opens a modal for the name, client, site and year; all details are saved with the initial creation.
 - Confirmed project deletion also removes its saved AI sessions and history. Database cleanup rolls back on failure before the project's files are removed; existing migration backups are retained. See [project deletion](docs/adr/ADR-009-project-deletion-with-agent-history.md).
-- Left-to-right editable factor-tree canvas with direct node editing, properties and formula warnings.
+- Left-to-right editable factor-tree canvas with direct node editing, branch movement, properties and formula warnings.
 - Deterministic formula evaluation, scenario calculation and calculation trace.
 - Scenario Mode shares the rounded neutral Settings styling and emphasizes its four totals with larger numbers. Its calculation trace starts collapsed and uses the inspector's panel toggle. Scenario inputs match Baseline's comma-grouped thousands and decimal dot, at most two decimals, regardless of browser locale. Focusing a value exposes its exact editable number; keyboard arrows and pasting grouped numbers remain supported. A per-KPI Comment column saves the actions planned to achieve the scenario, independently of numeric overrides, and copies them when cloning a scenario.
 - One **Versions** panel for named checkpoints, before/after KPI and formula comparison, restoration with an automatic backup, and Undo before further model edits.
@@ -252,10 +266,10 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 - BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
 - Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
 - Local whisper.cpp dictation into an editable chat draft, with incremental text, model selection and confirmed downloads in Settings → Voice input. See [Voice input](docs/VOICE_INPUT.md) for platform and verification limits.
-- Editable Excel (`.xlsx`) export directly from the VDT editor; JSON/Markdown output remains available through the CLI.
+- Editable Excel (`.xlsx`) export directly from the VDT editor. **More exports** downloads the current tree as JSON or Markdown with the same serializers as the CLI.
 - Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
 
-The inspector contains **Properties** and **Warnings**. Node edits apply directly without per-node Accept/Reject. AI requests use the chat or the node-card incoming-KPI action; the separate AI inspector tab, Review model and Explain scenario controls have been removed. Editor-level JSON import and JSON/Markdown export have also been removed. Full project archive import/export, including attached source files, is planned at the project-workspace level.
+The inspector contains **Properties** and **Warnings**. Use **Outgoing links** to add, change or remove a link in the current draft. AI requests use the chat or the node-card incoming-KPI action. Chat can open **More exports** for the current VDT. You choose the file format. Portable JSON import retains models and versions with external source bindings detached. Full project archives with attachments remain planned.
 
 The **VDT Agent** chat uses a compact **Context** disclosure for the brief, dark
 user bubbles and formatted assistant responses with Copy. The welcome panel
@@ -335,7 +349,7 @@ Raw-data discovery currently proposes semantic models and metadata mappings. Its
 
 `Scenario Mode` mirrors the selected application scenario (or the first scenario if none is selected) in a compact view of baseline/scenario totals, absolute/percentage change, input-driver effects and the multiplicative effect. Its `Comment` column copies that scenario's per-KPI action comments, including comments on unchanged drivers, as editable wrapped text. Unconfigured scenario values initially link to the Baseline cell in the same row; enter a number to override them. Scenario edits recalculate the totals, effects and every VDT Potential value, including for a non-main scenario. Without configured scenarios, the same controls provide scratch analysis and update Potential.
 
-The `Source` sheet contains an editable Excel table with `KPI`, `Value`, `Source`, `Comment`. Change its numeric Value cells to recalculate the tree and scenario analysis. Keep KPI labels unchanged; sorting and filtering are supported. `Guide` explains inputs, formulas and unavailable calculations. Source/Comment are workbook metadata and do not refresh external data. Re-importing this exported editable VDT workbook into the application, workbook synchronization and image export are not provided; the CLI retains JSON and Markdown output. Raw Excel source ingestion for incoming KPI analysis is described below.
+The `Source` sheet contains an editable Excel table with `KPI`, `Value`, `Source`, `Comment`. Change its numeric Value cells to recalculate the tree and scenario analysis. Keep KPI labels unchanged; sorting and filtering are supported. `Guide` explains inputs, formulas and unavailable calculations. Source/Comment are workbook metadata and do not refresh external data. Workbook re-import, synchronization and image export remain outside this workflow. Raw Excel source ingestion for incoming KPI analysis is described below.
 
 For a Back-calculated KPI, `Source!B3` holds the editable **Back-calculation target**, with the output KPI name and unit beside it. The inverse formula references this cell. Change it to recalculate the balancing KPI and output Baseline directly in Excel.
 

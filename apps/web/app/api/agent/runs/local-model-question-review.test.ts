@@ -38,6 +38,23 @@ describe("OpenAI construction questions", () => {
     });
   });
 
+  it("leaves structural measurements unknown and retains relationship and scope questions", () => {
+    const builder = new VdtBuilderSession();
+    const { project } = builder.createDraft({ projectTitle: "Capacity", rootKpi: "Capacity" });
+    builder.addDriver({ nodeId: "rate", name: "Rate", parentNodeId: project.rootNodeId });
+    const observation = localModelWorkingContext(builder.getProject(), builder.getRevision(), true, false, "structural_model");
+    const measurement = question("rate", "What rate did you measure?", "number");
+    const relationship = question("overlap", "Are these two activities independent or do they share a resource?");
+    const scope = question("site_count", "How many sites should the model represent?", "number");
+    const prompt = "Set up a capacity structure. I don't have the measured rate yet.";
+    expect(constructionQuestionReview([measurement, relationship, scope], {
+      prompt, outcome: "structural_model"
+    }, observation, undefined)).toEqual({ remaining: [relationship, scope], enterKnownFacts: false });
+    expect(constructionQuestionReview([measurement, relationship, scope], {
+      prompt, outcome: "calculated_baseline"
+    }, observation, undefined).remaining).toEqual([measurement, relationship, scope]);
+  });
+
   it("resolves tool formula syntax without asking the user", () => {
     const observation = localModelWorkingContext(new VdtBuilderSession().getProject(), 0, true, true);
     const syntax = question("formula_syntax", "Please confirm the exact formula syntax.");

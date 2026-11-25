@@ -11,6 +11,9 @@ import { createSubagentTools } from "./subagent-tools";
 import { createUserTools } from "./user-tools";
 import { createVdtBuilderTools } from "./vdt-builder-tools";
 import { createDataTools, type AgentDatasetProvider } from "./data-tools";
+import { createDecompositionAssumptionTools } from "./decomposition-assumption-tools";
+import { createFactorProbeTools } from "./factor-probe-tools";
+import { createBackCalculationTools } from "./back-calculation-tools";
 import { createHierarchyTools } from "./hierarchy-tools";
 export { createDataTools, aggregateAgentData, agentDataQuerySchema } from "./data-tools";
 export type { AgentDatasetProvider, AgentDataset, AgentDataTable } from "./data-tools";
@@ -41,6 +44,9 @@ export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = 
     ...createExcavationTools(),
     ...createVdtBuilderTools(),
     ...createHierarchyTools(),
+    ...createDecompositionAssumptionTools(),
+    ...createFactorProbeTools(),
+    ...createBackCalculationTools(),
     ...createProjectTools(),
     ...createDataTools(options.datasetProvider),
     ...createFormulaTools(),

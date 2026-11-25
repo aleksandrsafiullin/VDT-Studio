@@ -1,3 +1,4 @@
+import { finishOutcomeSchema } from "./agent-finish-outcome";
 import { z } from "zod";
 import { agentQuestionSchema } from "./agent-event";
 
@@ -193,7 +194,8 @@ const finalEventSchema = z.object({
     text: nonEmptyString(8_000),
     format: z.enum(["plain_text", "markdown"]),
     finishReceiptId: safeIdSchema,
-    finishReceiptHash: sha256Schema
+    finishReceiptHash: sha256Schema,
+    finishOutcome: finishOutcomeSchema.optional()
   }).strict()
 }).strict();
 

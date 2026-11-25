@@ -471,7 +471,7 @@ function buildResumePrompt(delta: CursorCheckpointDelta, finishReceiptId: string
   return cursorCheckpointPrompt(canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
     constraints: finishReceiptId ? {
-      response: "The host has verified the calculation. Return only the final JSON shown. Replace only the text with the confirmed result in the user's language. Keep the fields flat and the receipt ID exact.",
+      response: "The host verified completion for the requested outcome. Return only the final JSON shown. Put the answer, structural result and outstanding measurements, or verified numerical baseline in the text as applicable, using the user's language. Keep the fields flat and the receipt ID exact.",
       example: cursorCheckpointFinalExample(finishReceiptId)
     } : {
       ...SHARED_RESUME_CONSTRAINTS,

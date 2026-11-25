@@ -1,6 +1,7 @@
 import { validateGraph } from "../graph/validation";
+import { applyWorkspaceChange } from "../operations/workspace-change";
 import type { VdtProject } from "../types";
-import { cloneProject } from "../utils";
+import { cloneProject, warning } from "../utils";
 import type { ApplyChangeSetResult, VdtChangeSet } from "./types";
 import {
   collectChangeSetStructureWarnings,
@@ -27,7 +28,13 @@ export function applyChangeSet(
     };
   }
 
-  const next = mutateProjectGraph(baseline, filtered, { touchUpdatedAt: true });
+  const workspaceResult = filtered.workspaceChange ? applyWorkspaceChange(baseline, filtered.workspaceChange) : undefined;
+  if (workspaceResult?.status === "error") {
+    return { success: false, project: baseline, warnings: [warning({
+      severity: "error", type: "invalid_graph", message: workspaceResult.message
+    })] };
+  }
+  const next = workspaceResult?.project ?? mutateProjectGraph(baseline, filtered, { touchUpdatedAt: true });
   const validation = validateGraph(next.graph, next.rootNodeId, { purpose: "draft" });
 
   if (!validation.valid) {

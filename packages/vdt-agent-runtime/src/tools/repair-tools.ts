@@ -3,6 +3,7 @@ import { extractFormulaReferences, type VdtChangeSet, type VdtNodePatch } from "
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
+import { replaceFormulaReference } from "./formula-reference";
 
 const edgeRelationSchema = z.enum([
   "positive_driver",
@@ -58,7 +59,7 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       if (!project.graph.nodes.some((candidate) => candidate.id === input.replacementNodeId)) {
         throw new AgentToolError("REPLACEMENT_NOT_FOUND", `Replacement node "${input.replacementNodeId}" was not found.`);
       }
-      formula = renameReference(formula, input.missingReference, input.replacementNodeId);
+      formula = replaceFormulaReference(formula, input.missingReference, input.replacementNodeId);
     } else if (input.strategy === "create_input_node") {
       if (!input.newNode) throw new AgentToolError("NEW_NODE_REQUIRED", "newNode is required for create_input_node.");
       if (!project.graph.nodes.some((candidate) => candidate.id === input.newNode!.parentNodeId)) {
@@ -79,9 +80,9 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       }
       formula = input.newNode.nodeId === input.missingReference
         ? formula
-        : renameReference(formula, input.missingReference, input.newNode.nodeId);
+        : replaceFormulaReference(formula, input.missingReference, input.newNode.nodeId);
     } else {
-      formula = renameReference(formula, input.missingReference, "1");
+      formula = replaceFormulaReference(formula, input.missingReference, "1");
     }
 
     project = previewBuilder.getProject();
@@ -206,7 +207,7 @@ const repairDuplicateNodeIdTool: AgentTool = {
         if (!node.formula?.includes(input.nodeId)) continue;
         const updated = previewBuilder.updateNode({
           nodeId: node.id,
-          patch: { formula: renameReference(node.formula, input.nodeId, input.newNodeId) } as VdtNodePatch
+          patch: { formula: replaceFormulaReference(node.formula, input.nodeId, input.newNodeId) } as VdtNodePatch
         });
         changeSets.push(requireChangeSet(updated.changeSet));
       }
@@ -228,11 +229,3 @@ const repairDuplicateNodeIdTool: AgentTool = {
     };
   }
 };
-
-function renameReference(formula: string, from: string, to: string): string {
-  return formula.replace(new RegExp(`\\b${escapeRegExp(from)}\\b`, "g"), to);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

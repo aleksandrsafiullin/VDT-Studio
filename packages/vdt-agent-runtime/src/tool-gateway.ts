@@ -414,7 +414,13 @@ export class VdtToolGateway {
       } else {
         result = call.toolName === "run.request_finish"
           ? await this.executeFinish(call)
-          : await this.executeRegistryTool(call, context);
+          : await this.executeRegistryTool(call, {
+              ...context,
+              invocation: {
+                operationId: hashJson([binding.runId, binding.bindingId, call.externalCallId]).slice(7),
+                reservedAt
+              }
+            });
         if (
           result.status !== "failed"
           && this.tools.getSpec(canonicalToolName(call.toolName))?.mutatesProject === true

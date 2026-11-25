@@ -3,9 +3,14 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { modelAgentToolCatalog, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 
+import { registerWorkspaceOperationTools } from "./workspace-operation-tools";
+import { registerEditorHandoffTools } from "./editor-handoff-tools";
+
 describe("model-facing tool parameter contracts", () => {
   it("publishes actual enum/type contracts instead of empty parameter placeholders within a bounded catalog", () => {
     const tools = createDefaultToolRegistry();
+    registerWorkspaceOperationTools(tools);
+    registerEditorHandoffTools(tools);
     const catalog = modelAgentToolCatalog(tools);
     expect(catalog.find((tool) => tool.name === "excavation.seed_topology")?.inputJsonSchema).toMatchObject({
       type: "object",
@@ -17,17 +22,38 @@ describe("model-facing tool parameter contracts", () => {
         includeReadinessDowntime: { type: "boolean" }
       }
     });
-    // Full nested argument constraints replace lossy depth-based truncation.
-    expect(JSON.stringify(catalog).length).toBeLessThan(40_000);
+    // The full catalog includes workspace operations and explicit link edits.
+    expect(JSON.stringify(catalog).length).toBeLessThan(47_500);
     expect(catalog.find(tool => tool.name === "skill.read")?.inputJsonSchema).toMatchObject({ properties: { maxChars: { maximum: 10000 } } });
     expect(JSON.stringify(catalog.find(tool => tool.name === "vdt.instantiate_subtree")?.inputJsonSchema)).toContain('"maxProperties":200');
     expect(JSON.stringify(catalog.find(tool => tool.name === "skill.seed_topology")?.inputJsonSchema)).toContain('"maxProperties":24');
     expect(catalog.find(tool => tool.name === "tools.describe")?.inputJsonSchema).toMatchObject({ properties: { toolNames: { minItems: 1, maxItems: 6, items: { minLength: 1, maxLength: 160 } } } });
+    expect(catalog.find(tool => tool.name === "scenario.edit")).toMatchObject({
+      mutatesProject: true,
+      inputJsonSchema: { anyOf: expect.arrayContaining([expect.objectContaining({
+        properties: expect.objectContaining({ kind: { type: "string", const: "set_override" } }),
+        additionalProperties: false
+      })]) }
+    });
+    expect(catalog.find(tool => tool.name === "scenario.save")).toMatchObject({
+      mutatesProject: true, inputJsonSchema: { required: ["name", "overrides"], properties: {
+        overrides: { type: "array", items: { required: ["nodeId", "value"] } }
+      } }
+    });
+    expect(catalog.find(tool => tool.name === "vdt.edit_edge")).toMatchObject({
+      mutatesProject: true,
+      inputJsonSchema: { properties: {
+        kind: { type: "string", enum: ["set_relation", "remove"] },
+        edgeId: { type: "string", maxLength: 500 }
+      }, required: ["kind", "edgeId"], additionalProperties: false }
+    });
     expect(modelAgentToolCatalogHash(tools)).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
   it("describes full argument contracts only for the immutable public allowlist, without changing project state", async () => {
     const tools = createDefaultToolRegistry();
+    registerWorkspaceOperationTools(tools);
+    registerEditorHandoffTools(tools);
     tools.register({ name: "private.internal", description: "Hidden", inputSchema: z.object({ secretField: z.string() }), outputSchema: z.object({}), run: () => ({}) });
     const hash = modelAgentToolCatalogHash(tools);
     registerModelAgentSchemaTool(tools);

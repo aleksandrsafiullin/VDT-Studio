@@ -5,7 +5,7 @@ import { extractFormulaReferences } from "../formula/evaluator";
 import { inspectDecompositionHierarchy } from "../graph/decomposition";
 import { assertSmartKpiGraph } from "./compile";
 import { parseIncomingKpiFormula, remapIncomingKpiFormula } from "./incoming-contract";
-import { validateIncomingKpiEffectiveReferences, validateIncomingKpiModelConstants, validateIncomingKpiUnits } from "./incoming-formal";
+import { validateIncomingKpiEffectiveReferences, validateIncomingKpiUnits } from "./incoming-formal";
 import type { IncomingKpiAlias } from "./incoming-types";
 import type { KpiSuggestionPeriod } from "./types";
 import { smartAssert } from "./validation";
@@ -72,13 +72,13 @@ export function validateIncomingKpiLayer(project: VdtProject, targetNodeId: stri
   smartAssert(project.graph.edges.filter(edge => edge.sourceNodeId === targetNodeId && edge.relation !== "contextual_influence").every(edge => refs.includes(edge.targetNodeId)), "UNUSED_INCOMING_FACTOR", "Include every existing mathematical child in the formula.");
   const map = new Map(refs.map((id, index) => [id, `m_${index.toString(16).padStart(32, "0")}` as IncomingKpiAlias]));
   const analysis = parseIncomingKpiFormula(remapIncomingKpiFormula(formula, map), "model");
-  validateIncomingKpiEffectiveReferences(analysis); validateIncomingKpiModelConstants(analysis);
+  validateIncomingKpiEffectiveReferences(analysis);
   // The unit definition may explicitly state a calendar denominator. This is
   // a matching measurement basis, never an invented calendar window/value.
   const grain = /\/(shift|day|week|month|quarter|year)s?$/.exec(target.unit ?? "")?.[1] as KpiSuggestionPeriod["grain"] | undefined;
   const period: KpiSuggestionPeriod = { key: grain ? `unit_basis:${grain}` : "unspecified", grain: grain ?? "custom" };
   smartAssert(target.unit, "UNSUPPORTED_UNIT", "The selected KPI needs a unit.");
-  validateIncomingKpiUnits(analysis, refs.map(id => { const node = project.graph.nodes.find(node => node.id === id); smartAssert(node?.unit && node.status !== "rejected", "INVALID_REFERENCE", "Use an existing KPI with a unit."); return { alias: map.get(id)!, origin: "existing", name: node.name, unit: node.unit }; }), target.unit, period);
+  validateIncomingKpiUnits(analysis, refs.map(id => { const node = project.graph.nodes.find(node => node.id === id); smartAssert(node?.unit && node.status !== "rejected", "INVALID_REFERENCE", "Use an existing KPI with a unit."); return { alias: map.get(id)!, origin: "existing", name: node.name, unit: node.unit }; }), target.unit, period, true);
   assertSmartKpiGraph(project);
   if (project.graph.nodes.find(node => node.id === project.rootNodeId)?.decompositionPlan) {
     const hierarchy = inspectDecompositionHierarchy(project, "incremental_user_apply");

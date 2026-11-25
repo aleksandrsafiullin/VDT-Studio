@@ -1,5 +1,7 @@
 import { FormulaParseError, type FormulaExpression, type FormulaToken } from "./ast";
 
+const builtinFunctionCall = /^(?:(min|мин)|max|макс)(?=\s*\()/iu;
+
 function isDigit(char: string) {
   return /[0-9]/.test(char);
 }
@@ -83,6 +85,15 @@ export function tokenizeFormula(formula: string): FormulaToken[] {
       }
 
       tokens.push({ type: "number", value, raw });
+      continue;
+    }
+
+    // Canonicalize known calls here so editor tokens and evaluation share
+    // one spelling. Ordinary node references retain their exact text.
+    const builtin = /[mм]/iu.test(char) ? builtinFunctionCall.exec(formula.slice(index)) : null;
+    if (builtin) {
+      tokens.push({ type: "identifier", value: builtin[1] ? "min" : "max" });
+      index += builtin[0].length;
       continue;
     }
 

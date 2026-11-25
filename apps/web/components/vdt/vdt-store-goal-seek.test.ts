@@ -33,11 +33,11 @@ describe("Back-calculation editing and persistence", () => {
     expect(store.getState().project.graph.nodes.find(node => node.id === id)?.baselineValue).toBe(80);
   });
 
-  it("recalculates after edits, restores the stored source when disabled and exposes a deleted target", () => {
+  it.each([{ clearGoalSeek: true } as const, { goalSeek: undefined }])("restores the stored source when disabled with %o and exposes a deleted target", (clearPatch) => {
     store.getState().updateNode(id, { goalSeek: { targetNodeId: "effective_working_time", targetValue: 500 } });
     store.getState().updateNodeBaselineValue("planned_downtime", 60);
     expect(calculateGraph(store.getState().project).values[id]).toBe(160);
-    store.getState().updateNode(id, { goalSeek: undefined });
+    store.getState().updateNode(id, clearPatch);
     expect(calculateGraph(store.getState().project).values[id]).toBe(80);
     expect(() => validateStrictVdtProjectCommit(JSON.parse(exportProjectJson(store.getState().project)))).not.toThrow();
     store.getState().updateNode(id, { goalSeek: { targetNodeId: "effective_working_time", targetValue: 500 } });

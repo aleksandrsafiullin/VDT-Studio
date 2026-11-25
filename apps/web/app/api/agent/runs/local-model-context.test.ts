@@ -1,8 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { AgentRunStore, createDefaultToolRegistry } from "@vdt-studio/vdt-agent-runtime";
+import { createVersionSnapshot, VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { compactLocalModelPrompt, compactOpenAiFirstPlanPrompt, localModelWorkingContext } from "./local-model-context";
 
 describe("local model project inspection projection", () => {
+  it.each([
+    ["gross * (1 - discount)", false, "UNIT_MISMATCH"],
+    ["gross * (1 - discount / 100)", true, undefined]
+  ])("agrees with project validation for %s on a manual tree", async (formula, accepted, issueCode) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const { rootNodeId } = builder.getProject();
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "gross", name: "Gross", unit: "USD", baselineValue: 100 });
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "discount", name: "Discount", unit: "%", baselineValue: 10 });
+    builder.setFormula({ nodeId: rootNodeId, formula });
+    const project = builder.getProject();
+    const store = new AgentRunStore();
+    const { runId, abortController } = store.createRun({ providerId: "test", mode: "review_project", input: { project } });
+    const result = await createDefaultToolRegistry().run("vdt.validate", {}, {
+      store, runId, builder, signal: abortController.signal, emit: event => store.appendEvent(runId, event),
+      getRun: () => store.getSnapshot(runId), updateRun: patch => { store.updateRun(runId, patch); }
+    });
+    const view = localModelWorkingContext(project, builder.getRevision());
+    expect(view).toMatchObject({ projectReadyForFinish: accepted, hasDecompositionPlan: false });
+    expect(result).toMatchObject({ ok: true, output: { valid: accepted } });
+    if (issueCode) {
+      expect(view.readinessIssues).toContainEqual(expect.objectContaining({ code: issueCode }));
+      expect(result.output).toMatchObject({ readinessIssues: expect.arrayContaining([expect.objectContaining({ code: issueCode })]) });
+    } else {
+      expect(view.calculation.rootValue).toBe(90);
+    }
+  });
+
   it("offers all current unfilled inputs in bounded native pages without assigning values", () => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ projectTitle: "Test", rootKpi: "Output", unit: "t" });
@@ -69,6 +98,22 @@ describe("local model project inspection projection", () => {
     expect(next.formulaBacklog).toMatchObject({ count: 1, nodes: [{ id: "missing_formula" }] });
   });
 
+  it("shows the newest saved version IDs separately from scenario IDs without including snapshots", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Output", rootKpi: "Output" });
+    let project = builder.getProject();
+    for (let index = 1; index <= 13; index++) {
+      project = createVersionSnapshot(project, { name: `Review ${index}` }, {
+        id: `version_${index}`, createdAt: new Date(2026, 10, index).toISOString()
+      });
+    }
+    const { scenarios, versions } = localModelWorkingContext(project, builder.getRevision());
+    expect(versions).toHaveLength(12);
+    expect(versions?.[0]).toEqual({ id: "version_13", name: "Review 13", createdAt: project.versions[12]!.createdAt });
+    expect(versions?.every(({ id }) => scenarios?.every(scenario => scenario.id !== id))).toBe(true);
+    expect(localModelWorkingContext(project, builder.getRevision(), true)).not.toHaveProperty("versions");
+  });
+
   it("keeps the brief and tool purposes while obtaining non-core argument schemas lazily", () => {
     const raw = { delta: { type: "initial_context", context: {
       brief: { goal: "Keep Excavation in tonnes", originalLanguage: "ru" }, toolCatalogHash: "immutable-hash",
@@ -83,6 +128,10 @@ describe("local model project inspection projection", () => {
     expect(projected.delta.context.tools[0]).toEqual({ name: "tools.describe", inputSchemaEnforcedBy: "native format" });
     expect(projected.delta.context.tools[1]).toEqual({ name: "project.get_node", description: "Read a node", inputSchemaAvailableVia: "tools.describe" });
     expect(raw.delta.context.tools[0]).toHaveProperty("inputJsonSchema");
+    const focused = JSON.parse(compactLocalModelPrompt(JSON.stringify(raw), new Set(["tools.describe"])));
+    expect(focused.delta.context.tools).toEqual([projected.delta.context.tools[0]]);
+    expect(focused.delta.context.otherToolNames).toEqual(["project.get_node"]);
+    expect(focused.delta.context.brief).toEqual(raw.delta.context.brief);
     const old = { delta: { type: "initial_context", context: { tools: [raw.delta.context.tools[1]] } } };
     expect(JSON.parse(compactLocalModelPrompt(JSON.stringify(old)))).toEqual(old);
   });

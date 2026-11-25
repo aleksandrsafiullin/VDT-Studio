@@ -114,7 +114,7 @@ describe("ToolRegistry", () => {
 
     expect(result.ok).toBe(true);
     const project = builder.getProject();
-    expect(project.graph.nodes.find((node) => node.name === "Price")).toMatchObject({ type: "input" });
+    expect(project.graph.nodes.find((node) => node.name === "Price")).toMatchObject({ type: "input", valueStatus: "unknown" });
     expect(project.graph.edges.at(-1)).toMatchObject({ relation: "positive_driver" });
   });
 
@@ -350,6 +350,19 @@ describe("ToolRegistry", () => {
     expect(builder.getProject().graph.nodes.find((node) => node.id === "payload_t")?.valueStatus).not.toBe("user_provided_value");
   });
 
+  it("applies explicit unknown to missing inputs in a driver batch and preserves a supplied zero", async () => {
+    const { registry, context, builder } = inputBatchContext();
+    const parentNodeId = builder.getProject().rootNodeId;
+    expect(await registry.run("vdt.add_drivers_batch", { drivers: [
+      { parentNodeId, nodeId: "stage_a", name: "Stage A", type: "input" },
+      { parentNodeId, nodeId: "stage_b", name: "Stage B", type: "input", baselineValue: 0 }
+    ] }, context)).toMatchObject({ ok: true });
+    const nodes = builder.getProject().graph.nodes;
+    expect(nodes.find(node => node.id === "stage_a")?.valueStatus).toBe("unknown");
+    expect(nodes.find(node => node.id === "stage_b")).toMatchObject({ baselineValue: 0 });
+    expect(nodes.find(node => node.id === "stage_b")?.valueStatus).toBeUndefined();
+  });
+
   it("rolls back the whole driver batch when parentFormula is invalid", async () => {
     const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
     const run = store.createRun({
@@ -525,6 +538,21 @@ describe("ToolRegistry", () => {
     expect(await registry.run("vdt.update_node", args, context)).toMatchObject({ ok: true });
     expect(await registry.run("vdt.set_formula", formula, context)).toMatchObject({ ok: true });
     expect(builder.calculate().calculation?.rootValue).toBe(5500);
+  });
+
+  it("accepts localized built-in calls through the agent formula tool and still checks exact factor IDs", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Throughput", rootKpi: "Throughput", unit: "t/h" });
+    const root = builder.getProject().rootNodeId;
+    builder.addDriver({ parentNodeId: root, nodeId: "stage_a", name: "Stage A", unit: "t/h", baselineValue: 95 });
+    builder.addDriver({ parentNodeId: root, nodeId: "stage_b", name: "Stage B", unit: "t/h", baselineValue: 85 });
+    const { registry, context } = sourceUnitContext(builder, "Calculate sustained throughput for the serial stages.");
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "МиН(stage_a, stage_b)" }, context))
+      .toMatchObject({ ok: true });
+    expect(builder.calculate().calculation?.rootValue).toBe(85);
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "MIN(stage_a, stage_B)" }, context))
+      .toMatchObject({ ok: false, error: { code: "MISSING_FORMULA_REFERENCES" } });
+    expect(builder.calculate().calculation?.rootValue).toBe(85);
   });
 
   it("admits construction formulas only on ready calculated targets through the dedicated tool", async () => {
@@ -842,6 +870,29 @@ describe("ToolRegistry", () => {
       prompt: request.input.prompt.replace("does not limit", "limits") } }, catalog)).toEqual([]);
   });
 
+  it("reports the shared source-grounding issue for duplicate construction quotes", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const { rootNodeId } = builder.getProject();
+    const quote = "Gross revenue was 100 USD";
+    const { registry, context } = sourceUnitContext(builder, quote, "generate_vdt");
+    expect(await registry.run("vdt.add_drivers_batch", { drivers: ["gross", "duplicate_gross"].map(nodeId => ({
+      nodeId, parentNodeId: rootNodeId, name: nodeId, unit: "USD"
+    })) }, context)).toMatchObject({ ok: true });
+    // A restored snapshot may hold duplicate evidence even though the normal
+    // write tool rejects introducing that conflict.
+    for (const nodeId of ["gross", "duplicate_gross"]) {
+      builder.updateNode({ nodeId, patch: {
+        baselineValue: 100, valueStatus: "user_provided_value",
+        valueSource: { sourceTier: "user_input", note: quote, editableInDialog: true, acceptedByUserInDialog: true }
+      } });
+    }
+    builder.setFormula({ nodeId: rootNodeId, formula: "gross + duplicate_gross" });
+    expect(await registry.run("vdt.validate", {}, context)).toMatchObject({ ok: true, output: {
+      valid: false, readinessIssues: [expect.objectContaining({ code: "SOURCE_GROUNDING_CONFLICT", nodeId: "duplicate_gross" })]
+    } });
+  });
+
   it("reserves the hundred divisor for actual percent scaling during formula admission", async () => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
@@ -851,8 +902,7 @@ describe("ToolRegistry", () => {
     builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: [
       { nodeId: "gross", parentNodeId: root, kind: "input" }, { nodeId: "discount", parentNodeId: root, kind: "input" }
     ] } } });
-    const { registry, context } = sourceUnitContext(builder, "Refunds were 100 USD. Discount was 10%.");
-    context.requirePlanOperands = true;
+    const { registry, context } = sourceUnitContext(builder, "Refunds were 100 USD. Discount was 10%.", "generate_vdt");
     const before = builder.getProject();
     for (const [formula, value] of [["gross / 100", 100], ["gross * (90 / 100)", 10]] as const) {
       expect(await registry.run("vdt.set_formula", { nodeId: root, formula }, context)).toMatchObject({ ok: false, error: {
@@ -1090,11 +1140,11 @@ function vdtStorageError(code: string, message: string): Error {
   return error;
 }
 
-function sourceUnitContext(builder: VdtBuilderSession, prompt: string) {
+function sourceUnitContext(builder: VdtBuilderSession, prompt: string, mode: "continue_project" | "generate_vdt" = "continue_project") {
   const project = builder.getProject();
   const store = new AgentRunStore();
   const run = store.createRun({
-    mode: "continue_project", input: { project, rootKpi: "Revenue", unit: "USD", prompt },
+    mode, input: { project, rootKpi: "Revenue", unit: "USD", prompt },
     providerId: "mock", options: { autoApplyPatches: true }
   });
   store.updateRun(run.runId, { builder, draftProject: project });

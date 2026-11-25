@@ -11,7 +11,7 @@ import type {
   VdtScenarioOverride,
   VdtWarning
 } from "../types";
-import { warning } from "../utils";
+import { readNodeBaselineValue, warning } from "../utils";
 
 export interface CalculateGraphOptions {
   rootNodeId?: string;
@@ -155,7 +155,7 @@ function calculateForwardGraph(input: VdtProject | VdtGraph, options: CalculateG
     }
 
     if (!node.formula?.trim()) {
-      const value = node.baselineValue ?? node.value;
+      const value = readNodeBaselineValue(node);
       if (value === undefined) {
         if (!contextGroups.has(nodeId)) addError(nodeId, "missing_value", `Missing value for ${node.name}.`);
         visiting.pop();

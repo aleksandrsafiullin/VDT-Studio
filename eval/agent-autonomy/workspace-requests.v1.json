@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "evaluationClass": "workspace_journey",
+  "cases": [
+    {
+      "id": "professional-recovery",
+      "setup": { "fixture": "assets/workspace-legacy-manual.v1.json", "manualCorrection": { "input": "Downtime", "value": 110, "unit": "h" } },
+      "turns": [
+        { "prompt": "What limits output in this model? Save a scenario called Recovery with downtime at 90 hours and compare it with baseline." },
+        { "prompt": "Save the current model as a version called Recovery review and give me an editable Excel workbook for Recovery." }
+      ]
+    },
+    {
+      "id": "novice-serial",
+      "turns": [
+        { "purpose": "structural_model", "prompt": "I run two processing stages and want a model of sustained throughput in tonnes per hour. I don't have their measured rates yet. Help me set up the model, identify where I can intervene and tell me what to measure." },
+        { "prompt": "All material goes through stage A and then stage B. There's no bypass or sustained stockpile drawdown." },
+        { "purpose": "calculated_baseline", "prompt": "I've reopened the model. We measured stage A at 70 t/h and stage B at 90 t/h. Calculate sustained throughput. What would changing stage B to 100 t/h do?" }
+      ]
+    },
+    {
+      "id": "parallel-capacity",
+      "turns": [{ "purpose": "calculated_baseline", "prompt": "Two independent lines process separate feeds into the same product stream. They can run together without sharing a capacity limit. Line A sustains 70 t/h and line B sustains 90 t/h. Model total throughput and tell me what happens if line B reaches 100 t/h." }]
+    },
+    {
+      "id": "maintenance-disjoint",
+      "turns": [{ "purpose": "calculated_baseline", "prompt": "Model April maintenance spend in dollars. Contractor invoices were $300 for mechanical and $100 for electrical work. Parts cost $200 and no parts were included in contractor invoices. How much would spend change if parts cost $250 instead?" }]
+    },
+    {
+      "id": "maintenance-overlap",
+      "turns": [{ "prompt": "Model April maintenance spend from $400 in contractor invoices and $200 in parts. Some of those parts may already be on the contractor invoices. How much could we save by cutting parts spend by $50?" }]
+    },
+    {
+      "id": "legacy-manual",
+      "setup": { "fixture": "assets/workspace-legacy-manual.v1.json" },
+      "turns": [{ "purpose": "answer", "prompt": "Open this saved production model. What output does it give and what would 90 hours of downtime do? Leave my saved model as it is." }]
+    }
+  ]
+}

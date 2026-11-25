@@ -7,6 +7,7 @@ import { parseFormula } from "../formula/parser";
 import { calculateScenarioGraph, getActiveScenarioOverrides } from "../scenario/scenario";
 import { rankScenarioInputNodes } from "../scenario/sensitivity";
 import type { GraphCalculationResult, VdtNode, VdtProject } from "../types";
+import { readNodeBaselineValue } from "../utils";
 
 export const EXCEL_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -525,7 +526,7 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
   }
   for (const [id, entry] of Object.entries(mapping.source)) {
     const node = nodeById.get(id)!;
-    const value = node.baselineValue ?? node.value;
+    const value = readNodeBaselineValue(node);
     const info = provenance(project, node);
     text(source, entry.row, 1, entry.kpiLabel);
     add(source, { row: entry.row, column: 2, ...(value === undefined ? {} : Number.isFinite(value) ? { number: value } : { formula: "NA()", error: "#NUM!" }), label: node.name, style: 9 });

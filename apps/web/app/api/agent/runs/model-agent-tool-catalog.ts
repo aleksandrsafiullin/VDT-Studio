@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { AgentToolError, type ToolRegistry } from "@vdt-studio/vdt-agent-runtime";
 import { z } from "zod";
+import { WORKSPACE_OPERATION_TOOL_NAMES } from "./workspace-operation-tools";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 export const TARGET_MODEL_AGENT_TOOLS = [
   "tools.describe",
+  ...WORKSPACE_OPERATION_TOOL_NAMES,
   "skill.list",
   "skill.search",
   "skill.read",
@@ -26,14 +28,19 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "data.aggregate",
   "data.read_rows",
   "data.write_inputs",
+  "data.open_file_import",
+  "vdt.open_suggested_kpis",
   "vdt.create_draft",
   "vdt.set_decomposition_plan",
   "vdt.inspect_hierarchy",
+  "vdt.read_decomposition_assumptions",
+  "vdt.record_decomposition_assumption",
   "vdt.reparent_branch",
   "vdt.add_driver",
   "vdt.add_drivers_batch",
   "vdt.instantiate_subtree",
   "vdt.add_edge",
+  "vdt.edit_edge",
   "vdt.update_node",
   "vdt.fill_input_values_batch",
   "vdt.delete_node",
@@ -41,6 +48,9 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "vdt.validate",
   "vdt.layout",
   "vdt.calculate",
+  "vdt.probe_factor",
+  "vdt.read_back_calculation",
+  "vdt.set_back_calculation",
   "project.get_current",
   "project.read_current",
   "project.get_selected_node",
@@ -48,6 +58,8 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "project.get_subtree",
   "project.get_recent_manual_changes",
   "project.observe_manual_change",
+  "project.open_workspace",
+  "vdt.open_export_formats",
   "formula.parse",
   "formula.extract_references",
   "formula.check_references",

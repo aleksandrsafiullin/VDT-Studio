@@ -3,13 +3,16 @@
 import { useEffect, useRef } from "react";
 import { CircleAlert, Info, Link2, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
-import { calculateGraph, getDecompositionContextGroupIds, validateGraph } from "@vdt-studio/vdt-core";
+import { calculateGraph, getDecompositionContextGroupIds, evaluateModelReadiness, isIllustrativeValue, readDecompositionAssumptions, readNodeBaselineValue } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
+import { BranchParentEditor } from "./branch-parent-editor";
+import { DecompositionAssumptionEditor } from "./decomposition-assumption-editor";
 import { FormulaEditorField } from "./formula-editor";
+import { GraphLinkEditor } from "./graph-link-editor";
 import { GoalSeekSettings } from "./goal-seek-settings";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./workspace-shell.module.css";
@@ -46,6 +49,8 @@ function parseFiniteInput(value: string) {
 export function NodeInspector() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const project = useVdtStudioStore((state) => state.project);
+  const activeProjectId = useVdtStudioStore((state) => state.workspace.activeProjectId);
+  const activeVdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
   const selectedPanelTab = useVdtStudioStore((state) => state.selectedPanelTab);
   const updateNode = useVdtStudioStore((state) => state.updateNode);
@@ -58,7 +63,7 @@ export function NodeInspector() {
 
   const node = project.graph.nodes.find((candidate) => candidate.id === selectedNodeId) ?? project.graph.nodes[0];
   const calculation = calculateGraph(project);
-  const validation = validateGraph(project);
+  const validation = evaluateModelReadiness(project, { purpose: "structural_model" }).validation;
   const nodeErrors = [...validation.errors, ...calculation.errors.filter(item =>
     !validation.errors.some(existing => existing.nodeId === item.nodeId && existing.type === item.type))]
     .filter(item => !item.nodeId || item.nodeId === node?.id);
@@ -98,16 +103,20 @@ export function NodeInspector() {
   const sourceNote = node.valueSource?.note?.trim();
   const derived = Boolean(node.formula?.trim());
   const referenceGroup = getDecompositionContextGroupIds(project.graph, project.rootNodeId).has(node.id);
+  const decompositionNotes = new Set(readDecompositionAssumptions(node).map(({ note }) => note.trim()));
   const assumptionNotes = [...new Set((node.assumptions ?? [])
     .map((note) => note.trim())
-    .filter((note) => note && !sourceNote?.includes(note)))];
+    .filter((note) => note && !sourceNote?.includes(note) && !decompositionNotes.has(note)))];
   const reference = node.valueSource?.catalogRef;
   const sourceUrl = reference && /^https?:\/\/\S+$/.test(reference) ? reference : undefined;
+  const inputValue = readNodeBaselineValue(node);
+  const illustrative = inputValue !== undefined && !derived && !node.goalSeek && isIllustrativeValue(node);
+  const currentValue = calculation.values[node.id];
   const valueField = !referenceGroup ? (
     <Field label={node.goalSeek ? "Back-calculated Base" : derived ? "Source value" : "Baseline value"}>
       <TextInput
         type="number"
-        value={node.goalSeek ? calculation.values[node.id] ?? "" : node.baselineValue ?? node.value ?? ""}
+        value={node.goalSeek ? currentValue ?? "" : inputValue ?? ""}
         data-testid={node.goalSeek ? "node-back-calculated-value" : derived ? "node-source-value" : "node-baseline-value"}
         readOnly={derived || !!node.goalSeek}
         onChange={(event) => { if (!derived && !node.goalSeek) updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value)); }}
@@ -147,9 +156,10 @@ export function NodeInspector() {
             <section className={styles.valueHero} aria-label="Current KPI value">
               <p className={styles.valueLabel}>Value</p>
               <div className={styles.valueRow}>
-                <div className={clsx(styles.valueNumber, referenceGroup && styles.referenceValue)}>{referenceGroup ? "Reference group" : formatNumber(calculation.values[node.id])}</div>
+                <div className={clsx(styles.valueNumber, referenceGroup && styles.referenceValue)}>{referenceGroup ? "Reference group" : currentValue === undefined ? "" : formatNumber(currentValue)}</div>
                 {!referenceGroup ? <span className={styles.valueUnit} title={node.unit ?? "Unit not set"}>{node.unit ?? "n/a"}</span> : null}
               </div>
+              {illustrative && <p className="text-xs text-amber-800">Illustrative estimate</p>}
             </section>
 
             {(sourceNote || assumptionNotes.length > 0 || reference) && (
@@ -225,6 +235,18 @@ export function NodeInspector() {
                 </div>
               ) : null}
             </section>
+
+            {selectedNodeId === node.id && (
+              <BranchParentEditor key={JSON.stringify([activeProjectId, activeVdtId, project.id, node.id])}
+                project={project} workspaceProjectId={activeProjectId} vdtId={activeVdtId} nodeId={node.id} />
+            )}
+
+            {selectedNodeId === node.id && (
+              <GraphLinkEditor key={JSON.stringify([activeProjectId, activeVdtId, project.id, node.id])}
+                project={project} workspaceProjectId={activeProjectId} vdtId={activeVdtId} nodeId={node.id} />
+            )}
+
+            <DecompositionAssumptionEditor key={`${activeVdtId}:${project.id}:${node.id}`} projectId={project.id} vdtId={activeVdtId} node={node} />
 
             <div className={styles.inspectorFooter}>
               <Button

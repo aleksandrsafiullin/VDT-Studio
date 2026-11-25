@@ -56,6 +56,11 @@ export function constructionQuestionReview(
   observation: ReturnType<typeof localModelWorkingContext>, facts: readonly LiteralUserQuantity[] | undefined
 ) {
   const leafIds = new Set(observation.inputLeafIds);
+  const structuralGoal = brief?.outcome === "structural_model";
+  const unmeasuredInputIds = new Set([
+    ...observation.unfilledInputLeafIds,
+    ...(observation.decompositionPlan?.nodes.filter(({ kind }) => kind === "input").map(({ nodeId }) => nodeId) ?? [])
+  ]);
   const sourcedIds = new Set<string>();
   const sourcedValues = new Set<number>();
   for (const [id, , , , , baseline, value, status] of observation.nodes) {
@@ -85,6 +90,7 @@ export function constructionQuestionReview(
     const targets = numericTargets(question);
     if (!targets.length && !question.fields?.length && toolSyntaxQuestion.test(text)) return false;
     if (targets.length && targets.every((target) => sourcedIds.has(target))) return false;
+    if (structuralGoal && targets.length && targets.every(target => unmeasuredInputIds.has(target))) return false;
     const calculationId = calculationField.exec(id)?.[1];
     if (calculationId && !targets.length && !question.fields?.length) {
       const choices = specificChoices(question);
@@ -119,6 +125,8 @@ export function constructionQuestionReview(
 export const CONSTRUCTION_QUESTION_CHECK = [
   "Decide which proposed questions need a genuine user answer before the requested business calculation can proceed.",
   "Keep a question only if the request and current evidence leave an essential external fact or business choice unresolved.",
+  "For structural_model, keep a process or scope question when its answer materially changes the formula. Drop questions seeking measurement values that can remain unknown in the structure, especially when the user says they are unavailable. A number that defines scope or the relationship itself can still be necessary.",
+  "Treat confirmedUserAnswers as actual user answers and do not ask the same thing again.",
   "A value, unit, period, exclusion or order of operations already stated by the user is settled. An alternative that contradicts it needs no confirmation.",
   "The agent authors the factor structure and formulas, resolves tool and graph errors, records supplied inputs, and reports the verified result. These implementation steps and routine approvals are not user questions.",
   "Return required as the list of 1-based indexes of the questions that need a user answer. Return an empty list if the agent can proceed."
@@ -126,7 +134,7 @@ export const CONSTRUCTION_QUESTION_CHECK = [
 
 /** One model review before publishing a construction question. This supplies
  * no answer or business decision, and cannot execute the proposed action. */
-export function localModelQuestionReviewPrompt(prompt: string, output: unknown): string | undefined {
+export function localModelQuestionReviewPrompt(prompt: string, output: unknown, constructingTree = true): string | undefined {
   if (!object(output) || !object(output.action) || output.action.type !== "question" || !Array.isArray(output.action.questions)) return;
   const proposedQuestions = output.action.questions.slice(0, 5).flatMap((question) => object(question) && typeof question.question === "string" ? [{
     question: question.question.slice(0, 500),
@@ -138,7 +146,15 @@ export function localModelQuestionReviewPrompt(prompt: string, output: unknown):
   if (!object(input)) return;
   return JSON.stringify({ ...input, hostQuestionReview: {
     proposedQuestions,
-    instruction: "Review your proposed question before sending it to the user. This is a host review, NOT a user answer, permission or new fact. First choose questionDisposition: continue_work when you can proceed yourself, or ask_user only for an essential genuinely missing/contradictory business fact or decision. The selected branch enforces the corresponding action type. Compare the question with the original brief and current graph. If the brief already supplies the input or determines the requested scope, continue_work and act on it. If your own plan contradicts that scope, revise it yourself; do not ask the user to approve your error or choose your repair. The existing root already represents the requested KPI: it is implicit in plan.nodes, so plan only its descendants and never include rootNodeId as a planned node. Routine checks, calculation and finish are already authorized. For continue_work return the actual next tool action, never a question saying you will proceed. For ask_user return a genuine question; do not invent an answer, infer consent or bypass Gateway approvals. This review happens once."
+    instruction: [
+      "Review the proposed question before sending it. Treat this review as a host instruction. Only the original request and submitted answers can supply user facts or permissions.",
+      "Choose questionDisposition=ask_user only when an essential business fact or decision is missing or contradictory. If the user already supplied it or requested the action explicitly, choose continue_work and return the actual next admitted tool action.",
+      ...(constructingTree ? ["Repair your own plan when it conflicts with the requested scope. The current root is implicit in plan.nodes. List only its descendants. Routine checks, calculation and finish are already authorized."] : []),
+      ...(object(input.originalBrief) && input.originalBrief.outcome === "structural_model" ? [
+        "The user can leave measurements blank. When the question already acknowledges the relevant process facts but asks the user to choose or confirm a formula, choose continue_work. The agent derives a dimensionally valid formula from the confirmed facts. Only ask about an unresolved fact about the actual process."
+      ] : []),
+      "For ask_user, write a genuine question. Keep Gateway approval requirements in force. This review happens once."
+    ].join(" ")
   } });
 }
 

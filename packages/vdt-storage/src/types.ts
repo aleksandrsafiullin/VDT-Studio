@@ -310,6 +310,12 @@ export interface ConversationRecord {
   updatedAt: string;
 }
 
+export interface ConversationScope {
+  projectId: string;
+  vdtId: string;
+  conversationId: string;
+}
+
 export interface MessageRecord {
   id: string;
   conversationId: string;
@@ -324,6 +330,17 @@ export interface MessageRecord {
   createdAt: string;
   startedAt?: string | undefined;
   endedAt?: string | undefined;
+}
+
+export type AgentConversationMessage = Omit<MessageRecord, "createdAt" | "position" | "agentRunId" | "conversationId"> & {
+  legacyMessageId: string;
+};
+
+export interface AgentConversationProjection {
+  title: string;
+  mode: string;
+  scoped: boolean;
+  messages: readonly AgentConversationMessage[];
 }
 
 export interface AgentRunRecord {
@@ -503,8 +520,13 @@ export interface VdtDatabase {
   getConversation(conversationId: string): ConversationRecord | null;
   listConversations(projectId: string): ConversationRecord[];
   listMessages(conversationId: string): MessageRecord[];
-  createAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">): AgentRunRecord;
-  updateAgentRun(runId: string, patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>): AgentRunRecord;
+  listScopedConversationMessages(scope: ConversationScope, limit?: number): MessageRecord[];
+  createAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">, conversation?: AgentConversationProjection): AgentRunRecord;
+  updateAgentRun(
+    runId: string,
+    patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>,
+    conversation?: AgentConversationProjection
+  ): AgentRunRecord;
   getAgentRun(runId: string): AgentRunRecord | null;
   getAgentRunSupervisorFence(runId: string): { sessionEpoch: number; ownerToken: string; orphanTerminated: boolean } | null;
   listAgentRuns(projectId: string): AgentRunRecord[];

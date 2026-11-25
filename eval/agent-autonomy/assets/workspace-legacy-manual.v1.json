@@ -1,0 +1,96 @@
+{
+  "id": "workspace-legacy-manual",
+  "name": "Monthly production",
+  "rootNodeId": "output",
+  "graph": {
+    "nodes": [
+      {
+        "status": "accepted",
+        "aiGenerated": false,
+        "createdAt": "2026-11-24T00:00:00.000Z",
+        "updatedAt": "2026-11-24T00:00:00.000Z",
+        "id": "output",
+        "name": "Output",
+        "unit": "t",
+        "type": "root_kpi",
+        "formula": "(scheduled - downtime) * rate"
+      },
+      {
+        "status": "accepted",
+        "aiGenerated": false,
+        "createdAt": "2026-11-24T00:00:00.000Z",
+        "updatedAt": "2026-11-24T00:00:00.000Z",
+        "id": "scheduled",
+        "name": "Scheduled hours",
+        "unit": "h",
+        "type": "input",
+        "value": 1000,
+        "baselineValue": 1000,
+        "valueStatus": "user_provided_value"
+      },
+      {
+        "status": "accepted",
+        "aiGenerated": false,
+        "createdAt": "2026-11-24T00:00:00.000Z",
+        "updatedAt": "2026-11-24T00:00:00.000Z",
+        "id": "downtime",
+        "name": "Downtime",
+        "unit": "h",
+        "type": "input",
+        "value": 100,
+        "baselineValue": 100,
+        "valueStatus": "user_provided_value"
+      },
+      {
+        "status": "accepted",
+        "aiGenerated": false,
+        "createdAt": "2026-11-24T00:00:00.000Z",
+        "updatedAt": "2026-11-24T00:00:00.000Z",
+        "id": "rate",
+        "name": "Productivity",
+        "unit": "t/h",
+        "type": "input",
+        "value": 2,
+        "baselineValue": 2,
+        "valueStatus": "user_provided_value"
+      }
+    ],
+    "edges": [
+      {
+        "id": "scheduled-edge",
+        "sourceNodeId": "output",
+        "targetNodeId": "scheduled",
+        "relation": "formula_dependency"
+      },
+      {
+        "id": "downtime-edge",
+        "sourceNodeId": "output",
+        "targetNodeId": "downtime",
+        "relation": "negative_driver"
+      },
+      {
+        "id": "rate-edge",
+        "sourceNodeId": "output",
+        "targetNodeId": "rate",
+        "relation": "multiplicative_driver"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "baseline",
+      "name": "Baseline",
+      "isMain": true,
+      "overrides": [],
+      "createdAt": "2026-11-24T00:00:00.000Z",
+      "updatedAt": "2026-11-24T00:00:00.000Z"
+    }
+  ],
+  "versions": [],
+  "dataSources": [],
+  "aiSettings": {
+    "defaultProviderId": "none"
+  },
+  "createdAt": "2026-11-24T00:00:00.000Z",
+  "updatedAt": "2026-11-24T00:00:00.000Z"
+}

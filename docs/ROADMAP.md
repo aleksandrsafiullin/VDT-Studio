@@ -20,6 +20,18 @@ per-platform provider matrix and final GitHub delivery assets. Both platform VMs
 are retained on Corsair-SSD. A narrower Mac-only milestone does not complete
 the agreed release. Hosted service work remains outside this scope.
 
+## Structural drafts and measurements (2026-11-24)
+
+The chat composer exposes the outcome for the next task. The verified
+structure summary shows the formulas and assumptions recorded at completion,
+with a current measurement checklist that opens the existing Inspector.
+Chat can also open the current project workspace through the editor's save guard.
+Project and VDT changes remain user actions in the workspace. The workspace
+supports creation from an example, duplication of a saved VDT and reviewed
+portable JSON import. Editor and chat share link-edit rules.
+Follow live acceptance and provider qualification in the
+[AI-first workspace execution ledger](implementation/AI_FIRST_WORKSPACE_EXECUTION_2026-11-24.md).
+
 ## Suggested KPI selected guidance (2026-11-03)
 
 Implemented locally: Suggested KPI receives the full immutable Skill selected in
@@ -244,6 +256,11 @@ and card width are preserved.
 
 ## Agent chat interface
 
+Saved VDT conversations span multiple model bindings. The bounded decision
+projection recognizes explicit definitions and submitted answers. Free-form
+semantic extraction, live cross-provider acceptance and desktop qualification
+remain open.
+
 Implemented for local web: a neutral conversation rail, collapsed model context,
 dark user bubbles, formatted assistant responses with Copy, and one rounded
 composer. The welcome panel appears with the generated tree-specific prompts before Smart KPI starts preparing suggestions. The + menu exposes existing file attachment
@@ -384,7 +401,7 @@ Implemented at alpha level:
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - Scenario Mode with Settings-style rounded neutral surfaces, larger summary totals, an initially collapsed calculation trace using the inspector toggle icon, Baseline-matched comma-grouped/decimal-dot resting values independent of browser locale, full-precision editing with grouped-number paste and keyboard stepping, and saved per-scenario KPI action comments that survive override reset and copy with scenario cloning; Export to Excel includes the selected scenario's comments in a wrapped Comment column for drivers and additional overrides, independently of numeric changes;
 - a unified Versions side panel with readable/named checkpoints, before/after KPI/formula comparison, automatic pre-restore backups and session Undo guarded against later edits; the existing 20-snapshot FIFO and W0.5 persistence limitations remain;
-- direct editable Excel export in the editor and product CLI output (JSON/Markdown);
+- editable Excel, JSON and Markdown export in the editor and JSON/Markdown output in the CLI;
 - a simplified node inspector with Properties/Warnings and direct edits, with AI work in the chat and node-card incoming-KPI action;
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
 - local whisper.cpp dictation with incremental editable drafts and confirmed model downloads; native Windows and packaged microphone qualification remain open ([voice input](VOICE_INPUT.md));
@@ -554,7 +571,7 @@ Priority: **P2**. Depends on a certified Wave 5.
 4. Scanned PDF/OCR with confidence and mandatory reconciliation.
 5. Database/API connectors, scheduled refresh and multi-file joins.
 6. PowerPoint summary and PDF report output.
-7. Project-workspace archive export/import containing all project data, VDTs and attached source files; planned replacement for the removed editor JSON import/export.
+7. Project-workspace archive export and import containing project data, VDTs and attached source files. Portable JSON import of a single VDT is available in the workspace.
 
 Editable Excel calculation export is implemented independently of this wave. It replaces image export with a full left-to-right VDT workbook, live Baseline/selected-scenario Potential formulas and native cell-border connectors. The filename follows the VDT display name. Visible sheets are ordered Scenario Mode, VDT, Source, Guide. Numbers display at most two decimals and space-separated thousands while preserving full calculation precision. An editable Source table owns numeric inputs, and compact Scenario Mode mirrors selected-scenario totals, isolated input-driver effects and the interaction residual with live formulas. Unconfigured scenario values link to the same-row Baseline cells; changing scenario values updates VDT Potential, including non-main scenarios and scratch analysis. Workbook import/synchronization and external source refresh remain outside the implemented export scope.
 

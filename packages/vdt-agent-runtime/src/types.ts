@@ -202,7 +202,9 @@ export interface AgentArtifact {
     | "critic_report"
     | "draft_project"
     | "patch"
-    | "memory_patch";
+    | "memory_patch"
+    | "excel_workbook"
+    | "editor_handoff";
   summary: string;
   payload: unknown;
   createdAt: string;
@@ -243,7 +245,20 @@ export interface SubagentReport {
 
 export type VdtAgentMode = "generate_vdt" | "continue_project" | "deepen_node" | "review_project";
 
+export type VdtAgentOutcome = "answer" | "structural_model" | "calculated_baseline";
+
+export interface AgentFinishOutcome {
+  outcome: VdtAgentOutcome;
+  policyVersion: string;
+  projectRevision: number;
+  projectHash: string;
+  missingInputs?: import("@vdt-studio/vdt-core").MissingModelInput[] | undefined;
+  missingInputCount?: number | undefined;
+  rootValue?: number | undefined;
+}
+
 export interface VdtAgentStartInput {
+  activeScenarioId?: string | undefined;
   personalisation?: import("@vdt-studio/vdt-core").AiPersonalisation | undefined;
   prompt?: string | undefined;
   rootKpi?: string | undefined;
@@ -278,7 +293,10 @@ export interface VdtAgentWorkspaceContext {
 }
 
 export interface VdtAgentStartRequestBase {
+  conversationId?: string | undefined;
+  priorConversationRunId?: string | undefined;
   mode: VdtAgentMode;
+  outcome?: VdtAgentOutcome | undefined;
   input: VdtAgentStartInput;
   workspace?: VdtAgentWorkspaceContext | undefined;
   options?: {
@@ -319,6 +337,17 @@ export interface VdtAgentStartRequest extends VdtAgentStartRequestBase {
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
   executionBindingId?: string | undefined;
+  /** Host-derived, scoped carryover. Public start requests cannot supply it. */
+  conversationContext?: {
+    policy: string;
+    decisions: Array<{
+      topic: string;
+      value: string;
+      source: { messageId: string; runId: string };
+      supersedes?: { messageId: string; runId: string } | undefined;
+    }>;
+    unresolvedQuestions: Array<{ id: string; text: string; source: { messageId: string; runId: string } }>;
+  } | undefined;
   /** Server-owned skill resolution for a new tree, with its initial Context revision. */
   skillResolution?: {
     selectionRevision: number;
@@ -542,6 +571,7 @@ export interface AgentDecisionContext {
   mode: VdtAgentMode;
   step: number;
   userRequest: VdtAgentStartInput;
+  conversationContext?: VdtAgentStartRequest["conversationContext"];
   researchPolicy: {
     mode: ResearchMode;
     providerConfigured?: boolean | undefined;
@@ -618,6 +648,7 @@ export type AgentUserMessage =
       text: string;
       personalisation?: import("@vdt-studio/vdt-core").AiPersonalisation | undefined;
       selectedNodeId?: string | null | undefined;
+      activeScenarioId?: string | null | undefined;
       researchMode?: ResearchMode | undefined;
     }
   | {
@@ -653,6 +684,7 @@ export interface VdtAgentRunSnapshot {
   pendingChangeSet?: VdtChangeSet | undefined;
   pendingMutationProposal?: MutationProposal | undefined;
   finalReport?: string | undefined;
+  finishOutcome?: (AgentFinishOutcome & { state: "final_persisted" }) | undefined;
   /** Compact read-only execution projection. Durable bindings, checkpoints,
    * external session IDs, and receipts stay in internal run state. */
   executionSummary?: AgentExecutionSummaryV2 | undefined;

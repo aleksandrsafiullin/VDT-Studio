@@ -127,7 +127,10 @@ it.each([
     const beforeReceipt = store.getState();
     expect(beforeReceipt.workspace.draftRevisionBase?.expectedHead).toEqual(staleBase.expectedHead);
     if (editedDuringRun) {
-      store.getState().updateNode("manual_driver", { description: "Manual edit during agent run" });
+      store.getState().updateNodeBaselineValue("manual_driver", 0);
+      expect(store.getState().project.graph.nodes.find((node) => node.id === "manual_driver")).toMatchObject({
+        baselineValue: 0, value: 0, valueStatus: "user_provided_value", valueSource: { sourceTier: "user_input" }
+      });
     }
     const beforeStop = store.getState().project;
     if (terminal === "cancelled") {
@@ -198,9 +201,15 @@ it.each([
 
     // A separate editor with the old base still cannot advance its CAS.
     store.setState({ project: stale.project, workspace: stale.workspace });
-    store.getState().updateNode("manual_driver", { description: "Unsaved stale-tab edit" });
+    store.getState().updateNodeBaselineValue("manual_driver");
     expect(await store.getState().saveActiveWorkspaceVdt()).toBe(false);
-    expect(store.getState().project.graph.nodes.find((node) => node.id === "manual_driver")?.description).toBe("Unsaved stale-tab edit");
+    const localCorrection = store.getState().project.graph.nodes.find((node) => node.id === "manual_driver");
+    expect(localCorrection).toMatchObject({ valueStatus: "unknown" });
+    expect(localCorrection).not.toHaveProperty("baselineValue");
+    expect(localCorrection).not.toHaveProperty("value");
+    expect(localCorrection).not.toHaveProperty("valueSource");
+    expect(storage.readVdtRevision(storage.listVdtRevisions(vdtId).at(-1)!).graph.nodes
+      .find((node) => node.id === "manual_driver")).toMatchObject({ baselineValue: 1 });
     expect(storage.listVdtRevisions(vdtId)).toHaveLength(3);
 
     // The server also refuses stale starts, including old clients that omit CAS.

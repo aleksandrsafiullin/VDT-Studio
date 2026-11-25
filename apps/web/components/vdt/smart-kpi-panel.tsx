@@ -71,6 +71,10 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   useEffect(() => { setEditing(active?.mode === "manual"); }, [active?.targetNodeId, active?.mode, controller.ownerKey]);
 
   useEffect(() => {
+    if (active?.returnFocus) panel.current?.focus({ preventScroll: true });
+  }, [active]);
+
+  useEffect(() => {
     if (!active || !context || context.targetNodeId !== active.targetNodeId) return;
     let current = book.current.get(controller.ownerKey, active.targetNodeId);
     const manual = active.mode === "manual";
@@ -221,7 +225,7 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
     if (event.key === "Tab" && event.shiftKey && (document.activeElement === panel.current || document.activeElement === panel.current?.querySelector(focusableSelector))) {
-      event.preventDefault(); active.trigger.focus();
+      event.preventDefault(); (active.returnFocus ?? active.trigger).focus();
     }
   };
 

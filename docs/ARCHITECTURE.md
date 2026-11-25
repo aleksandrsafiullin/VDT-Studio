@@ -186,6 +186,16 @@ unmounted owners cannot publish a connection. Other execution categories and
 intentionally removed subscriptions are preserved. This does not create a model
 conversation or change server canary/qualification policy.
 
+## Saved VDT conversations
+
+Runs can share one opaque conversation ID scoped to a project and VDT. Start
+admission validates the scope and resolves older run links on the server. For a
+continuing run, ordered SQLite messages supply a bounded, user-sourced decision
+projection. The run uses the current visible graph under the existing head CAS
+or loads the saved graph when no draft was supplied. HTTP responses can display
+earlier messages without changing run-owned receipts, events or sessions.
+See [ADR-015](adr/ADR-015-ai-first-workspace-operations.md#conversation-and-decisions).
+
 ## Local skill library and selection
 
 The additive V1 repository is owned by `packages/vdt-storage/src/skill-library.ts`
@@ -722,6 +732,24 @@ startup restoration.
 
 ### Scenario comments and presentation
 
+`vdt-core` exposes typed commands for scenario creation, cloning, renaming,
+main selection, deletion, numeric overrides and per-KPI comments. Commands use
+scenario and KPI IDs. The caller supplies the operation ID and timestamp.
+Creation and cloning derive the new scenario ID from the operation ID so the
+same operation can be retried against a project that already includes it.
+Deletion returns the neighboring fallback for the editor's local selection
+and promotes that neighbor if the deleted scenario was main. The editor owns
+the active tab independently of the project's main scenario.
+
+An override uses an absolute finite value. Zero applies as a value and null
+clears the override. Fixed-in-scenario KPIs reject override edits and ignore
+override values retained from earlier edits. The shared comparison reads the
+input snapshot with the same scenario engine as the editor. It returns the
+root baseline, scenario value, delta and unit with previews of up to 20
+impacted KPIs, errors and warnings each, plus their full counts. Scenario Mode
+uses the full engine trace for its detailed local display.
+
+
 `VdtScenario.comments?: { nodeId, text }[]` stores per-KPI action notes separately
 from numeric `overrides`. `updateScenarioComment` updates only the addressed
 scenario, and clone copies both collections independently. Ordinary project
@@ -745,13 +773,21 @@ Focus and blur alone never write numeric changes.
 
 `Versions -> selected project.versions checkpoint -> deterministic base comparison / checkpointed restore -> existing draft and revision persistence`
 
-`vdt-core` owns snapshot cloning, the 20-entry FIFO and `restoreVersionWithCheckpoint`. The restore helper resolves the original target before adding the backup so the oldest target remains restorable at capacity. Snapshot IDs include a collision-checked sequence for multiple checkpoints in one millisecond. Embedded snapshots omit nested version history before cloning.
+`vdt-core` owns snapshot cloning, the 20-entry FIFO and `restoreVersionWithCheckpoint`. The restore helper resolves the original target before adding the backup so the oldest target remains restorable at capacity. Named saves, renames and checkpointed restores use the shared core version operation with a host-supplied operation ID and timestamp. Named saves use that ID to identify a retry while the snapshot remains in history. Automatic snapshots from existing callers still derive an ID with a collision-checked sequence. Embedded snapshots retain scenarios and source references and omit nested history before cloning. The version comparison reads the same base calculations for the editor and other operation callers and reports scenario and source changes separately.
+
+The project workspace compares two saved VDT revisions through the existing comparison route. The editor verifies both revision scopes and uses a deterministic ID for the ordered pair. A competing submit can reopen the same result. Changing projects cancels the previous panel request and clears its visible result.
+
+Blank, example, copied and imported VDTs share the existing create-and-initial-revision transaction. The editor pins the selected project and repeats the exact journaled request after an ambiguous response. Duplication reads the selected saved VDT in the same project. Portable import validates the local snapshot and detaches external bindings before submission. The currently open draft and original saved VDT retain their own revisions.
+
+Chat `scenario.save` uses the shared scenario operation to save a name and its stated overrides as one revision. It reuses a uniquely matching name in the current VDT. Repeating the same overrides makes no new revision. It preserves other overrides and the baseline graph, and returns the scenario ID for comparison and export.
 
 The web store owns manual checkpoint naming, automatic readable pre-change names, revision increments, restored selection/brief reconciliation and `project_replaced` notifications to an active agent. UI presentation also translates legacy automatic labels. Restore preserves saved node positions. A non-persisted Undo record identifies the backup and restored graph/scenario/source/review references and active VDT; later model changes, missing backups or a different VDT invalidate one-click Undo. The backup itself stays in `project.versions`, including localStorage recovery and ordinary saved VDT revision payloads. This does not introduce a second revision API or close the existing W0.5 persistence/ownership gaps.
 
 ### Excel export flow
 
-`UI Export Excel -> exportProjectExcel(project, { scenarioId: activeScenarioId }) -> Uint8Array workbook -> browser Blob download (<VDT display name>.xlsx)`
+`UI Export Excel -> createExcelWorkbook(project, activeScenarioId) -> Uint8Array workbook -> browser Blob download (<VDT display name>.xlsx)`
+
+The local chat download handler uses the same core operation. The host describes a workbook with an ID, saved revision, resolved scenario, filename and same-origin download URL. The URL checks the persisted run’s project and VDT ownership before reading the immutable revision and serving its workbook. Repeated requests for the same run, revision and scenario resolve to the same descriptor. An unavailable revision or requested scenario returns an explicit error. Providers receive the descriptor without workbook bytes or a host filesystem path. The Model Agent catalog exposes `export.excel`. The chat activity panel renders the workbook descriptor from the run's retained artifacts.
 
 The browser calls the deterministic `vdt-core` exporter with the complete current project and selected scenario ID. The exporter creates Office Open XML sheets, styles, native border connectors, a native Source table and live formulas in memory, then packages them with `fflate`; it does not call a provider or upload the workbook. `getExcelNodeCells(project)` exposes the VDT stable node-ID-to-cell mapping, and `getExcelWorkbookCells(project, options)` exposes Source/scenario references used by formulas and tests.
 
@@ -770,7 +806,7 @@ provenance comments.
 
 Native conditional formats select literal-space thousands grouping by displayed magnitude without changing Excel's global separators or rounding stored values/formulas. Numeric displays use two decimals; magnitudes at least `1e48` use scientific notation. Base/Potential prefixes keep negative signs with their numbers. Percentage caches use the application's 0–100 scale with a literal percent-sign format. Source/Comment metadata does not establish external refresh connections.
 
-Cached values come from core calculations, and workbook settings request recalculation in Excel. Collapsed/filtered canvas state does not limit export. A filename helper preserves the VDT display name except for filesystem-unsafe characters, trailing Windows dots/spaces and reserved names. A binary download helper preserves workbook bytes and revokes its Blob URL after the download click. The editor has one direct Export Excel action; editor-level JSON import and JSON/Markdown downloads have been removed. Core JSON serialization remains in use by storage and examples, and the CLI retains JSON/Markdown output. Full project archive import/export with source attachments is planned at the project-workspace level.
+Cached values come from core calculations, and workbook settings request recalculation in Excel. Collapsed/filtered canvas state does not limit export. A filename helper preserves the VDT display name except for filesystem-unsafe characters, trailing Windows dots/spaces and reserved names. A binary download helper preserves workbook bytes and revokes its Blob URL after the download click. **Export to Excel** downloads the editor workbook. **More exports** uses the CLI JSON and Markdown serializers. Full project archive import and export with source attachments remain planned.
 
 ### Agent flow
 

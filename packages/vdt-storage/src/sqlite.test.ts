@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { compareVdtProjects, productionVolumeProject, VdtBuilderSession, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import {
@@ -8,7 +10,7 @@ import {
   readProjectManifestFromDatabaseLocation,
   scanProjectLocation
 } from "./index";
-import type { VdtDatabase } from "./types";
+import type { AgentConversationProjection, VdtDatabase } from "./types";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +20,113 @@ afterEach(() => {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+describe("shared conversation transactions", () => {
+  it("serializes overlapping writers from separate SQLite connections", async () => {
+    const { root, dataDir, database, scope, firstRun, secondRun } = openSharedConversation();
+    const writer = launchConversationWriter(root, dataDir, firstRun.id, "concurrent", projection("first_a", "first_b"));
+    const exited = once(writer, "exit");
+    try {
+      const signal = await Promise.race([
+        once(writer.stdout, "data").then(([chunk]) => String(chunk)),
+        exited.then(([code]) => `Writer exited before holding the lock (${code})`)
+      ]);
+      expect(signal).toBe("locked\n");
+      database.updateAgentRun(secondRun.id, { status: "running" }, projection("second_a", "second_b"));
+      expect(await exited).toEqual([0, null]);
+      expect(database.listScopedConversationMessages(scope).map(({ id, position }) => [id, position])).toEqual([
+        ["first_a", 1], ["first_b", 2], ["second_a", 3], ["second_b", 4]
+      ]);
+    } finally {
+      writer.kill();
+      await exited;
+      database.close();
+    }
+  }, 20_000);
+
+  it("rolls back a process crash mid-projection and appends each message once after reopening and retrying", async () => {
+    const { root, dataDir, database, scope, firstRun } = openSharedConversation();
+    const replay = projection("first_message", "second_message");
+    database.close();
+    const crashed = launchConversationWriter(root, dataDir, firstRun.id, "crash", replay);
+    expect(await once(crashed, "exit")).toEqual([null, "SIGKILL"]);
+
+    const reopened = openVdtDatabase(root, { dataDir });
+    try {
+      expect(reopened.getAgentRun(firstRun.id)?.status).toBe("queued");
+      expect(reopened.listScopedConversationMessages(scope)).toEqual([]);
+      reopened.updateAgentRun(firstRun.id, { status: "running" }, replay);
+      reopened.updateAgentRun(firstRun.id, { status: "running" }, replay);
+      expect(reopened.listScopedConversationMessages(scope).map(({ id, position }) => [id, position])).toEqual([
+        ["first_message", 1], ["second_message", 2]
+      ]);
+    } finally {
+      reopened.close();
+    }
+  }, 20_000);
+});
+
+function launchConversationWriter(
+  root: string,
+  dataDir: string,
+  runId: string,
+  mode: "concurrent" | "crash",
+  projection: AgentConversationProjection
+) {
+  return spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import fs from "node:fs";
+    const [storageUrl, root, dataDir, runId, mode, input] = process.argv.slice(1);
+    const { openVdtDatabase } = await import(storageUrl);
+    let writes = 0;
+    let armed = false;
+    const database = openVdtDatabase(root, {
+      dataDir,
+      now: () => {
+        if (armed) {
+          writes++;
+          if (mode === "concurrent" && writes === 1) {
+            // The write transaction holds the lock before updating the run.
+            fs.writeSync(1, "locked\\n");
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+          }
+          // The run and first message have been written but never committed.
+          if (mode === "crash" && writes === 3) process.kill(process.pid, "SIGKILL");
+        }
+        return new Date().toISOString();
+      }
+    });
+    armed = true;
+    try {
+      database.updateAgentRun(runId, { status: "running" }, JSON.parse(input));
+    } finally {
+      database.close();
+    }
+  `, "--", new URL("./index.ts", import.meta.url).href, root, dataDir, runId, mode, JSON.stringify(projection)], {
+    stdio: ["ignore", "pipe", "inherit"]
+  });
+}
+
+function openSharedConversation() {
+  const root = tempRoot();
+  const dataDir = path.join(root, "data");
+  const database = openVdtDatabase(root, { dataDir });
+  const projectId = database.createProject({ id: "shared_project", name: "Mine" }).id;
+  const vdtId = database.createVdt({ id: "shared_vdt", projectId, name: "Ore", rootKpi: "Ore" }).id;
+  const scope = { projectId, vdtId, conversationId: "shared_conversation" };
+  const run = { ...scope, status: "queued", phase: "reading_request", request: {} };
+  const firstRun = database.createAgentRun({ ...run, id: "first_run" }, projection());
+  const secondRun = database.createAgentRun({ ...run, id: "second_run" }, projection());
+  return { root, dataDir, database, scope, firstRun, secondRun };
+}
+
+function projection(...ids: string[]): AgentConversationProjection {
+  return {
+    title: "Mine conversation",
+    mode: "continue_project",
+    scoped: true,
+    messages: ids.map((id) => ({ id, legacyMessageId: `legacy_${id}`, role: "user", content: id }))
+  };
+}
 
 describe("openVdtDatabase", () => {
   it("creates schema v1 and persists projects, VDTs, and revision files across reopen", () => {

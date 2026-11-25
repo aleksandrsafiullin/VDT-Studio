@@ -2,10 +2,11 @@ import { getRegisteredJsonSchema } from "@vdt-studio/model-bridge";
 import type { AgentDecisionContext, LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
 import {
   calculationsWithoutPlannedInputs, constructionNodeUpdateTypes, decompositionPlanErrors, decompositionPlanGroupingErrors,
-  plannedAdditionCandidates, plannedFactorNodeTypes, plannedFactorTypeConflicts, plannedFormulaTargets, plannedOrphanLinks,
+  plannedAdditionCandidates, plannedFactorTypeConflicts, plannedFormulaTargets, plannedOrphanLinks,
   type VdtDecompositionPlan, type VdtNodeType, type VdtProject
 } from "@vdt-studio/vdt-core";
-import { boundConstructionArguments, groundExistingIds, groundLiteralValues, groundNodeIds } from "./local-model-output-schema";
+import { boundConstructionArguments, groundExistingIds, groundLiteralValues, groundNodeIds, plannedDriverArguments } from "./local-model-output-schema";
+import { constructionPlanArguments, resolveImplicitRoot } from "./local-model-output-projection";
 import type { HierarchyRepairCall } from "./openai-hierarchy-repair";
 
 type JsonObject = Record<string, unknown>;
@@ -20,8 +21,11 @@ const nativeTools = new Set([
   "vdt.reparent_branch", "vdt.delete_node",
   "vdt.validate", "vdt.calculate", "project.get_node", "project.get_current", "project.read_current",
   "skill.list", "skill.read", "skill.search", "skill.select", "skill.report_gap",
-  "tools.describe", "run.request_finish"
+  "tools.describe", "run.request_finish",
+  "scenario.list", "scenario.save", "scenario.compare", "version.list", "version.edit", "export.excel",
+  "vdt.probe_factor", "vdt.read_decomposition_assumptions"
 ]);
+const singletonModelTools = new Set(["run.request_finish", "user.request_approval", "approval.request"]);
 const statusMessage = { type: "string", minLength: 1, maxLength: 500 };
 const decisions = getRegisteredJsonSchema("agent-decision-v2").anyOf as Array<{ properties: JsonObject }>;
 const questionSchema = decisions.find((branch) => "questions" in branch.properties)!;
@@ -224,6 +228,7 @@ export function buildOpenAiModelTurn(
   const typed = new Map<string, JsonObject>();
   const encoded: string[] = [];
   const choices: JsonObject[] = [];
+  const controlChoices: JsonObject[] = [];
   for (const tool of catalog) {
     if (!record(tool) || typeof tool.name !== "string") continue;
     const name = tool.name;
@@ -294,18 +299,29 @@ export function buildOpenAiModelTurn(
             readReceiptId: { type: "string", const: readReceiptId } }
         })) }
       : strict;
-    choices.push(object({ toolName: tag(name), args: exactRead }));
+    const target = singletonModelTools.has(name) ? controlChoices : choices;
+    target.push(object({ toolName: tag(name), args: exactRead }));
   }
-  if (encoded.length) choices.push(object({ toolName: { type: "string", enum: encoded },
-    argsJson: { type: "string", maxLength: 12_000 } }));
-  batchProperties.calls = { ...calls, ...(resolution || observation?.nodeCount === 0 || buildingFirstLayer || plan?.pendingFactors || options.continueWithoutQuestion ? { maxItems: 1 } : {}),
-    items: { $ref: "#/$defs/toolCall" } };
+  const regularEncoded = encoded.filter(name => !singletonModelTools.has(name));
+  const controlEncoded = encoded.filter(name => singletonModelTools.has(name));
+  for (const [names, target] of [[regularEncoded, choices], [controlEncoded, controlChoices]] as const) {
+    if (names.length) target.push(object({ toolName: { type: "string", enum: names },
+      argsJson: { type: "string", maxLength: 12_000 } }));
+  }
+  const limitToOneCall = resolution || observation?.nodeCount === 0 || buildingFirstLayer || plan?.pendingFactors || options.continueWithoutQuestion;
+  const callArrays = [
+    ...(choices.length ? [{ ...calls, ...(limitToOneCall ? { maxItems: 1 } : {}), items: { $ref: "#/$defs/toolCall" } }] : []),
+    ...(controlChoices.length ? [{ ...calls, maxItems: 1, items: { $ref: "#/$defs/controlCall" } }] : [])
+  ];
+  if (callArrays.length) batchProperties.calls = callArrays.length === 1 ? callArrays[0] : { anyOf: callArrays };
+  const suppressQuestion = options.continueWithoutQuestion || options.reviewInitialPlan
+    || (buildingFirstLayer && observation?.readinessPurpose !== "structural_model");
   action.anyOf = action.anyOf.filter((item) => {
     const kind = (item.properties as { type: { const: string } }).type.const;
-    // The initial turn can clarify direction. Once the accepted draft contains
-    // only its root, choose a construction action before asking for leaf data.
-    if (!finishReceiptId) return kind !== "final"
-      && !(kind === "question" && (buildingFirstLayer || options.continueWithoutQuestion));
+    // A structural goal may require a process decision before a valid plan.
+    // Plan repairs and forced continuation still use construction actions.
+    if (!finishReceiptId) return kind !== "final" && !(kind === "question" && suppressQuestion)
+      && !(kind === "action_batch" && !callArrays.length);
     if (kind !== "final") return false;
     const finalProperties = item.properties as JsonObject;
     finalProperties.finishReceiptId = tag(finishReceiptId);
@@ -318,7 +334,10 @@ export function buildOpenAiModelTurn(
   if (initialPlanRepair) action.anyOf.push(object({ type: tag("apply_plan_repair") }));
   const schema = strictSchema(root);
   if (!schema) return undefined;
-  if (choices.length) schema.$defs = { toolCall: { anyOf: choices } };
+  if (callArrays.length) schema.$defs = {
+    ...(choices.length ? { toolCall: { anyOf: choices } } : {}),
+    ...(controlChoices.length ? { controlCall: { anyOf: controlChoices } } : {})
+  };
   const actions = new Set(action.anyOf.map((item) => (item.properties as { type: { const: string } }).type.const));
   function decode(raw: unknown): unknown {
     const restored = omitAbsentFields(raw, root);
@@ -374,37 +393,6 @@ export function buildOpenAiModelTurn(
     return encoded.includes(tool.name) ? [{ name: tool.name, description: tool.description, inputJsonSchema: tool.inputJsonSchema }] : [];
   });
   return { schema, decode, toolGuidance, hasHierarchyRepair: !!repair, hasInitialPlanRepair: !!initialPlanRepair };
-}
-
-function constructionPlanArguments(schema: JsonObject, rootId: unknown, firstLayer: boolean): JsonObject {
-  if (typeof rootId !== "string") return schema;
-  const copy = structuredClone(schema);
-  const plan = record(copy.properties) && copy.properties.plan;
-  const nodes = record(plan) && record(plan.properties) && plan.properties.nodes;
-  const fields = record(nodes) && record(nodes.items) && nodes.items.properties;
-  if (!record(fields) || !record(fields.nodeId) || !record(fields.parentNodeId)) return schema;
-  fields.nodeId = { ...fields.nodeId, ...(firstLayer ? { pattern: newDriverId, maxLength: 80 } : {}),
-    description: "The ID of an existing or new descendant. The root is implicit." };
-  fields.parentNodeId = { anyOf: [{ type: "null", description: "A direct child of the existing root." }, {
-    ...fields.parentNodeId, description: `Use ${rootId} or the exact ID of a planned calculated parent. Context entries may use a context parent.`
-  }] };
-  if (record(fields.rationale)) fields.rationale = {
-    ...fields.rationale, description: "Required for context entries. Omit for ordinary formula operands."
-  };
-  if (record(fields.sharedWith)) fields.sharedWith = {
-    ...fields.sharedWith, description: "Only additional calculations that actually use this factor. Omit when its own parent is its only formula user."
-  };
-  return copy;
-}
-
-function resolveImplicitRoot(args: unknown, rootId: unknown): void {
-  if (typeof rootId !== "string" || !record(args) || !record(args.plan) || !Array.isArray(args.plan.nodes)) return;
-  const nodes = args.plan.nodes.filter(record);
-  const ids = new Set(nodes.map((node) => node.nodeId));
-  for (const node of nodes) {
-    const parent = node.parentNodeId;
-    if (parent === null || (typeof parent === "string" && /^root(?:_kpi)?$/i.test(parent) && !ids.has(parent))) node.parentNodeId = rootId;
-  }
 }
 
 type NodeUpdateTypes = { nodeIds: string[]; types?: readonly VdtNodeType[] };
@@ -533,42 +521,4 @@ function orphanLinkArguments(schema: JsonObject, links: NonNullable<OpenAiConstr
     return allowedRelations.length ? [option] : [];
   });
   return variants.length ? { anyOf: variants } : undefined;
-}
-
-function plannedDriverArguments(
-  name: string, schema: JsonObject, plan: OpenAiConstructionPlan, observation: JsonObject | undefined
-): JsonObject | undefined {
-  const batch = name === "vdt.add_drivers_batch";
-  const variants = plan.additions.flatMap(({ parentNodeId: parent, nodeIds: ids }) => {
-    if (batch && ids.length < 2) return [];
-    const option = boundConstructionArguments(name, groundNodeIds(name, schema, [parent], [], []), observation);
-    if (!record(option.properties)) return [];
-    const drivers = option.properties.drivers;
-    const driver = batch && record(drivers) ? drivers.items : option;
-    if (!record(driver) || !record(driver.properties)) return [];
-    const byKind = new Map<VdtDecompositionPlan["nodes"][number]["kind"] | undefined, string[]>();
-    for (const id of ids) {
-      const kind = plan.plannedKinds?.[id];
-      const group = byKind.get(kind) ?? [];
-      group.push(id);
-      byKind.set(kind, group);
-    }
-    const typedDrivers = [...byKind].map(([kind, nodeIds]) => {
-      const args = structuredClone(driver);
-      const fields = args.properties as JsonObject;
-      fields.parentNodeId = tag(parent);
-      fields.nodeId = { type: "string", enum: nodeIds };
-      const types = kind && plannedFactorNodeTypes(kind);
-      if (types) {
-        fields.type = types.length === 1 ? tag(types[0]!) : { type: "string", enum: types };
-        args.required = [...new Set([...(Array.isArray(args.required) ? args.required : []), "type"])];
-      }
-      return args;
-    });
-    if (!batch || !record(drivers)) return typedDrivers;
-    drivers.items = typedDrivers.length > 1 ? { anyOf: typedDrivers } : typedDrivers[0];
-    if (typeof drivers.maxItems === "number") drivers.maxItems = Math.min(ids.length, drivers.maxItems);
-    return [option];
-  });
-  return variants.length > 1 ? { anyOf: variants } : variants[0];
 }

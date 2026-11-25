@@ -16,7 +16,7 @@ import { useApiKeyStorage } from "./api-key-storage";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useVdtStudioStore } from "./vdt-store";
 
-export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual"; reveal: boolean }
+export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual"; reveal: boolean; returnFocus?: HTMLButtonElement }
 type Admission = { status: "preparing" | "ready" | "unavailable" | "blocked"; selection?: SmartKpiPreparedSelection; reason?: string };
 const initialSnapshot: SmartKpiNodeSnapshot = { targetNodeId: "", state: { status: "idle" }, stale: false, refreshAvailable: false, canApply: false };
 const runtimeActive = (status?: string) => ["queued", "running", "needs_user_input", "waiting_approval", "recovery_required"].includes(status ?? "");
@@ -128,6 +128,10 @@ export function useSmartKpi(chatStartersPending: boolean) {
     if (current) scheduler.current?.releaseDisplay(current.targetNodeId);
     railInside.current = false; panelInside.current = false; activeRef.current = null; setActive(null);
     if (restoreFocus) {
+      if (current.returnFocus?.isConnected) {
+        current.returnFocus.focus({ preventScroll: true });
+        return;
+      }
       let attempts = 0;
       const restore = () => {
         const trigger = document.querySelector<HTMLButtonElement>(`.react-flow__node[data-id="${CSS.escape(current.targetNodeId)}"] [data-smart-trigger]`);
@@ -291,7 +295,7 @@ export function useSmartKpi(chatStartersPending: boolean) {
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
   }, [active, close]);
 
-  const activate = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch" | "manual" = "pointer") => {
+  const activate = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch" | "manual" = "pointer", returnFocus?: HTMLButtonElement) => {
     if (source !== "manual" && !smartKpiTargetIds(useVdtStudioStore.getState().project).has(targetNodeId)) return;
     if (source === "focus" && restoringFocus.current || source === "pointer" && dismissedHover.current?.targetNodeId === targetNodeId) return;
     // Moving the camera can carry another rail under the pointer. An open
@@ -301,12 +305,12 @@ export function useSmartKpi(chatStartersPending: boolean) {
     if (focusFrame.current !== undefined) { cancelAnimationFrame(focusFrame.current); focusFrame.current = undefined; }
     cancelClose(); if (source === "pointer") railInside.current = true;
     const old = activeRef.current;
-    if (old?.targetNodeId === targetNodeId && old.rail === rail && source !== "manual") {
-      if (source !== "pointer" && !old.reveal) { const next = { ...old, reveal: true }; activeRef.current = next; setActive(next); }
+    if (old?.targetNodeId === targetNodeId && old.rail === rail && source !== "manual" && (!returnFocus || old.mode === "smart")) {
+      if (source !== "pointer" && (!old.reveal || returnFocus)) { const next = { ...old, reveal: true, ...(returnFocus ? { returnFocus } : {}) }; activeRef.current = next; setActive(next); }
       return;
     }
     if (old) scheduler.current?.releaseDisplay(old.targetNodeId);
-    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart", reveal: source !== "pointer" };
+    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart", reveal: source !== "pointer", ...(returnFocus ? { returnFocus } : {}) };
     activeRef.current = next; setActive(next); setFeedback(undefined);
     const instance = scheduler.current;
     if (instance?.getSnapshot(targetNodeId).proposal) instance.freezeDisplay(targetNodeId); else instance?.releaseDisplay(targetNodeId);
@@ -315,6 +319,9 @@ export function useSmartKpi(chatStartersPending: boolean) {
     });
   }, [cancelClose]);
   const activateManual = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement) => activate(targetNodeId, rail, trigger, "manual"), [activate]);
+  const openReview = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, returnFocus: HTMLButtonElement) => {
+    activate(targetNodeId, rail, trigger, "touch", returnFocus);
+  }, [activate]);
   const leaveRail = useCallback(() => { railInside.current = false; scheduleClose(); }, [scheduleClose]);
   const enterPanel = useCallback(() => { panelInside.current = true; cancelClose(); }, [cancelClose]);
   const leavePanel = useCallback(() => { panelInside.current = false; scheduleClose(); }, [scheduleClose]);
@@ -374,7 +381,7 @@ export function useSmartKpi(chatStartersPending: boolean) {
   const context = snapshot.proposal ? contexts.current.get(snapshot.proposal.contextHash) : latestContext;
   const blockedReason = scope.blockedReason ?? mutationBlockedReason ?? (fullAgentActive ? "Finish or cancel the active agent run before adding KPIs." : undefined);
   const effectiveAdmission: Admission = guidanceReady ? admission : { status: skillState?.status === "unavailable" ? "unavailable" : "preparing", reason: skillState?.reason ?? "Loading the selected modelling skill…" };
-  return { active, targets, snapshot, context, latestContext, contextPending, contextError, contextScopeKey: scopeKey, ownerKey, project, admission: effectiveAdmission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
+  return { active, targets, snapshot, context, latestContext, contextPending, contextError, contextScopeKey: scopeKey, ownerKey, project, admission: effectiveAdmission, mutation, blockedReason, feedback, replaying, activate, activateManual, openReview, leaveRail, enterPanel, leavePanel,
     focusPanel: cancelClose, blurPanel: scheduleClose, close, refresh, refreshContext, retry, preview, apply, undo, reconcile, prewarmVisible };
 }
 export type SmartKpiController = ReturnType<typeof useSmartKpi>;

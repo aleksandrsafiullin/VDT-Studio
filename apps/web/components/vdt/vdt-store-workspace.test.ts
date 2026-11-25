@@ -391,6 +391,92 @@ describe("refreshWorkspace scoping", () => {
     expect(useVdtStudioStore.getState().workspace.error).toMatch(/newer local edits/i);
   });
 
+  it("duplicates a saved VDT through initial revision creation without saving or editing the source", async () => {
+    const owner = sampleSummary("project_a", "Project A", "vdt_a");
+    const created = committedPayload(sampleSummary("project_a", "Project A", "vdt_copy"), "vdt_copy", 1);
+    const source = { ...structuredClone(initialProject), name: "Saved source" };
+    useVdtStudioStore.setState(state => ({
+      workspace: { ...state.workspace, activePanel: "project", activeVdtId: undefined, projectSummaries: [owner] }
+    }));
+    mockLoadVdt.mockResolvedValueOnce({ ...committedPayload(owner, "vdt_a", 1), activeProject: source });
+    mockCreateVdt.mockResolvedValueOnce(created);
+    await expect(useVdtStudioStore.getState().createWorkspaceVdt({
+      expectedProjectId: "project_a", source: { kind: "duplicate", vdtId: "vdt_a" }
+    })).resolves.toBe(true);
+    const [projectId, submitted] = mockCreateVdt.mock.calls[0]!;
+    expect(projectId).toBe("project_a");
+    expect(submitted).toMatchObject({
+      expectedRuntime: runtimeCasFromState(owner.runtimeState),
+      name: "Project A VDT copy",
+      project: { name: "Project A VDT copy", graph: source.graph, scenarios: source.scenarios }
+    });
+    expect(submitted.project.graph).not.toBe(source.graph);
+    expect(source.name).toBe("Saved source");
+    expect(mockSaveRevision).not.toHaveBeenCalled();
+    expect(mockUpdateVdt).not.toHaveBeenCalled();
+    expect(useVdtStudioStore.getState().workspace.activeVdtId).toBe("vdt_copy");
+  });
+
+  it("rejects another project's source or an asynchronously loaded copy after leaving the project", async () => {
+    const owner = sampleSummary("project_a", "Project A", "vdt_a");
+    useVdtStudioStore.setState(state => ({
+      workspace: { ...state.workspace, activePanel: "project", activeVdtId: undefined,
+        projectSummaries: [owner, sampleSummary("project_b", "Project B", "vdt_b")] }
+    }));
+    const create = useVdtStudioStore.getState().createWorkspaceVdt;
+    await expect(create({ expectedProjectId: "project_b", source: { kind: "duplicate", vdtId: "vdt_b" } })).resolves.toBe(false);
+    await expect(create({ expectedProjectId: "project_a", source: { kind: "duplicate", vdtId: "vdt_b" } })).resolves.toBe(false);
+    expect(mockLoadVdt).not.toHaveBeenCalled();
+    let revealSource!: (value: unknown) => void;
+    mockLoadVdt.mockImplementationOnce(() => new Promise(resolve => { revealSource = resolve; }));
+    const pending = create({ expectedProjectId: "project_a", source: { kind: "duplicate", vdtId: "vdt_a" } });
+    await expect(useVdtStudioStore.getState().selectWorkspaceProject("project_b")).resolves.toBe(true);
+    revealSource({ ...committedPayload(owner, "vdt_a", 1), activeProject: initialProject });
+    await expect(pending).resolves.toBe(false);
+    expect(mockCreateVdt).not.toHaveBeenCalled();
+    expect(useVdtStudioStore.getState().workspace.activeProjectId).toBe("project_b");
+    expect(useVdtStudioStore.getState().workspace.isMutating).toBe(false);
+  });
+
+  it("retries the same example without silently consuming the journal for a different source", async () => {
+    useVdtStudioStore.setState(state => ({
+      workspace: { ...state.workspace, activePanel: "project", activeVdtId: undefined }
+    }));
+    const create = useVdtStudioStore.getState().createWorkspaceVdt;
+    mockCreateVdt.mockRejectedValueOnce(new Error("response lost"));
+    const source = { kind: "example", exampleId: "oee" } as const;
+    await expect(create({ expectedProjectId: "project_a", source })).resolves.toBe(false);
+    const submitted = structuredClone(mockCreateVdt.mock.calls[0]?.[1]);
+    expect(submitted.project.graph.nodes.length).toBeGreaterThan(1);
+    expect(submitted.project.graph.nodes.some((node: { id: string }) => node.id === "oee")).toBe(true);
+    await expect(create({ expectedProjectId: "project_a", source: { kind: "example", exampleId: "inventory_level" } })).resolves.toBe(false);
+    expect(mockCreateVdt).toHaveBeenCalledTimes(1);
+    mockCreateVdt.mockResolvedValueOnce(
+      committedPayload(sampleSummary("project_a", "Project A", "vdt_example"), "vdt_example", 1)
+    );
+    await expect(create()).resolves.toBe(true);
+    expect(mockCreateVdt.mock.calls[1]?.[1]).toEqual(submitted);
+  });
+
+  it("creates a new VDT from the reviewed import snapshot and fences late responses after navigation", async () => {
+    const imported = { ...structuredClone(initialProject), name: "Reviewed import" };
+    useVdtStudioStore.setState(state => ({
+      workspace: { ...state.workspace, activePanel: "project", activeVdtId: undefined }
+    }));
+    let revealCreate!: (value: unknown) => void;
+    mockCreateVdt.mockImplementationOnce(() => new Promise(resolve => { revealCreate = resolve; }));
+    const create = useVdtStudioStore.getState().createWorkspaceVdt({
+      expectedProjectId: "project_a", source: { kind: "import", project: imported }
+    });
+    expect(mockCreateVdt.mock.calls[0]?.[1]).toMatchObject({ name: imported.name, project: imported });
+    await expect(useVdtStudioStore.getState().selectWorkspaceProject("project_b")).resolves.toBe(true);
+    revealCreate(committedPayload(sampleSummary("project_a", "Project A", "vdt_import"), "vdt_import", 1));
+    await expect(create).resolves.toBe(false);
+    expect(useVdtStudioStore.getState().workspace.activeProjectId).toBe("project_b");
+    expect(sampleEntry(useVdtStudioStore.getState().workspace.projectSummaries, "vdt_import")).toBeDefined();
+    expect(useVdtStudioStore.getState().project).toEqual(initialProject);
+  });
+
   it("reuses the combined-create body and key after an ambiguous result", async () => {
     useVdtStudioStore.setState((state) => ({
       workspace: {

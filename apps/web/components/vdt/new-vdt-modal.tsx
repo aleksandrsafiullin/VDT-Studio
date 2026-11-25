@@ -4,7 +4,8 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
-import { Field, TextInput } from "@/components/ui/field";
+import { Field, SelectInput, TextInput } from "@/components/ui/field";
+import { EXAMPLE_PROJECT_OPTIONS, type ExampleProjectId } from "./vdt-store";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -45,6 +46,7 @@ export interface NewVdtModalValues {
   rootKpi: string;
   unit: string;
   timePeriod: string;
+  exampleId?: ExampleProjectId | undefined;
 }
 
 const DEFAULT_VALUES: NewVdtModalValues = {
@@ -58,18 +60,20 @@ interface NewVdtModalProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: (values: NewVdtModalValues) => Promise<boolean>;
   isSubmitting?: boolean;
+  error?: string | undefined;
 }
 
 export function NewVdtModal({
   open,
   onOpenChange,
   onConfirm,
-  isSubmitting = false
+  isSubmitting = false,
+  error
 }: NewVdtModalProps) {
   const [values, setValues] = useState<NewVdtModalValues>(DEFAULT_VALUES);
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const canConfirm = values.rootKpi.trim().length > 0 && !isSubmitting;
+  const canConfirm = Boolean(values.exampleId || values.rootKpi.trim()) && !isSubmitting;
 
   const closeModal = useCallback(() => {
     if (isSubmitting) {
@@ -119,7 +123,8 @@ export function NewVdtModal({
     const success = await onConfirm({
       rootKpi: values.rootKpi.trim(),
       unit: values.unit.trim(),
-      timePeriod: values.timePeriod.trim() || "monthly"
+      timePeriod: values.timePeriod.trim() || "monthly",
+      ...(values.exampleId ? { exampleId: values.exampleId } : {})
     });
 
     if (success) {
@@ -153,43 +158,56 @@ export function NewVdtModal({
           <h2 id={titleId} className="text-lg font-semibold text-ink">
             New VDT
           </h2>
-          <p className="mt-1 text-sm text-muted">Set the root KPI and measurement context for this VDT.</p>
         </header>
 
         <div className="space-y-3 px-5 py-4">
-          <Field label="Root KPI">
-            <TextInput
-              className="py-2"
-              placeholder="e.g. Production Volume"
-              value={values.rootKpi}
-              autoFocus
-              onChange={(event) => setValues((current) => ({ ...current, rootKpi: event.target.value }))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && canConfirm) {
-                  event.preventDefault();
-                  void handleConfirm();
-                }
-              }}
-            />
+          <Field label="Start from">
+            <SelectInput value={values.exampleId ?? ""} disabled={isSubmitting} onChange={event => {
+              const example = EXAMPLE_PROJECT_OPTIONS.find(option => option.id === event.target.value);
+              setValues(current => ({ ...current, exampleId: example?.id }));
+            }}>
+              <option value="">Blank VDT</option>
+              {EXAMPLE_PROJECT_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label} example</option>)}
+            </SelectInput>
           </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Unit">
-              <TextInput
-                className="py-2"
-                placeholder="e.g. tonnes/month"
-                value={values.unit}
-                onChange={(event) => setValues((current) => ({ ...current, unit: event.target.value }))}
-              />
-            </Field>
-            <Field label="Period">
-              <TextInput
-                className="py-2"
-                placeholder="monthly"
-                value={values.timePeriod}
-                onChange={(event) => setValues((current) => ({ ...current, timePeriod: event.target.value }))}
-              />
-            </Field>
-          </div>
+          {!values.exampleId ? (
+            <div className="space-y-3">
+              <Field label="Root KPI">
+                <TextInput
+                  className="py-2"
+                  placeholder="e.g. Production Volume"
+                  value={values.rootKpi}
+                  autoFocus
+                  onChange={(event) => setValues((current) => ({ ...current, rootKpi: event.target.value }))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && canConfirm) {
+                      event.preventDefault();
+                      void handleConfirm();
+                    }
+                  }}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Unit">
+                  <TextInput
+                    className="py-2"
+                    placeholder="e.g. tonnes/month"
+                    value={values.unit}
+                    onChange={(event) => setValues((current) => ({ ...current, unit: event.target.value }))}
+                  />
+                </Field>
+                <Field label="Period">
+                  <TextInput
+                    className="py-2"
+                    placeholder="monthly"
+                    value={values.timePeriod}
+                    onChange={(event) => setValues((current) => ({ ...current, timePeriod: event.target.value }))}
+                  />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+          {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-line bg-slate-50 px-5 py-4">

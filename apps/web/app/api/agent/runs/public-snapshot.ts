@@ -56,6 +56,7 @@ export function compactPublicAgentSnapshot(
           ? { providerConfig: redactSecrets(snapshot.request.providerConfig) as Record<string, unknown> }
           : {})
       };
+  delete request.conversationContext;
   let omittedAppliedHistory = 0;
   const output = {
     ...structuredClone(snapshot),

@@ -111,18 +111,21 @@ export function validateKpiSuggestionContext(value: unknown): KpiSuggestionConte
   return value as unknown as KpiSuggestionContext;
 }
 
-/** Preview formulas may contain references/operators and the dimensionless 1
- * used in (1-discount). No model-authored constants can invent input values. */
-function checkExpression(ast: FormulaExpression): void {
-  if (ast.type === "number") smartAssert(ast.value === 1 && ast.raw === "1", "UNSAFE_FORMULA", "Smart formulas cannot introduce numeric assumptions.");
-  else if (ast.type === "binary") {
-    checkExpression(ast.left); checkExpression(ast.right);
+/** The contextual unit check confirms that a percent divisor actually scales
+ * a typed percent input. No model-authored constant can supply an input value. */
+function checkExpression(ast: FormulaExpression, percentageDivisor = false): void {
+  if (ast.type === "number") {
+    smartAssert(ast.raw === "1" || (percentageDivisor && ast.raw === "100"),
+      "UNSAFE_FORMULA", "Smart formulas cannot introduce numeric assumptions.");
+  } else if (ast.type === "binary") {
+    checkExpression(ast.left);
+    checkExpression(ast.right, ast.operator === "/");
     const left = constantExpression(ast.left), right = constantExpression(ast.right);
     smartAssert(!(ast.operator === "*" && (left === 0 || right === 0)) && !(ast.operator === "/" && right === 0),
       "UNSAFE_FORMULA", "Smart formulas cannot mask factors with a constant zero or divide by zero.");
   }
   else if (ast.type === "unary") checkExpression(ast.expression);
-  else if (ast.type === "call") ast.args.forEach(checkExpression);
+  else if (ast.type === "call") ast.args.forEach(arg => checkExpression(arg));
 }
 function constantExpression(ast: FormulaExpression): number | undefined {
   if (ast.type === "number") return ast.value;

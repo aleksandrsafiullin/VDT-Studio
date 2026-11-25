@@ -89,7 +89,7 @@ export function buildKpiSuggestionResponseContract(context: KpiSuggestionContext
       operators: ["+", "-", "*", "/"], functions: ["min", "max"],
       rules: [
         "Use only child keys as references. Reference every child exactly once; no unknown references, repeated, cancelled or zero-weight factors.",
-        "Use no numeric coefficients, defaults, thresholds or conversion multipliers. The only literal is raw 1 as the left side of a subtraction, normally (1 - decimal_fraction).",
+        "Use raw 1 for a complement (1 - fraction), or raw 100 as the divisor converting a percent input to a fraction. Put measured values, weights and thresholds in inputs.",
         "Addition, subtraction and min/max require identical dimensions and scales. Multiplication/division must cancel to exactly the target dimensions and scales.",
         "Do not reverse a parent equation, reuse an ancestor/sibling, cross process boundaries, or assume exclusions, overlap or values.",
         "Preserve all applicable named factors and qualifiers in the project/selected skill. Missing measurements do not prevent proposing measurable factors."

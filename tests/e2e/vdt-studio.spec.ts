@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { expect, type Page, type Route } from "@playwright/test";
-import { test, type ProductionWorkspace } from "./workspace-fixture";
+import { selectCanvasKpi, test, type ProductionWorkspace } from "./workspace-fixture";
 import type { AgentWorkspaceRevision, VdtAgentPublicStartRequest } from "../../packages/vdt-agent-runtime/src/types";
 import {
   calculateGraph,
@@ -1257,6 +1257,84 @@ test("shows chat-first agent progress after mock VDT generation", { tag: "@chrom
   await expect(page.getByText(/I.m treating/)).toHaveCount(0);
   await expect(page.getByText(/Next I.m separating/)).toHaveCount(0);
   await expect(page.getByTestId("cancel-generate")).toHaveCount(0);
+});
+
+test("uses the chat workspace handoff to save an edit and manage a VDT with native controls", { tag: "@chromium" }, async ({ page, productionWorkspace, request }) => {
+  const { projectId, vdtId } = productionWorkspace;
+  const storageUrl = `/api/vdt/vdts/${vdtId}`;
+  const loadVdt = async () => {
+    const response = await request.get(storageUrl);
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  const before = await loadVdt();
+  await page.route("**/api/agent/runs", (route) => {
+    if (route.request().method() === "GET") return route.fallback();
+    const snapshot = mockRuntimeAgentSnapshot();
+    const request = route.request().postDataJSON() as VdtAgentPublicStartRequest;
+    const answer = "Open the project workspace to manage this VDT.";
+    return route.fulfill({ json: { ok: true, runId: snapshot.runId, snapshot: {
+      ...snapshot,
+      request,
+      project: undefined,
+      draftProject: undefined,
+      events: [],
+      finalReport: answer,
+      chatMessages: snapshot.chatMessages.map(message => ({
+        ...message, text: message.role === "assistant" ? answer : request.input.prompt
+      })),
+      artifacts: [{ id: "workspace-handoff", runId: snapshot.runId, type: "editor_handoff", summary: "Editor control",
+        payload: { action: "project_workspace", projectId, vdtId }, createdAt: snapshot.updatedAt }]
+    } } });
+  });
+  await sendMockAgentInstruction(page, "Open the workspace to manage this VDT.");
+  const handoff = page.getByRole("link", { name: "Open project workspace", exact: true });
+  await expect(handoff).toBeVisible();
+  expect((await loadVdt()).head).toEqual(before.head);
+
+  await selectCanvasKpi(page, "Nominal Rate");
+  await page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true }).fill("250");
+  await handoff.focus();
+  await page.keyboard.press("Enter");
+  const card = page.getByTestId(`project-vdt-card-${vdtId}`);
+  await expect(card).toBeVisible();
+  const saved = await loadVdt();
+  expect(saved.head.commitGeneration).toBe(before.head.commitGeneration + 1);
+  expect(saved.activeProject.graph.nodes.find((node: { id: string }) => node.id === "nominal_rate").baselineValue).toBe(250);
+
+  await page.getByRole("textbox", { name: "Project name", exact: true }).fill("Production review");
+  await page.getByTestId("save-project-button").click();
+  await expect(page.getByRole("heading", { name: "Production review", exact: true, level: 1 })).toBeVisible();
+  await page.getByTestId("project-files-tab").click();
+  const fileChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Upload files", exact: true }).click();
+  expect((await fileChooser).isMultiple()).toBe(true);
+  await page.getByTestId("project-vdts-tab").click();
+
+  await card.locator("summary").click();
+  await card.getByLabel("VDT name").fill("Reviewed Production");
+  await card.getByRole("button", { name: "Save name" }).click();
+  await expect(card.getByRole("button", { name: "Open Reviewed Production", exact: true })).toBeVisible();
+  await card.getByLabel("VDT status").selectOption("reviewed");
+  await expect.poll(async () => (await loadVdt()).vdt).toMatchObject({ name: "Reviewed Production", status: "reviewed" });
+
+  const remove = card.getByRole("button", { name: "Delete Reviewed Production", exact: true });
+  const dismissed = page.waitForEvent("dialog").then(async dialog => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.dismiss();
+  });
+  await Promise.all([dismissed, remove.click()]);
+  expect((await loadVdt()).head).toEqual(saved.head);
+  const confirmed = page.waitForEvent("dialog").then(dialog => dialog.accept());
+  await Promise.all([confirmed, remove.click()]);
+  await expect(card).toBeHidden();
+  expect((await request.get(storageUrl)).status()).toBe(404);
+
+  await page.getByTestId("new-vdt-button").click();
+  await page.getByTestId("new-vdt-modal").getByRole("textbox", { name: "Root KPI", exact: true }).fill("New Production KPI");
+  await page.getByTestId("new-vdt-modal-confirm").click();
+  await expect(page.getByRole("heading", { name: "New Production KPI", exact: true, level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}\\?vdt=`));
 });
 
 test("keeps the user message visible when the agent provider returns unstructured output", { tag: "@chromium" }, async ({ page }, testInfo) => {

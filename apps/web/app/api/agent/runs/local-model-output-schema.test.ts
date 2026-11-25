@@ -1,7 +1,7 @@
 import { modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
 import { describe, expect, it } from "vitest";
 import { toProviderJsonSchema } from "./provider-json-schema";
-import { LocalModelOutputSchema } from "./local-model-output-schema";
+import { groundExistingIds, LocalModelOutputSchema } from "./local-model-output-schema";
 
 const envelope = toProviderJsonSchema(modelAgentStructuredTurnSchema);
 const addSchema = { type: "object", properties: { parentNodeId: { type: "string" }, name: { type: "string" } }, required: ["parentNodeId", "name"], additionalProperties: false };
@@ -21,6 +21,84 @@ function names(schema: unknown) {
 }
 
 describe("native local tool argument constraints", () => {
+  it("keeps unrelated catalog cards out of an unpinned structural search decision", () => {
+    const context = new LocalModelOutputSchema();
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools:
+      ["skill.list", "skill.read", "skill.search", "skill.select", "skill.report_gap"].map(name => ({
+        name, inputJsonSchema: { type: "object", properties: { skillId: { type: "string" } } }
+      }))
+    } } });
+    const resolution = { catalogBrowsed: true, gapAvailable: true, gapReported: false, readReceipts: [] };
+    const observation = { constructingTree: true, needsStructure: true, readinessPurpose: "structural_model",
+      discoveredSkillIds: ["catalog_only", "scoped"] };
+    expect(names(context.forPrompt(envelope, prompt, { ...observation, skillResolution: resolution })))
+      .toEqual(["skill.report_gap", "skill.search"]);
+    expect(names(context.forPrompt(envelope, prompt, { ...observation, skillResolution: { ...resolution, searchCandidateIds: [] } })))
+      .toEqual(["skill.report_gap"]);
+    const scoped = context.forPrompt(envelope, prompt, { ...observation, skillResolution: { ...resolution, searchCandidateIds: ["scoped"] } });
+    const read = allCalls(scoped).flatMap(batch => batch.items.anyOf).find(tool => tool.properties.toolName.const === "skill.read");
+    expect(read?.properties.args).toMatchObject({ properties: { skillId: { enum: ["scoped"] } } });
+  });
+
+  it("narrows the version command to restore for an explicitly selected saved ID", () => {
+    const branch = (kind: string) => ({ type: "object", properties: { kind: { type: "string", const: kind }, versionId: { type: "string" } } });
+    const schema = { anyOf: [branch("save"), branch("restore")] };
+    expect(groundExistingIds("version.edit", schema, { requestedRestoreVersionId: "saved_revision" })).toMatchObject({
+      properties: { kind: { const: "restore" }, versionId: { const: "saved_revision" } }
+    });
+    expect(groundExistingIds("version.edit", schema)).toBe(schema);
+  });
+
+  it("uses the Gateway's ready layer and factor kinds for structural additions", () => {
+    const context = new LocalModelOutputSchema();
+    const driver = { ...addSchema, properties: { ...addSchema.properties, nodeId: { type: "string" }, type: { type: "string" } } };
+    const tools = [
+      { name: "vdt.add_driver", inputJsonSchema: driver },
+      { name: "vdt.add_drivers_batch", inputJsonSchema: { type: "object", properties: { drivers: { type: "array", items: driver } } } },
+      { name: "vdt.set_formula", inputJsonSchema: { type: "object" } }
+    ];
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { brief: { mode: "continue_project" }, tools } } });
+    const constructionPlan = { additions: [{ parentNodeId: "root", nodeIds: ["subtotal"] }],
+      plannedKinds: { subtotal: "calculated" }, calculatedIds: [] };
+    const stage = context.forPrompt(envelope, prompt, { constructingTree: true, readinessPurpose: "structural_model", constructionPlan });
+    expect(names(stage)).toEqual(["vdt.add_driver"]);
+    expect(calls(stage).items.anyOf[0]?.properties.args).toMatchObject({ properties: {
+      parentNodeId: { const: "root" }, nodeId: { enum: ["subtotal"] }, type: { const: "calculated" }
+    } });
+  });
+
+  it("advances the named workbook delivery after each verified result", () => {
+    const context = new LocalModelOutputSchema();
+    const branch = (kind: string) => ({ type: "object", properties: { kind: { type: "string", const: kind }, name: { type: "string" } } });
+    const tools = ["scenario.save", "version.edit", "export.excel", "run.request_finish"].map(name => ({
+      name, inputJsonSchema: name === "version.edit" ? { anyOf: [branch("save"), branch("rename")] } : { type: "object" }
+    }));
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { brief: { mode: "continue_project" }, tools } } });
+    const scope = (nextTool: string) => ({ constructingTree: false, namedWorkbookDelivery: { versionName: "Management review", nextTool } });
+    const save = context.forPrompt(envelope, prompt, scope("version.edit"));
+    expect(names(save)).toEqual(["version.edit"]);
+    expect(calls(save).items.anyOf[0]?.properties.args).toMatchObject({
+      properties: { kind: { const: "save" }, name: { const: "Management review" } }
+    });
+    const delta = JSON.stringify({ delta: { type: "tool_results", results: [] } });
+    expect(names(context.forPrompt(envelope, delta, scope("export.excel")))).toEqual(["export.excel"]);
+    expect(names(context.forPrompt(envelope, delta, scope("run.request_finish")))).toEqual(["run.request_finish"]);
+    expect(names(context.forPrompt(envelope, delta, { constructingTree: false }))).toContain("version.edit");
+    const rejected = JSON.stringify({ delta: { type: "tool_results", results: [{ toolName: "export.excel", status: "failed" }] } });
+    expect(names(context.forPrompt(envelope, rejected, scope("export.excel")))).toContain("scenario.save");
+  });
+
+  it("binds the workbook selector to a resolved user target while keeping it optional", () => {
+    const schema = { type: "object", properties: { scenarioId: { type: "string" }, scenarioName: { type: "string" } }, additionalProperties: false };
+    const scope = { requestedWorkbookScenario: { id: "saved_target", name: "Plan A" } };
+    expect(groundExistingIds("export.excel", schema, scope)).toEqual({
+      ...schema,
+      properties: { scenarioId: { type: "string", const: "saved_target" }, scenarioName: { type: "string", const: "Plan A" } }
+    });
+    expect(groundExistingIds("export.excel", schema)).toBe(schema);
+    expect(groundExistingIds("scenario.compare", schema, scope)).toBe(schema);
+  });
+
   it("grounds dataset, table and column identities only in successful source observations", () => {
     const context = new LocalModelOutputSchema();
     const query = { type: "object", properties: {
@@ -99,7 +177,7 @@ describe("native local tool argument constraints", () => {
     expect(actions(context.forPrompt(envelope, human)).some((option) => option.properties.type.const === "final")).toBe(false);
   });
 
-  it("keeps new-tree structure behind an actual skill read without changing existing-tree access", () => {
+  it("keeps new-tree structure behind an actual skill read and defers editing a saved hierarchy", () => {
     const context = new LocalModelOutputSchema();
     const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools: [
       { name: "tools.describe", inputJsonSchema: { type: "object" } }, { name: "vdt.add_driver", inputJsonSchema: addSchema },
@@ -108,7 +186,7 @@ describe("native local tool argument constraints", () => {
     expect(names(context.forPrompt(envelope, prompt, { constructingTree: true, needsStructure: true, hasReadSkill: false, discoveredSkillIds: [] }))).toEqual(["skill.list", "skill.search"]);
     expect(names(context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { constructingTree: true, needsStructure: true, hasReadSkill: false, discoveredSkillIds: ["real_skill"] }))).toEqual(["skill.read"]);
     expect(names(context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { constructingTree: true, needsStructure: true, hasReadSkill: true }))).toEqual(["tools.describe", "vdt.add_driver"]);
-    expect(names(context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { constructingTree: false, needsStructure: true, hasReadSkill: false }))).toEqual(["skill.list", "skill.read", "skill.search", "tools.describe", "vdt.add_driver"]);
+    expect(names(context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { constructingTree: false, needsStructure: false, hasReadSkill: false }))).toEqual(["skill.list", "skill.read", "skill.search", "tools.describe"]);
   });
 
   it("grounds native selection in exact read receipts and allows ordinary construction after a catalog gap", () => {
@@ -172,7 +250,7 @@ describe("native local tool argument constraints", () => {
     expect(args(selected, "skill.seed_topology")).toMatchObject({ anyOf: [{ properties: { skillId: { const: "actual.first" } } }] });
     expect(names(format({ ...catalog, gapReported: true }, { readTopologyDefinitions }))).toEqual(["tools.describe", "vdt.add_driver"]);
     const continuation = context.forPrompt(envelope, later, { constructingTree: false, needsStructure: false });
-    expect(names(continuation)).toContain("vdt.add_driver");
+    expect(names(continuation)).not.toContain("vdt.add_driver");
     expect(names(continuation)).not.toContain("skill.report_gap");
   });
 
@@ -194,8 +272,22 @@ describe("native local tool argument constraints", () => {
     expect(kinds(context.forPrompt(envelope, JSON.stringify(input), { ...observation, canClarifyBeforeDiscovery: false }))).not.toContain("question");
     const later = JSON.stringify({ delta: { type: "tool_results", results: [] } });
     expect(kinds(context.forPrompt(envelope, later, observation))).not.toContain("question");
+    expect(kinds(context.forPrompt(envelope, later, { ...observation, readinessPurpose: "structural_model", canClarifyBeforeDiscovery: false }))).toContain("question");
     expect(kinds(context.forPrompt(envelope, later, { ...observation, hasReadSkill: true }))).toContain("question");
     expect(kinds(context.forPrompt(envelope, later, { ...observation, constructingTree: false }))).toContain("question");
+  });
+
+  it("offers workspace operations directly and learns structural writes when the model requests their schemas", () => {
+    const context = new LocalModelOutputSchema();
+    const workspace = { constructingTree: false, projectReadyForFinish: true };
+    const initialTools = ["tools.describe", "scenario.list", "scenario.save", "scenario.compare", "version.edit",
+      "export.excel", "vdt.probe_factor", "scenario.edit", "vdt.add_driver", "vdt.update_node"];
+    const tools = initialTools.map(name => ({ name, inputJsonSchema: addSchema }));
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { brief: { mode: "continue_project" }, tools } } });
+    expect(names(context.forPrompt(envelope, prompt, workspace))).toEqual(initialTools.slice(0, -3).sort());
+    const discovery = JSON.stringify({ delta: { type: "tool_results", results: [{ toolName: "tools.describe", status: "succeeded",
+      payload: { output: { tools: [...tools.slice(-3), { name: "vdt.create_draft", inputJsonSchema: addSchema }] } } }] } });
+    expect(names(context.forPrompt(envelope, discovery, workspace))).toEqual(initialTools.sort());
   });
 
   it("lets the model choose a current parent but constrains every batch item to that same parent", () => {

@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FolderOpen, Plus, Trash2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { FolderOpen, GitCompare, Plus, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
+import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import { formatNumber } from "@/lib/format";
+import type { StoredVdtRecord, StoredVdtStatus } from "@/lib/vdt-storage-client";
 import { NewVdtModal, type NewVdtModalValues } from "./new-vdt-modal";
+import { ProjectComparisonsPanel } from "./project-comparisons-panel";
 import { ProjectFilesPanel } from "./project-files-panel";
+import { VdtJsonImport } from "./vdt-json-import";
 import { useVdtStudioStore } from "./vdt-store";
 import { VdtTreeIcon } from "./vdt-tree-icon";
 
@@ -30,9 +34,40 @@ function statusClass(status: string): string {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function VdtCardSettings({ vdt, disabled }: { vdt: StoredVdtRecord; disabled: boolean }) {
+  const [name, setName] = useState(vdt.name);
+  const renameVdt = useVdtStudioStore((state) => state.renameWorkspaceVdt);
+  const setStatus = useVdtStudioStore((state) => state.setWorkspaceVdtStatus);
+
+  return (
+    <details className="mt-2 rounded-lg border border-line bg-white px-3 py-2 text-xs">
+      <summary className="cursor-pointer font-medium text-ink" aria-label={`Manage ${vdt.name}`}>Manage VDT</summary>
+      <form className="mt-2 grid gap-2" onSubmit={(event) => {
+        event.preventDefault();
+        if (!disabled && name.trim() && name.trim() !== vdt.name) void renameVdt(vdt.id, name);
+      }}>
+        <Field label="VDT name">
+          <TextInput value={name} onChange={(event) => setName(event.target.value)} disabled={disabled} />
+        </Field>
+        <Button type="submit" size="sm" disabled={disabled || !name.trim() || name.trim() === vdt.name}>Save name</Button>
+      </form>
+      <div className="mt-2">
+        <Field label="VDT status">
+          <SelectInput value={vdt.status} disabled={disabled} onChange={(event) => void setStatus(vdt.id, event.target.value as StoredVdtStatus)}>
+            <option value="draft">Draft</option>
+            <option value="reviewed">Reviewed</option>
+            <option value="approved">Approved</option>
+            <option value="archived">Archived</option>
+          </SelectInput>
+        </Field>
+      </div>
+    </details>
+  );
+}
+
 export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => void | Promise<void> }) {
-  const [newVdtModalOpen, setNewVdtModalOpen] = useState(false);
-  const [tab, setTab] = useState<"vdts" | "files">("vdts");
+  const [newVdtProjectId, setNewVdtProjectId] = useState<string>();
+  const [tab, setTab] = useState<"vdts" | "files" | "comparisons">("vdts");
   const workspace = useVdtStudioStore((state) => state.workspace);
   const project = useVdtStudioStore((state) => state.project);
   const createWorkspaceProject = useVdtStudioStore((state) => state.createWorkspaceProject);
@@ -44,6 +79,13 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
     [workspace.activeProjectId, workspace.projectSummaries]
   );
   const rows = activeSummary?.vdts ?? [];
+  const newVdtModalOpen = newVdtProjectId !== undefined && newVdtProjectId === activeSummary?.project.id;
+  const pendingCreate = workspace.pendingVdtCreate?.projectId === workspace.activeProjectId ? workspace.pendingVdtCreate : undefined;
+  const createDisabled = workspace.isMutating || workspace.isLoading || Boolean(workspace.pendingVdtCreate);
+
+  const setNewVdtModalOpen = useCallback((open: boolean) => {
+    setNewVdtProjectId(open ? activeSummary?.project.id : undefined);
+  }, [activeSummary?.project.id]);
 
   async function handleCreateProject() {
     const sourceName = project.name?.trim() || "New project";
@@ -51,10 +93,14 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
   }
 
   async function handleCreateVdt(values: NewVdtModalValues) {
+    if (!newVdtModalOpen || !newVdtProjectId) return false;
     return createWorkspaceVdt({
-      rootKpi: values.rootKpi,
-      ...(values.unit ? { unit: values.unit } : {}),
-      ...(values.timePeriod ? { timePeriod: values.timePeriod } : {})
+      expectedProjectId: newVdtProjectId,
+      ...(values.exampleId ? { source: { kind: "example", exampleId: values.exampleId } } : {
+        rootKpi: values.rootKpi,
+        ...(values.unit ? { unit: values.unit } : {}),
+        ...(values.timePeriod ? { timePeriod: values.timePeriod } : {})
+      })
     });
   }
 
@@ -72,7 +118,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
         <div className="mx-auto flex w-full max-w-6xl flex-col">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-xl">
-              <p className="text-sm text-muted">{tab === "files" ? "Files" : "VDTs"}</p>
+              <p className="text-sm text-muted">{{ vdts: "VDTs", files: "Files", comparisons: "Comparisons" }[tab]}</p>
               <h2 className="mt-1 truncate text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
                 {activeSummary?.project.name ?? "No project selected"}
               </h2>
@@ -83,17 +129,21 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
               </p>
             </div>
             {activeSummary ? (
-              <Button
-                type="button"
-                variant="primary"
-                className="rounded-full px-5 shadow-sm"
-                data-testid="new-vdt-button"
-                disabled={workspace.isMutating}
-                icon={<Plus className="h-4 w-4" />}
-                onClick={() => setNewVdtModalOpen(true)}
-              >
-                New VDT
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <VdtJsonImport projectId={activeSummary.project.id}
+                  projectName={activeSummary.project.name} disabled={createDisabled} />
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="rounded-full px-5 shadow-sm"
+                  data-testid="new-vdt-button"
+                  disabled={createDisabled}
+                  icon={<Plus className="h-4 w-4" />}
+                  onClick={() => setNewVdtModalOpen(true)}
+                >
+                  New VDT
+                </Button>
+              </div>
             ) : (
               <Button
                 type="button"
@@ -109,9 +159,10 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
           </div>
 
           {activeSummary ? (
-            <div className="mt-7 flex gap-1 border-b border-black/10" aria-label="Project content">
+            <div className="mt-7 flex flex-wrap gap-1 border-b border-black/10" aria-label="Project content">
               <button type="button" aria-pressed={tab === "vdts"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "vdts" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("vdts")} data-testid="project-vdts-tab"><VdtTreeIcon className="h-4 w-4" />VDTs</button>
               <button type="button" aria-pressed={tab === "files"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "files" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("files")} data-testid="project-files-tab"><FolderOpen className="h-4 w-4" />Files</button>
+              <button type="button" aria-pressed={tab === "comparisons"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "comparisons" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("comparisons")} data-testid="project-comparisons-tab"><GitCompare className="h-4 w-4" />Comparisons</button>
             </div>
           ) : null}
 
@@ -120,10 +171,22 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
               {workspace.error}
             </div>
           ) : null}
+          {pendingCreate ? (
+            <div className="mt-4">
+              <Button type="button" size="sm" disabled={workspace.isMutating || workspace.isLoading}
+                onClick={() => void createWorkspaceVdt()}>
+                Retry creating {pendingCreate.input.name}
+              </Button>
+            </div>
+          ) : workspace.pendingVdtCreate ? (
+            <p className="mt-4 text-sm text-muted">Return to the original project to retry its pending VDT creation.</p>
+          ) : null}
 
           <div className="mt-10 min-h-0 flex-1">
             {tab === "files" && activeSummary ? (
               <ProjectFilesPanel key={activeSummary.project.id} projectId={activeSummary.project.id} vdts={rows.map((entry) => ({ id: entry.vdt.id, name: entry.vdt.name }))} />
+            ) : tab === "comparisons" && activeSummary ? (
+              <ProjectComparisonsPanel projectId={activeSummary.project.id} vdts={rows.filter((entry) => entry.revisionCount > 0).map(({ vdt }) => ({ id: vdt.id, name: vdt.name }))} />
             ) : activeSummary && rows.length > 0 ? (
               <div
                 className="grid grid-cols-1 gap-5 md:grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]"
@@ -213,6 +276,12 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+                    <VdtCardSettings vdt={entry.vdt} disabled={workspace.isMutating || workspace.isLoading} />
+                    <Button type="button" size="sm" className="mt-2" aria-label={`Duplicate ${entry.vdt.name}`}
+                      disabled={createDisabled}
+                      onClick={() => void createWorkspaceVdt({ expectedProjectId: activeSummary.project.id, source: { kind: "duplicate", vdtId: entry.vdt.id } })}>
+                      Duplicate VDT
+                    </Button>
                   </article>
                   );
                 })}
@@ -238,7 +307,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                   className="mt-8 rounded-full px-6 shadow-sm"
                   variant="primary"
                   data-testid="new-vdt-empty-button"
-                  disabled={workspace.isMutating}
+                  disabled={activeSummary ? createDisabled : workspace.isMutating}
                   icon={<Plus className="h-4 w-4" />}
                   onClick={() => void (activeSummary ? setNewVdtModalOpen(true) : handleCreateProject())}
                 >
@@ -255,6 +324,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
         onOpenChange={setNewVdtModalOpen}
         onConfirm={handleCreateVdt}
         isSubmitting={workspace.isMutating}
+        error={newVdtModalOpen ? workspace.error : undefined}
       />
     </div>
   );

@@ -4,11 +4,56 @@ import { inspectDecompositionHierarchy } from "../graph/decomposition";
 import { compileIncomingKpiBatch, previewIncomingKpiBatch } from "./incoming-compile";
 import { createIncomingGraphFixture, existingKey, fixtureContext, manualInput, manualKey, modelProposal } from "./incoming-contract.fixtures";
 import { incomingKpiProposalFormula } from "./incoming-contract";
+import { validateKpiSuggestionForContext } from "./recipes";
 import { kpiCanonicalJson } from "./identity";
 const host = { operationId: "smart_formula_fixture", now: "2026-10-19T01:00:00.000Z" };
 afterEach(() => vi.useRealTimers());
 
 describe("formula-bearing incoming compilation", () => {
+  it.each([
+    ["", false, "UNIT_MISMATCH"],
+    [" / 100", true, undefined]
+  ])("checks explicit percentage conversion during preview and apply (%s)", async (conversion, accepted, issueCode) => {
+    const project = createIncomingGraphFixture("measured");
+    const [root, target] = project.graph.nodes;
+    root!.unit = target!.unit = target!.dataMapping!.unit = "USD";
+    target!.baselineValue = 90;
+    const input = manualInput(await fixtureContext(project));
+    const discount = `m_${"2".repeat(32)}` as const;
+    input.draft.manualChildren = [
+      { key: manualKey, name: "Gross revenue", unit: "USD", selected: true },
+      { key: discount, name: "Discount", unit: "%", selected: true }
+    ];
+    input.draft.formula = `${manualKey} * (1 - ${discount}${conversion})`;
+    input.draft.inputValues = { [manualKey]: "100", [discount]: "10" };
+
+    const preview = await previewIncomingKpiBatch(project, input);
+    expect(preview.valid).toBe(accepted);
+    if (accepted) {
+      const compiled = await compileIncomingKpiBatch(project, input, host);
+      expect(calculateGraph(compiled.preview).rootValue).toBe(90);
+    } else {
+      expect(preview.issues).toMatchObject([{ code: issueCode }]);
+      await expect(compileIncomingKpiBatch(project, input, host)).rejects.toMatchObject({ code: issueCode });
+    }
+  });
+
+  it.each([
+    ["first * (1 - second)", "%", "UNIT_MISMATCH"],
+    ["first * (1 - second / 100)", "1", "MODEL_COEFFICIENT"],
+    ["first * (1 - second / 100)", "%", undefined]
+  ])("checks model-authored percentage conversion %s with %s", async (formula, unit, issueCode) => {
+    const project = createIncomingGraphFixture("measured");
+    project.graph.nodes[1]!.unit = "USD";
+    const context = await fixtureContext(project);
+    const proposal = modelProposal(context);
+    proposal.groups[0]!.formula = formula;
+    proposal.groups[0]!.children[1]!.unit = unit;
+    const validate = () => validateKpiSuggestionForContext(proposal, context, undefined, Date.parse(host.now));
+    if (issueCode) expect(validate).toThrow(expect.objectContaining({ code: issueCode }));
+    else expect(validate()).toMatchObject({ proposalId: proposal.proposalId });
+  });
+
   it("repairs a formula-free calculated node declared as a measured input in the same Add, preserving its value and context", async () => {
     const project = createIncomingGraphFixture("measured");
     const measured = { ...structuredClone(project.graph.nodes[1]!), id: "waste_empty_km_trip", name: "Measured empty distance", type: "calculated" as const, value: 4,

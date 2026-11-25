@@ -350,6 +350,7 @@ var FormulaParseError = class extends Error {
 };
 
 // ../vdt-core/src/formula/parser.ts
+var builtinFunctionCall = /^(?:(min|мин)|max|макс)(?=\s*\()/iu;
 function isDigit(char) {
   return /[0-9]/.test(char);
 }
@@ -416,6 +417,12 @@ function tokenizeFormula(formula) {
         throw new FormulaParseError(`Invalid number literal: ${raw}`);
       }
       tokens.push({ type: "number", value, raw });
+      continue;
+    }
+    const builtin2 = /[mм]/iu.test(char) ? builtinFunctionCall.exec(formula.slice(index)) : null;
+    if (builtin2) {
+      tokens.push({ type: "identifier", value: builtin2[1] ? "min" : "max" });
+      index += builtin2[0].length;
       continue;
     }
     if (isIdentifierStart(char)) {
@@ -1490,7 +1497,8 @@ var INCOMING_KPI_LIMITS = {
 var INCOMING_KPI_UNIT_POLICY = {
   version: "incoming-kpi-units.v1",
   conversion: "same_scale_only",
-  /** A literal60/100 never establishes hour/minute or percent/fraction proof. */
+  /** Only the typed percentage conversion below is supported. */
+  percentToFractionDivisor: 100,
   literalConversionProof: false,
   opaqueAtoms: "case_sensitive_exact_equality",
   periodBasis: "explicit_matching_grain",
@@ -1804,11 +1812,16 @@ function validateKpiSuggestionContext(value) {
   void root;
   return value;
 }
-function checkExpression(ast) {
-  if (ast.type === "number") smartAssert(ast.value === 1 && ast.raw === "1", "UNSAFE_FORMULA", "Smart formulas cannot introduce numeric assumptions.");
-  else if (ast.type === "binary") {
+function checkExpression(ast, percentageDivisor = false) {
+  if (ast.type === "number") {
+    smartAssert(
+      ast.raw === "1" || percentageDivisor && ast.raw === "100",
+      "UNSAFE_FORMULA",
+      "Smart formulas cannot introduce numeric assumptions."
+    );
+  } else if (ast.type === "binary") {
     checkExpression(ast.left);
-    checkExpression(ast.right);
+    checkExpression(ast.right, ast.operator === "/");
     const left = constantExpression(ast.left), right = constantExpression(ast.right);
     smartAssert(
       !(ast.operator === "*" && (left === 0 || right === 0)) && !(ast.operator === "/" && right === 0),
@@ -1816,7 +1829,7 @@ function checkExpression(ast) {
       "Smart formulas cannot mask factors with a constant zero or divide by zero."
     );
   } else if (ast.type === "unary") checkExpression(ast.expression);
-  else if (ast.type === "call") ast.args.forEach(checkExpression);
+  else if (ast.type === "call") ast.args.forEach((arg) => checkExpression(arg));
 }
 function constantExpression(ast) {
   if (ast.type === "number") return ast.value;
@@ -2044,7 +2057,7 @@ function buildKpiSuggestionResponseContract(context) {
       functions: ["min", "max"],
       rules: [
         "Use only child keys as references. Reference every child exactly once; no unknown references, repeated, cancelled or zero-weight factors.",
-        "Use no numeric coefficients, defaults, thresholds or conversion multipliers. The only literal is raw 1 as the left side of a subtraction, normally (1 - decimal_fraction).",
+        "Use raw 1 for a complement (1 - fraction), or raw 100 as the divisor converting a percent input to a fraction. Put measured values, weights and thresholds in inputs.",
         "Addition, subtraction and min/max require identical dimensions and scales. Multiplication/division must cancel to exactly the target dimensions and scales.",
         "Do not reverse a parent equation, reuse an ancestor/sibling, cross process boundaries, or assume exclusions, overlap or values.",
         "Preserve all applicable named factors and qualifiers in the project/selected skill. Missing measurements do not prevent proposing measurable factors."
@@ -7213,7 +7226,7 @@ var MOCK_STUB_OUTPUT = {
         parentNodeId: "root",
         name: "Number of trucks",
         type: "input",
-        unit: "trucks",
+        unit: "1",
         relation: "multiplicative_driver",
         formula: "",
         description: "Available truck fleet size.",
@@ -7225,7 +7238,7 @@ var MOCK_STUB_OUTPUT = {
         parentNodeId: "root",
         name: "Trips per truck",
         type: "calculated",
-        unit: "trips/truck/year",
+        unit: "trips/year",
         relation: "multiplicative_driver",
         formula: "operating_hours / ((haul_distance_km / loaded_speed_kmh) + (haul_distance_km / empty_speed_kmh))",
         description: "Trips each truck can complete from cycle time and annual operating hours.",
@@ -7261,7 +7274,7 @@ var MOCK_STUB_OUTPUT = {
         parentNodeId: "trips_per_truck",
         name: "Average haul distance",
         type: "input",
-        unit: "km",
+        unit: "km/trip",
         relation: "divisive_driver",
         formula: "",
         description: "Average one-way loaded haul distance.",
@@ -7454,8 +7467,8 @@ function mockAgentDecision(input2, schemaId) {
           toolName: "vdt.add_drivers_batch",
           args: {
             drivers: [
-              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 },
-              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" },
+              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "1", relation: "multiplicative_driver", baselineValue: 5 },
+              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/year", relation: "multiplicative_driver" },
               { parentNodeId: "ore_haulage", nodeId: "payload_per_trip_t", name: "Payload per trip", type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload }
             ],
             parentFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t"
@@ -7485,7 +7498,7 @@ function mockAgentDecision(input2, schemaId) {
           toolName: "vdt.add_drivers_batch",
           args: {
             drivers: [
-              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 },
+              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km/trip", relation: "formula_dependency", baselineValue: 2.7 },
               { parentNodeId: "loaded_travel_time_h", nodeId: "loaded_speed_kmh", name: "Average loaded speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 }
             ],
             parentFormula: "haul_distance_km / loaded_speed_kmh"
@@ -7503,14 +7516,14 @@ function mockAgentDecision(input2, schemaId) {
       statusMessage: "Building the complete truck-cycle tree and its formulas."
     };
   }
-  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
-  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
+  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "1", relation: "multiplicative_driver", baselineValue: 5 });
+  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
   if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
   if (!nodeIds.has("operating_hours")) return add("operating_hours", "Operating hours", "trips_per_truck", { type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours });
   if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver", formula: "loaded_travel_time_h + empty_return_time_h" });
   if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / loaded_speed_kmh" });
   if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / empty_speed_kmh" });
-  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
+  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km/trip", relation: "formula_dependency", baselineValue: 2.7 });
   if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
   if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
   const root = nodes.find((node3) => isRecord8(node3) && node3.id === "ore_haulage");

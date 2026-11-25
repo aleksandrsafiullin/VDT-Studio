@@ -9,7 +9,7 @@ import { openVdtDatabase, VdtStorageError } from "@vdt-studio/storage";
 import { previewChangeSet, VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { AgentRunStore, createDefaultToolRegistry, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
-import { createSqliteAgentRunPersistence, resolveCliSessionForbiddenRoots } from "./persistence";
+import { createSqliteAgentRunPersistence, loadScopedConversationMessages, resolveCliSessionForbiddenRoots } from "./persistence";
 
 const tempDirs: string[] = [];
 
@@ -21,6 +21,85 @@ afterEach(() => {
 });
 
 describe("SQLite agent run persistence", { timeout: 30_000 }, () => {
+  it("shares an existing run-scoped conversation across distinct bindings and preserves legacy rows on replay", () => {
+    const root = tempRoot();
+    const dataDir = path.join(root, "data");
+    const database = openVdtDatabase(root, { dataDir });
+    try {
+      const projectId = database.createProject({ id: "conversation_project", name: "Mine plan" }).id;
+      const vdtId = database.createVdt({ id: "conversation_vdt", projectId, name: "Ore hauled", rootKpi: "Ore hauled" }).id;
+      const otherVdt = database.createVdt({ id: "other_vdt", projectId, name: "Recovery", rootKpi: "Recovery" }).id;
+      const otherProjectId = database.createProject({ id: "other_project", name: "Another mine" }).id;
+      const otherProjectVdt = database.createVdt({ id: "other_project_vdt", projectId: otherProjectId, name: "Recovery", rootKpi: "Recovery" }).id;
+      const persistence = createTestPersistence(database);
+      const store = new AgentRunStore({ persistence });
+      const workspace = { projectId, vdtId };
+      const legacyRun = store.createRun({
+        mode: "generate_vdt", workspace, input: {}, providerId: "mock", executionBindingId: "legacy_binding"
+      });
+      const conversationId = database.getAgentRun(legacyRun.runId)!.conversationId!;
+      const scope = { ...workspace, conversationId };
+      expect(() => loadScopedConversationMessages(database, scope)).toThrowError(
+        expect.objectContaining({ code: "VDT_NOT_FOUND" })
+      );
+      // Historically a run acquired its durable VDT while saving its graph.
+      database.updateConversation(conversationId, { vdtId });
+      database.updateAgentRun(legacyRun.runId, { vdtId });
+
+      const sourceId = `${legacyRun.runId}:chat:1`;
+      const hash = createHash("sha256").update(sourceId).digest("hex").slice(0, 12);
+      const oldId = `message_${sourceId.replaceAll(":", "_")}_${hash}`;
+      database.appendMessage({
+        id: oldId, conversationId, agentRunId: legacyRun.runId, role: "user", content: "Confirmed a calendar year.",
+        runContext: { sourceMessageId: sourceId, kind: "instruction" }
+      });
+      const replayed = store.appendChatMessage(legacyRun.runId, {
+        role: "user", kind: "instruction", text: "Confirmed a calendar year."
+      });
+      persistence.updateRun(replayed);
+
+      const secondRun = store.createRun({
+        mode: "continue_project", workspace, conversationId, input: {}, providerId: "mock", executionBindingId: "new_binding"
+      });
+      const next = store.appendChatMessage(secondRun.runId, {
+        role: "user", kind: "instruction", text: "Use tonnes for the new model."
+      });
+      persistence.updateRun(next);
+      expect(loadScopedConversationMessages(database, scope)).toMatchObject([
+        { id: oldId, agentRunId: legacyRun.runId, position: 1 },
+        { agentRunId: secondRun.runId, position: 2, content: "Use tonnes for the new model." }
+      ]);
+      expect(loadScopedConversationMessages(database, scope, 1)).toEqual([
+        expect.objectContaining({ position: 2 })
+      ]);
+      expect(database.getAgentRun(legacyRun.runId)?.request.executionBindingId).toBe("legacy_binding");
+      expect(database.getAgentRun(secondRun.runId)?.request.executionBindingId).toBe("new_binding");
+      expect(() => database.updateAgentRun(secondRun.runId, {
+        request: { ...database.getAgentRun(secondRun.runId)!.request, executionBindingId: "legacy_binding" }
+      })).toThrowError(expect.objectContaining({ code: "RUN_BINDING_CONFLICT" }));
+      for (const otherScope of [
+        { ...scope, vdtId: otherVdt },
+        { projectId: otherProjectId, vdtId: otherProjectVdt, conversationId }
+      ]) {
+        expect(() => loadScopedConversationMessages(database, otherScope)).toThrowError(
+          expect.objectContaining({ code: "VDT_NOT_FOUND" })
+        );
+        expect(() => store.createRun({
+          mode: "continue_project", workspace: otherScope, conversationId, input: {}, providerId: "mock"
+        })).toThrowError(expect.objectContaining({ code: "VDT_NOT_FOUND" }));
+      }
+
+      database.deleteProject(projectId);
+      expect(database.getAgentRun(legacyRun.runId)).toBeNull();
+      expect(database.getAgentRun(secondRun.runId)).toBeNull();
+      expect(database.getConversation(conversationId)).toBeNull();
+      expect(database.listMessages(conversationId)).toHaveLength(0);
+      expect(database.getVdt(otherProjectVdt)?.projectId).toBe(otherProjectId);
+    } finally {
+      database.close();
+    }
+  });
+
   it("persists redacted agent runs and events for recovery after a new store is created", () => {
     const root = tempRoot();
     const dataDir = path.join(root, "data");

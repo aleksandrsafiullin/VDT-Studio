@@ -129,7 +129,8 @@ export type IncomingKpiDraftInspection =
 export const INCOMING_KPI_UNIT_POLICY = {
   version: "incoming-kpi-units.v1",
   conversion: "same_scale_only",
-  /** A literal60/100 never establishes hour/minute or percent/fraction proof. */
+  /** Only the typed percentage conversion below is supported. */
+  percentToFractionDivisor: 100,
   literalConversionProof: false,
   opaqueAtoms: "case_sensitive_exact_equality",
   periodBasis: "explicit_matching_grain",

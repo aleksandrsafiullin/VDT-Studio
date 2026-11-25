@@ -57,6 +57,8 @@ The active implementation authority is [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PL
 | Artifact | Purpose |
 |---|---|
 | [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md) | Ordered Gate A and Wave 0–7 implementation program |
+| [AI-first workspace implementation plan](implementation/AI_FIRST_WORKSPACE_PLAN_2026-11-24.md) | Proposed Astra and Sol work packages for editor and chat parity, structural drafts, conversation continuity, shared validation and business evaluation |
+| [AI-first workspace execution](implementation/AI_FIRST_WORKSPACE_EXECUTION_2026-11-24.md) | Ticket dependencies, integration status and evidence |
 | [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) | Accepted single-copy skill, actor, selection, migration and default-off flag contract |
 | [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) | Accepted and implemented W0.1 atomic revision, strict payload, leased recovery and legacy adoption decision |
 | [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable command/lease, bounded-turn, manual reconciliation and retry design contract; contract-only `GO` plus separate Gate R1 code-only `GO`, no runtime authority |
@@ -98,6 +100,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-012`](adr/ADR-012-declarative-local-harness-connections.md) | Declarative current harness catalog, shared ACP and host-owned custom profiles; live/native qualification separate |
 | [`ADR-013`](adr/ADR-013-independent-suggested-kpi-execution-settings.md) | Independent Suggested KPI model and explicit Off-by-default reasoning; provider mappings, immutable preparation and qualification boundary |
 | [`ADR-014`](adr/ADR-014-tree-to-skill-review-and-updates.md) | Dedicated tree-to-skill draft review and selective versioned updates; implementation/review status and evidence are tracked in the execution plan |
+| [`ADR-015`](adr/ADR-015-ai-first-workspace-operations.md) | AI-first project operations, goal-specific validation and conversation continuity contract |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [response-contract repair](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md),

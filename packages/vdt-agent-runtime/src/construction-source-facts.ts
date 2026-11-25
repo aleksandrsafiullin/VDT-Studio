@@ -1,5 +1,5 @@
 import { extractFormulaReferences, parseValidationUnit, type VdtNode, type VdtProject } from "@vdt-studio/vdt-core";
-import { requiresDerivedRootForRun } from "./model-acceptance-contract";
+import { requiresDerivedRootForRun, unboundQuotedFormulaFacts } from "./model-acceptance-contract";
 import type { VdtAgentRunState, VdtAgentStartRequest } from "./types";
 import { collectLiteralUserQuantities, normalizeQuotedInputUnit, type LiteralUserQuantity } from "./value-provenance-contract";
 
@@ -165,4 +165,15 @@ export function excavationDowntimeCoverage(
     }
   }
   return { required, missing: unusedConstructionSourceFacts(required, sourceFacts.bindings.filter(({ nodeId }) => active.has(nodeId))) };
+}
+
+/** The host applies the same evidence checks to every construction finish. */
+export function constructionFinishEvidence(project: VdtProject, state: VdtAgentRunState) {
+  const facts = constructionSourceFacts(project, state);
+  const downtime = excavationDowntimeCoverage(project, state, facts);
+  return {
+    ...facts,
+    downtime,
+    unbound: [...unboundQuotedFormulaFacts(project, state.request, undefined, facts.quantities), ...(downtime?.missing ?? [])]
+  };
 }

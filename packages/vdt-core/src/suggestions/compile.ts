@@ -6,7 +6,7 @@ import { calculateScenarioGraph } from "../scenario/scenario";
 import { parseFormula } from "../formula/parser";
 import { extractFormulaReferences } from "../formula/evaluator";
 import type { FormulaExpression } from "../formula/ast";
-import { validateGraph } from "../graph/validation";
+import { evaluateModelReadiness } from "../graph/model-readiness";
 import { inspectDecompositionHierarchy } from "../graph/decomposition";
 import type { KpiSuggestionContext, KpiSuggestionSelection, KpiSuggestionSet, KpiSuggestionRecipeCatalog } from "./types";
 import { fingerprintKpiProject } from "./identity";
@@ -180,10 +180,10 @@ export async function compileKpiSuggestion(project: VdtProject, context: KpiSugg
     smartAssert(hierarchy.valid, "INVALID_HIERARCHY", hierarchy.errors[0] ?? "Smart changes would invalidate the decomposition plan.");
     constructionWarnings = hierarchy.constructionWarnings;
   }
-  const validation = validateGraph(preview);
-  smartAssert(validation.valid, "INVALID_GRAPH", validation.errors[0]?.message ?? "Smart changes would invalidate the graph.");
-  const baselineWarnings = new Set(validateGraph(project).warnings.map(issueKey));
-  smartAssert(validation.warnings.filter(w => w.type === "unit_mismatch" && !baselineWarnings.has(issueKey(w))).length === 0,
+  const readiness = evaluateModelReadiness(preview, { purpose: "structural_model" });
+  smartAssert(readiness.accepted, "INVALID_GRAPH", readiness.issues.find(issue => issue.severity === "error")?.message ?? "Smart changes would invalidate the graph.");
+  const baselineWarnings = new Set(evaluateModelReadiness(project, { purpose: "structural_model" }).validation.warnings.map(issueKey));
+  smartAssert(readiness.validation.warnings.filter(w => w.type === "unit_mismatch" && !baselineWarnings.has(issueKey(w))).length === 0,
     "UNIT_MISMATCH", "Smart changes introduce a unit-validation warning.");
   const affected = new Set([target.id]);
   if (selection.mode === "formula") {

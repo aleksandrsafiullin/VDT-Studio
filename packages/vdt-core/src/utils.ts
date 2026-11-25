@@ -1,4 +1,13 @@
-import type { VdtWarning } from "./types";
+import type { VdtNode, VdtWarning } from "./types";
+
+export function readNodeBaselineValue(node: VdtNode): number | undefined {
+  return node.valueStatus === "unknown" ? undefined : node.baselineValue ?? node.value;
+}
+
+export function isIllustrativeValue(node: VdtNode): boolean {
+  const tier = node.valueSource?.sourceTier;
+  return node.valueStatus === "default_assumption" || tier === "default_assumption" || tier === "assumption";
+}
 
 export function nowIso() {
   return new Date().toISOString();

@@ -201,7 +201,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         nodeId: "number_of_trucks",
         name: "Number of trucks",
         type: "input",
-        unit: "trucks",
+        unit: "1",
         relation: "multiplicative_driver",
         baselineValue: 5
       }
@@ -215,7 +215,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         nodeId: "trips_per_truck",
         name: "Trips per truck",
         type: "calculated",
-        unit: "trips/truck/year",
+        unit: "trips/year",
         relation: "multiplicative_driver"
       }
     },
@@ -295,7 +295,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         nodeId: "haul_distance_km",
         name: "Average haul distance",
         type: "input",
-        unit: "km",
+        unit: "km/trip",
         relation: "formula_dependency",
         baselineValue: 2.7
       }

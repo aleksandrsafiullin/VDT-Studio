@@ -30,6 +30,15 @@ overrides may still supply a value, but do not clear the calibration error.
 Negative solutions retain their sign and get a warning; units/percentage scales
 are unchanged, with no invented bounds or percentage denominator.
 
+The inspector and chat operations use the same eligibility checks and
+calculation diagnostics. To inspect a balancing KPI in chat, use
+`vdt.read_back_calculation`. The `vdt.set_back_calculation` mutation takes
+a balancing KPI ID and an eligible output KPI ID with a finite actual target
+in the output's unit. A null setting clears the calibration. Chat edits follow
+the existing mutation approval policy and use a serialized clear patch to
+remove only the calibration setting. The stored source and formula remain
+available when the setting is cleared.
+
 JSON import and strict revision commits retain the optional setting without a
 database migration. Excel uses the same inverse AST, references independent
 Baseline cells, guards original division domains and retains the source number as
@@ -107,7 +116,9 @@ Functions such as conditional logic, lookup, aggregation, time lag and rolling w
 
 ### `min` / `max` and bare node references
 
-`min` and `max` are reserved function names when followed by `(`. `min(a, b)` parses as a call; `min` alone parses as a reference to a graph node whose id is `min`. The same applies to `max`. Formula dependency extraction and edge-relation mapping walk the AST: call arguments are `formula_dependency` operands; function names are never graph node ids in those maps.
+The shared tokenizer recognizes `min`, `max` and their Russian spellings `МИН` and `МАКС` in any letter case before `(`. The editor and all providers use the same tokens. Function names normalize to `min` or `max`, so `МиН(stage_a, stage_b)` has the same meaning as `MIN(stage_a, stage_b)`. The existing VDT separators apply to all spellings. Use a comma between arguments and a dot for a decimal inside a call.
+
+Bare identifiers keep their exact case. For example, `MIN` alone refers to a node with ID `MIN`. Formula dependency extraction and edge relations use the AST's call arguments as `formula_dependency` operands. Unknown functions, malformed expressions, incorrect references and unit violations still produce validation errors.
 
 ## Evaluation
 
@@ -137,6 +148,12 @@ VDT Potential follows the selected Excel Scenario Mode calculation for every KPI
 Visible tabs open in the order Scenario Mode, VDT, Source, Guide; the hidden calculation sheet is last. Scenario Mode contains a compact KPI summary and driver table, with Multiplicative effect label/value on the same row. Technical instructions and calculation boundaries are on Guide. All numeric displays use two decimal places, literal-space thousands grouping selected dynamically by rounded magnitude, and unmodified numeric/formula precision. Base/Potential prefixes keep negative signs with their numbers. Magnitudes at least `1e48` use scientific notation with two decimal places; percentage change displays two decimals on its existing scale.
 
 The hidden `_Scenario Calc` sheet stores one complete graph calculation column for the selected scenario and one per driver's isolated case. Each isolated case applies only that driver's override to the current baseline model. Effect is its root value minus Total BASELINE. Multiplicative effect is the total root change minus the sum of the displayed isolated effects; invalid active effects are not silently omitted. Percentage change retains the application's 0–100 numeric scale and displays a literal percent sign; a zero baseline has unavailable percentage change. All graph formulas remain native, including nonlinear products, ratios and MIN/MAX.
+
+The editor's one-factor probe and chat's `vdt.probe_factor` use the same
+scenario calculation for a single temporary override, including fixed-input
+validation. The model baseline supplies the comparison point. Missing root
+values leave the delta unavailable. The calculation trace identifies which
+recorded decomposition assumptions apply to the factor-to-root path.
 
 Two deliberate worksheet adaptations are explicit in Guide: without a saved scenario, Scenario Mode starts an editable baseline case with zero effects when the root is valid; duplicate imported overrides normalize to the last value once per driver, rather than reproducing the current application's duplicate-count residual artifact. Initially invalid formula cycles still require model repair and re-export. A saved cycle-breaking override is calculable, but clearing that override returns unavailable values instead of restoring circular workbook formulas.
 
@@ -180,6 +197,15 @@ an unavailable root calculation. Clicking it selects the first affected KPI and
 opens Warnings. The issue control remains visible at narrow widths. Saved
 invalid drafts can be reopened and repaired or restored from a valid version.
 
+The shared `workspace-v1` readiness policy defines two acceptance purposes.
+Structural review checks model and unit integrity and lists missing measurements.
+Calculated-baseline review also requires complete inputs and a finite result.
+Zero is a known value. A recorded unknown remains missing even if an older
+snapshot carries a stale numeric field. The policy checks explicit percentage
+conversion for both purposes. An ordinary manual tree can use these checks
+without a construction plan. Import and draft checks retain their original
+repair behavior. [Workspace operations contract](adr/ADR-015-ai-first-workspace-operations.md)
+
 ## Unit Validation
 
 The general engine derives formal units through multiplication/division and
@@ -207,14 +233,13 @@ bases. When an excavation brief supplies one schedule and rate basis for
 identical machines, the machine quantity can enter the formula as a
 dimensionless multiplier.
 
-For new trees built through the direct OpenAI Model Agent or the structured
-OpenAI-compatible decision adapter,
-the finish gate checks the scale of explicit percent units. An input quoted as
+Workspace acceptance checks the scale of explicit percent units across
+provider adapters and manual model review. An input quoted as
 10% stores `10` with unit `%`. For a currency formula such as
 `amount * (1 - discount / 100)`, the conversion belongs in the expression.
 The gate reports a unit error when a formula uses that input as an unconverted
-fraction. Standard graph validation retains legacy scalar semantics for existing
-and manually authored models. Numeric offsets and thresholds retain contextual
+fraction. Legacy draft and import checks preserve readable snapshots for repair.
+Numeric offsets and thresholds retain contextual
 units. Full typed metric definitions, arbitrary unit notation, entity populations,
 business and time grain, timezone reconciliation and currency/calendar conversions
 remain open. `valid` means the static checks found no blocking error. Warnings,

@@ -2,9 +2,8 @@
 
 import { useMemo } from "react";
 import { ArrowRight, ArrowUpRight, CircleAlert } from "lucide-react";
-import { calculateGraph, type VdtProject } from "@vdt-studio/vdt-core";
+import { compareVersionProjects, type VdtProject } from "@vdt-studio/vdt-core";
 import { formatChange, formatNumber } from "@/lib/format";
-import { versionNodeChanges } from "./version-presentation";
 
 function valueText(value: number | undefined, unit?: string) {
   return value === undefined || !Number.isFinite(value) ? "No value" : `${formatNumber(value)}${unit ? ` ${unit}` : ""}`;
@@ -16,17 +15,12 @@ export function VdtComparisonPanel({ before, current, onSelectNode }: {
   current: VdtProject;
   onSelectNode?: (nodeId: string) => void;
 }) {
-  const changes = useMemo(() => versionNodeChanges(before, current), [before, current]);
-  const beforeRoot = before.graph.nodes.find((node) => node.id === before.rootNodeId);
-  const afterRoot = current.graph.nodes.find((node) => node.id === current.rootNodeId);
-  const leftValue = calculateGraph(before).rootValue;
-  const rightValue = calculateGraph(current).rootValue;
-  const comparable = beforeRoot?.id === afterRoot?.id && beforeRoot?.name === afterRoot?.name &&
-    beforeRoot?.unit === afterRoot?.unit && beforeRoot?.formula === afterRoot?.formula;
-  const delta = comparable && leftValue !== undefined && rightValue !== undefined ? rightValue - leftValue : undefined;
+  const { root, changes, scenariosChanged, dataSourcesChanged } =
+    useMemo(() => compareVersionProjects(before, current), [before, current]);
+  const { before: beforeRoot, after: afterRoot, comparable, delta } = root;
   const otherChanges = [
-    JSON.stringify(before.scenarios) !== JSON.stringify(current.scenarios) ? "Scenarios and their settings have changed." : "",
-    JSON.stringify(before.dataSources) !== JSON.stringify(current.dataSources) ? "Data sources have changed." : ""
+    scenariosChanged ? "Scenarios and their settings have changed." : "",
+    dataSourcesChanged ? "Data sources have changed." : ""
   ].filter(Boolean);
   const counts = changes.reduce((total, row) => ({ ...total, [row.kind]: total[row.kind] + 1 }), { added: 0, removed: 0, changed: 0 });
 
@@ -41,17 +35,17 @@ export function VdtComparisonPanel({ before, current, onSelectNode }: {
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
           <div className="min-w-0">
             <div className="text-xs text-muted">Before</div>
-            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(leftValue, beforeRoot?.unit)}</div>
-            <div className="mt-1 break-words text-xs text-muted">{beforeRoot?.name}</div>
+            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(beforeRoot.value, beforeRoot.unit)}</div>
+            <div className="mt-1 break-words text-xs text-muted">{beforeRoot.name}</div>
           </div>
           <ArrowRight className="h-4 w-4 text-muted" aria-hidden="true" />
           <div className="min-w-0">
             <div className="text-xs text-muted">After</div>
-            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(rightValue, afterRoot?.unit)}</div>
-            <div className="mt-1 break-words text-xs text-muted">{afterRoot?.name}</div>
+            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(afterRoot.value, afterRoot.unit)}</div>
+            <div className="mt-1 break-words text-xs text-muted">{afterRoot.name}</div>
           </div>
         </div>
-        {delta !== undefined ? <p className="mt-3 border-t border-line pt-3 text-xs text-graphite">Change: <strong>{formatChange(delta)} {afterRoot?.unit}</strong></p> : null}
+        {delta !== undefined ? <p className="mt-3 border-t border-line pt-3 text-xs text-graphite">Change: <strong>{formatChange(delta)} {afterRoot.unit}</strong></p> : null}
         {!comparable ? <p className="mt-3 flex items-start gap-2 border-t border-line pt-3 text-xs leading-5 text-amber-800"><CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />The root KPI, its formula or units have changed. Results may not be directly comparable.</p> : null}
       </div>
       <div className="flex flex-wrap gap-2 text-xs" aria-label="Change summary">

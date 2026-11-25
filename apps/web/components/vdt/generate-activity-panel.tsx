@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, Loader2, RotateCcw, X } from "lucide-react";
+import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, Download, Loader2, RotateCcw, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import type { AgentAnswerPayload, AgentChatMessage, PublicAgentStatus, VdtAgentQuestion } from "@/lib/agent-client";
@@ -9,6 +9,7 @@ import type { GenerateActivityState } from "./vdt-store";
 import { MarkdownText } from "./markdown-text";
 import { VdtTreeIcon } from "./vdt-tree-icon";
 import styles from "./agent-chat.module.css";
+import { EditorHandoffActions } from "./editor-handoff-actions";
 
 export type AgentAnswerSubmission = Record<string, string | number | string[]> | AgentAnswerPayload[];
 
@@ -647,7 +648,7 @@ function MutationPreviewCard({
       <div className="text-sm font-semibold text-ink">{proposal.title}</div>
       <p className="mt-1 text-sm leading-5 text-graphite">{proposal.summary}</p>
       <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-blue-800">
-        {(counts.length > 0 ? counts : ["No graph changes"]).map((entry) => (
+        {(counts.length > 0 ? counts : [proposal.changeSet.workspaceChange ? "1 workspace change" : "No graph changes"]).map((entry) => (
           <span key={entry} className="rounded border border-blue-200 bg-white px-2 py-1">{entry}</span>
         ))}
         <span className="rounded border border-blue-200 bg-white px-2 py-1">{validationLabel}</span>
@@ -770,6 +771,18 @@ function pendingGenericApprovalRequest(
   };
 }
 
+function workbookDownloads(run: GenerateActivityState["runtimeAgentRun"]) {
+  return (run?.artifacts ?? []).flatMap((artifact) => {
+    const data = artifact.payload;
+    if (artifact.type !== "excel_workbook" || artifact.runId !== run?.runId || !data || typeof data !== "object") return [];
+    const { downloadUrl, filename, revisionId } = data as Record<string, unknown>;
+    if (typeof downloadUrl !== "string" ||
+        !downloadUrl.startsWith(`/api/agent/runs/${encodeURIComponent(run.runId)}/excel-workbook?`) ||
+        typeof filename !== "string" || typeof revisionId !== "string") return [];
+    return [{ id: artifact.id, downloadUrl, filename, revisionId }];
+  });
+}
+
 export function GenerateActivityPanel({
   activity,
   onCancel,
@@ -837,6 +850,17 @@ export function GenerateActivityPanel({
           />
         ))}
       </div>
+
+      {workbookDownloads(activity.runtimeAgentRun).map((workbook) => (
+        <div key={workbook.id} data-testid="agent-excel-workbook">
+          <a className="inline-flex items-center gap-2 text-sm font-medium underline" href={workbook.downloadUrl} download={workbook.filename}>
+            <Download size={14} aria-hidden="true" />
+            Download {workbook.filename}
+          </a>
+          <p className="text-xs text-graphite">Saved revision {workbook.revisionId}</p>
+        </div>
+      ))}
+      <EditorHandoffActions run={activity.runtimeAgentRun} />
 
       <ActivityStatusRow
         status={resolvedPublicStatus}
