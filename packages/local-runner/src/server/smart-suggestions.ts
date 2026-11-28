@@ -1,3 +1,5 @@
+import { localHttpFetch } from "./local-http-admission";
+import type { LocalHttpSelection } from "@vdt-studio/model-bridge";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -6,7 +8,7 @@ import { CHAT_STARTER_INSTRUCTION, CHAT_STARTER_LIMITS, CHAT_STARTER_OUTPUT_SCHE
 import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION, kpiSuggestionPromptInput,
   validateKpiSuggestionModelOutput, validateKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
 import { selectSmartCodexExecutable, readCodexSmartDefaultModel, readCodexSmartReasoningValues, SMART_CODEX_DISABLED_FEATURES, SMART_CODEX_CODE_MODE_CONFIG } from "@vdt-studio/model-bridge/local-runtime";
-import { isCheckpointReasoningEffort, parseLocalModelReasoningCapabilities, type LocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
+import { FAST_LOCAL_REASONING, isCheckpointReasoningEffort, parseLocalModelReasoningCapabilities, resolveLocalReasoning, type LocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 import type { ExecutionResult, ExecutorOptions } from "./executor";
 import { executeCli } from "./executor";
@@ -98,13 +100,17 @@ export function parseSmartCodexOutput(stdout: string, reasoningDisabled = false,
   return validate(JSON.parse(text));
 }
 
-export async function readLocalSmartReasoningCapabilities(manifest: BackendManifest, model: string, signal: AbortSignal, options: ExecutorOptions = {}): Promise<LocalModelReasoningCapabilities | undefined> {
+export async function readLocalSmartReasoningCapabilities(manifest: BackendManifest, model: string, signal: AbortSignal, options: ExecutorOptions = {}, selection?: LocalHttpSelection, task = "suggest_incoming_kpis", allowMissing = false): Promise<LocalModelReasoningCapabilities | undefined> {
   if (!manifest.localHttp || !["ollama", "lm_studio", "vllm"].includes(manifest.id)) throw fail("SUGGESTIONS_UNAVAILABLE", "The selected host has no reviewed local-model metadata source.");
   if (!model || model.length > 160 || model.startsWith("-") || /[\x00-\x20]/.test(model)) throw fail("INVALID_MODEL", "An explicit bounded model ID is required.");
   const base = manifest.localHttp.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
-  const response = await fetchSmart(options.fetch ?? fetch, native ? `${base.replace(/\/v1$/, "")}/api/show` : `${base}/models/${encodeURIComponent(model)}`,
+  const response = await fetchSmart(localHttpFetch(manifest, task, model, options, selection), native ? `${base.replace(/\/v1$/, "")}/api/show` : `${base}/models/${encodeURIComponent(model)}`,
     native ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model }) } : { method: "GET" }, signal);
-  if (!response.ok) { if (response.body) await awaitHttpSettlement(response.body.cancel(), AbortSignal.abort()); throw fail("REASONING_UNSUPPORTED", "The selected local server did not expose model reasoning capabilities."); }
+  if (!response.ok) {
+    if (response.body) await awaitHttpSettlement(response.body.cancel(), AbortSignal.abort());
+    if (allowMissing && [404, 405].includes(response.status)) return undefined;
+    throw fail("REASONING_UNSUPPORTED", "The selected local server did not expose model reasoning capabilities.");
+  }
   return parseLocalModelReasoningCapabilities(await readSmartResponse(response, signal), manifest.id);
 }
 
@@ -124,18 +130,17 @@ const starterCompletionContract: typeof kpiCompletionContract = {
   validate: validateChatStarterOutput
 };
 
-async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], hasSelectedSkill = false, contract = kpiCompletionContract): Promise<unknown> {
+async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], hasSelectedSkill = false, contract = kpiCompletionContract, selection?: LocalHttpSelection): Promise<unknown> {
   const base = manifest.localHttp!.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
+  const task = contract === starterCompletionContract ? "suggest_chat_starters" : "suggest_incoming_kpis";
+  const fetcher = localHttpFetch(manifest, task, model, options, selection);
   let reasoning: Record<string, unknown> = native && contract === starterCompletionContract ? { think: false } : {};
   if (modelReasoning !== undefined) {
-    const capabilities = await readLocalSmartReasoningCapabilities(manifest, model, signal, options);
-    const selected = modelReasoning === false ? capabilities?.values.find(value => value === false || ["none", "off", "disabled"].includes(String(value))) : capabilities?.values.find(value => value === modelReasoning);
-    if (selected === undefined) throw fail("REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting. Choose Provider default.");
-    if (native) {
-      if (typeof modelReasoning === "number") throw fail("REASONING_UNSUPPORTED", "Ollama does not accept a thinking token count.");
-      reasoning = { think: selected };
-    } else {
-      reasoning = selected === false ? {} : { reasoning_effort: selected };
+    const capabilities = await readLocalSmartReasoningCapabilities(manifest, model, signal, options, selection, task, modelReasoning === FAST_LOCAL_REASONING);
+    const effective = resolveLocalReasoning(capabilities, modelReasoning);
+    if (!effective.supported) throw fail("REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting. Choose Provider default.");
+    if (effective.value !== undefined && (native || effective.value !== false)) {
+      reasoning = native ? { think: effective.value } : { reasoning_effort: effective.value };
     }
   }
   const body = native ? { model, stream: false, ...reasoning, format: contract.schema,
@@ -144,7 +149,7 @@ async function localCompletion(manifest: BackendManifest, model: string, prompt:
       messages: [{ role: "system", content: contract.instruction }, { role: "user", content: prompt }] };
   const serialized = JSON.stringify(body);
   if (bytes(serialized) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart provider envelope exceeds its bounded input allowance.");
-  const response = await fetchSmart(options.fetch ?? fetch, native ? `${base.replace(/\/v1$/, "")}/api/chat` : `${base}/chat/completions`,
+  const response = await fetchSmart(fetcher, native ? `${base.replace(/\/v1$/, "")}/api/chat` : `${base}/chat/completions`,
     { method: "POST", headers: { "content-type": "application/json" }, body: serialized }, signal);
   const payload = await readSmartResponse(response, signal) as { error?: string; message?: { content?: string; thinking?: string; reasoning_content?: string; tool_calls?: unknown[] }; done?: boolean; done_reason?: string; choices?: Array<{ message?: { content?: string; thinking?: string; reasoning_content?: string; tool_calls?: unknown[]; function_call?: unknown; refusal?: unknown }; finish_reason?: string }> };
   if (!response.ok) {
@@ -152,7 +157,7 @@ async function localCompletion(manifest: BackendManifest, model: string, prompt:
     throw fail("BACKEND_FAILED", `Smart local provider failed with status ${response.status}.`);
   }
   const message = native ? payload.message : payload.choices?.[0]?.message;
-  if (modelReasoning === false && (message?.thinking?.trim() || message?.reasoning_content?.trim())) throw fail("REASONING_UNSUPPORTED", "The local provider returned reasoning despite the disabled setting.");
+  if ((modelReasoning === false || reasoning.think === false) && (message?.thinking?.trim() || message?.reasoning_content?.trim())) throw fail("REASONING_UNSUPPORTED", "The local provider returned reasoning despite the disabled setting.");
   if (message?.tool_calls?.length) throw fail("TOOL_ACTIVITY_REJECTED", "Smart provider returned a tool call.");
   if (payload.done_reason === "length" || payload.choices?.[0]?.finish_reason === "length") throw fail("OUTPUT_TOO_LARGE", "Smart completion exhausted its token budget.");
   if (native ? payload.done !== true || payload.done_reason !== "stop" : payload.choices?.length !== 1 || payload.choices[0]?.finish_reason !== "stop" || payload.choices[0].message?.function_call || payload.choices[0].message?.refusal) throw fail("INVALID_RESPONSE", "Smart local provider did not acknowledge a completed tool-free response.");
@@ -281,7 +286,7 @@ export async function executeSmartSuggestion(manifest: BackendManifest, request:
     if (manifest.kind !== "mock" && (!request.model || request.model.startsWith("-") || /[\x00-\x20]/.test(request.model))) throw fail("SUGGESTIONS_UNAVAILABLE", "An explicit host-selected model is required for Smart suggestions.");
     let output: unknown;
     if (manifest.kind === "mock") output = { status: "empty", rationale: "Deterministic empty suggestion fixture.", limitations: [], groups: [] };
-    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(modelInput), controller.signal, options, request.modelReasoning, Boolean(input.context.selectedSkill));
+    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(modelInput), controller.signal, options, request.modelReasoning, Boolean(input.context.selectedSkill), kpiCompletionContract, request.localHttpSelection);
     else if (manifest.id === "codex_subscription") output = await cliCompletion(manifest, request.model!, prompt, controller.signal, options, request.modelReasoning);
     else if (manifest.harness?.transport !== "native" && manifest.harness) output = (await executeHarnessCompletion(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
     else if (manifest.kind === "subscription_cli") output = (await executeCli(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
@@ -308,7 +313,7 @@ export async function executeChatStarters(manifest: BackendManifest, request: Co
   try {
     if (manifest.kind === "local_http") {
       output = await localCompletion(manifest, request.model ?? manifest.localHttp!.defaultModel, JSON.stringify(input),
-        signal, options, undefined, false, starterCompletionContract);
+        signal, options, undefined, false, starterCompletionContract, request.localHttpSelection);
     } else if (manifest.id === "codex_subscription") {
       output = await cliCompletion(manifest, request.model ?? "auto", JSON.stringify(input), signal, options, undefined, starterCompletionContract);
     } else if (manifest.harness && manifest.harness.transport !== "native") {

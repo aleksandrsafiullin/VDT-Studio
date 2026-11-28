@@ -7,6 +7,7 @@ import {
 } from "@vdt-studio/vdt-core";
 import { boundConstructionArguments, groundExistingIds, groundLiteralValues, groundNodeIds, plannedDriverArguments } from "./local-model-output-schema";
 import { constructionPlanArguments, resolveImplicitRoot } from "./local-model-output-projection";
+import { PROPOSE_OUTCOME } from "./outcome-admission";
 import type { HierarchyRepairCall } from "./openai-hierarchy-repair";
 
 type JsonObject = Record<string, unknown>;
@@ -21,11 +22,11 @@ const nativeTools = new Set([
   "vdt.reparent_branch", "vdt.delete_node",
   "vdt.validate", "vdt.calculate", "project.get_node", "project.get_current", "project.read_current",
   "skill.list", "skill.read", "skill.search", "skill.select", "skill.report_gap",
-  "tools.describe", "run.request_finish",
+  "tools.describe", "run.request_finish", PROPOSE_OUTCOME,
   "scenario.list", "scenario.save", "scenario.compare", "version.list", "version.edit", "export.excel",
   "vdt.probe_factor", "vdt.read_decomposition_assumptions"
 ]);
-const singletonModelTools = new Set(["run.request_finish", "user.request_approval", "approval.request"]);
+const singletonModelTools = new Set(["run.request_finish", "user.request_approval", "approval.request", PROPOSE_OUTCOME, "skill.select"]);
 const statusMessage = { type: "string", minLength: 1, maxLength: 500 };
 const decisions = getRegisteredJsonSchema("agent-decision-v2").anyOf as Array<{ properties: JsonObject }>;
 const questionSchema = decisions.find((branch) => "questions" in branch.properties)!;
@@ -236,9 +237,9 @@ export function buildOpenAiModelTurn(
     if (observation?.constructingTree === true && record(observation.skillResolution) && observation.skillResolution.outcome
       && observation.skillResolution.selectedSkillId !== "mining.excavation" && name.startsWith("excavation.")) continue;
     if (resolution) {
-      const available = pinnedId ? name === "skill.read"
+      const available = pinnedId ? (selectableReads.length && resolution.confirmationRequired === true ? name === "skill.select" : name === "skill.read")
         : !resolution.catalogBrowsed ? name === "skill.list"
-        : (name === "skill.report_gap" && !scopeExcludedIds.length && (resolution.catalogComplete || resolution.scopedSearchReviewed))
+        : (name === "skill.report_gap" && !scopeExcludedIds.length && resolution.catalogComplete)
           || (name === "skill.list" && typeof resolution.nextOffset === "number")
           || name === "skill.search"
           || (name === "skill.read" && unreadIds.length > 0) || (name === "skill.select" && selectableReads.length > 0);
@@ -315,7 +316,7 @@ export function buildOpenAiModelTurn(
   ];
   if (callArrays.length) batchProperties.calls = callArrays.length === 1 ? callArrays[0] : { anyOf: callArrays };
   const suppressQuestion = options.continueWithoutQuestion || options.reviewInitialPlan
-    || (buildingFirstLayer && observation?.readinessPurpose !== "structural_model");
+    || (buildingFirstLayer && !resolution && observation?.readinessPurpose !== "structural_model");
   action.anyOf = action.anyOf.filter((item) => {
     const kind = (item.properties as { type: { const: string } }).type.const;
     // A structural goal may require a process decision before a valid plan.

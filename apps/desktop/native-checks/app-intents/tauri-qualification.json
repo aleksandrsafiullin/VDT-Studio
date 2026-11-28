@@ -1,0 +1,21 @@
+{
+  "app": {
+    "security": {
+      "capabilities": [
+        "default",
+        "mac-local-web",
+        "windows-local-web",
+        {
+          "identifier": "mac-app-intents-qualification",
+          "description": "Shortcuts IPC for the authenticated macOS qualification window.",
+          "platforms": ["macOS"],
+          "local": false,
+          "remote": { "urls": ["http://127.0.0.1:37541/*"] },
+          "windows": ["main"],
+          "permissions": ["app-intents-qualification"]
+        }
+      ]
+    }
+  },
+  "bundle": { "macOS": { "minimumSystemVersion": "14.0" } }
+}

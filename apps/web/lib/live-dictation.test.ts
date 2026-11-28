@@ -1,12 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import { SPEECH_SAMPLE_RATE as RATE } from "@vdt-studio/local-runner/speech-catalog";
 import { validateSpeechWave } from "@vdt-studio/local-runner/speech";
-import { insertDictation, LiveDictationSession, MicrophoneLevelMeter, PcmResampler, pcmWave } from "./live-dictation";
+import { captureMicrophone, insertDictation, LiveDictationSession, MicrophoneLevelMeter, PcmResampler, pcmWave } from "./live-dictation";
 
 const voice = (seconds: number) => new Float32Array(Math.round(RATE * seconds)).fill(0.2);
 const silence = (seconds: number) => new Float32Array(Math.round(RATE * seconds));
 
 describe("live local dictation", () => {
+  it("stops an already granted track during pending worklet setup and waits for audio context closure", async () => {
+    const controller = new AbortController();
+    const track = { stop: vi.fn(), onended: null };
+    const addModule = vi.fn(() => new Promise<void>(() => {}));
+    let finishClosing!: () => void;
+    const close = vi.fn(() => new Promise<void>(resolve => { finishClosing = resolve; }));
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track] }) } });
+    vi.stubGlobal("AudioContext", class { readonly state = "suspended"; audioWorklet = { addModule }; close = close; });
+    try {
+      const completed = vi.fn();
+      const capture = captureMicrophone(vi.fn(), controller.signal, vi.fn()).catch(error => completed(error));
+      await vi.waitFor(() => expect(addModule).toHaveBeenCalledOnce());
+      controller.abort();
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(track.stop).toHaveBeenCalledOnce();
+      expect(completed).not.toHaveBeenCalled();
+      finishClosing();
+      await capture;
+      expect(completed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: "AbortError" }));
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("shows actual microphone energy and duration before a recognizer can respond", () => {
     const meter = new MicrophoneLevelMeter();
     expect(meter.push(new Float32Array())).toBeUndefined();

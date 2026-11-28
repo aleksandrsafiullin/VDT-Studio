@@ -4,6 +4,7 @@ import {
   AzureOpenAiProvider,
   GeminiProvider,
   isLocalRunnerConnectionFailure,
+  isModelReasoningValue,
   isOpenAiReasoningModel,
   LocalRunnerProvider,
   localRunnerOfflineMessage,
@@ -121,6 +122,7 @@ function readLocalRunnerProviderConfig(value: unknown, origin: string): LocalRun
     pairingToken,
     origin,
     ...(typeof config.model === "string" && config.model.trim() ? { model: config.model.trim().slice(0, 160) } : {}),
+    ...(isModelReasoningValue(config.modelReasoning) ? { modelReasoning: config.modelReasoning } : {}),
     timeoutMs
   };
 }
@@ -352,6 +354,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Request body must be an object." }, { status: 400 });
     }
 
+    if ("localHttpSelection" in body || body.executionMode === "local"
+      || (isRecord(body.expectedExecution) && body.expectedExecution.mode === "local")
+      || (isRecord(body.providerConfig) && ("localHttpSelection" in body.providerConfig || body.providerConfig.executionMode === "local"))) {
+      return NextResponse.json({ ok: false, code: "LOCAL_ROUTE_UNVERIFIED", error: "Use the host-admitted model route for verified local diagnostics." }, { status: 422 });
+    }
+    if ("expectedExecution" in body || "executionBindingId" in body) {
+      return NextResponse.json({ ok: false, code: "BINDING_CAPABILITY_DENIED", error: "This diagnostic accepts a compatibility connection only." }, { status: 422 });
+    }
+
     const connectionTest = body.operation === "connection_test";
     const modelList = body.operation === "list_models";
     readLimitedString(body, "rootKpi", !connectionTest && !modelList);
@@ -420,7 +431,8 @@ export async function POST(request: Request) {
         ...probeReasoning,
         baseUrl: requestBaseUrl ?? envBaseUrl,
         apiKey,
-        model
+        model,
+        fetch: (url, init) => globalThis.fetch(url, { ...init, redirect: "error" })
       });
     } else if (body.providerId === "anthropic") {
       const providerConfig = readProviderConfig(body.providerConfig);

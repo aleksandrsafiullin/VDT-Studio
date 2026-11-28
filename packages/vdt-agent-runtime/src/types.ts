@@ -17,6 +17,7 @@ import type {
 import type { AgentRunPerformanceTelemetry } from "./performance-telemetry";
 import type { AgentDomainPolicySummary } from "./domain-policies";
 import type { AgentStructuredFeedback } from "./feedback";
+import type { ExecutionExpectation } from "./schemas/agent-run";
 
 export {
   AGENT_RUN_PERFORMANCE_TELEMETRY_GRANT_FIELD_DENYLIST,
@@ -297,6 +298,7 @@ export interface VdtAgentStartRequestBase {
   priorConversationRunId?: string | undefined;
   mode: VdtAgentMode;
   outcome?: VdtAgentOutcome | undefined;
+  outcomeSelection?: "automatic" | undefined;
   input: VdtAgentStartInput;
   workspace?: VdtAgentWorkspaceContext | undefined;
   options?: {
@@ -313,6 +315,7 @@ export interface VdtAgentStartRequestBase {
  * the server from this opaque identifier. */
 export interface VdtAgentExecutionBindingStartRequest extends VdtAgentStartRequestBase {
   executionBindingId: string;
+  expectedExecution?: ExecutionExpectation | undefined;
   providerId?: never;
   providerConfig?: never;
 }
@@ -322,6 +325,7 @@ export interface VdtAgentLegacyProviderStartRequest extends VdtAgentStartRequest
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
   executionBindingId?: never;
+  expectedExecution?: never;
 }
 
 export type VdtAgentPublicStartRequest =
@@ -337,6 +341,15 @@ export interface VdtAgentStartRequest extends VdtAgentStartRequestBase {
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
   executionBindingId?: string | undefined;
+  /** Host-bound interpretation of a requested artifact for Automatic admission. */
+  artifactIntent?: {
+    kind: "excel_workbook";
+    scenarioName?: string;
+    scenarioId?: string;
+    revisionId?: string;
+    /** Bind the requested new version to the admitting user instruction and existing workspace CAS. */
+    successorVersion?: { name: string; instructionId: string };
+  } | undefined;
   /** Host-derived, scoped carryover. Public start requests cannot supply it. */
   conversationContext?: {
     policy: string;
@@ -352,6 +365,15 @@ export interface VdtAgentStartRequest extends VdtAgentStartRequestBase {
   skillResolution?: {
     selectionRevision: number;
     outcome?: "selected" | "no_applicable_skill";
+    confirmationRequired?: boolean;
+    pendingMethod?: {
+      questionId: string;
+      skillId: string;
+      version: number;
+      contentHash: string;
+      readReceiptId: string;
+      reason: string;
+    };
   };
 }
 
@@ -635,6 +657,7 @@ export interface AgentDecisionContext {
 export type AgentUserMessage =
   | {
       type: "user_answer";
+      expectedQuestion?: import("./schemas/agent-message").AgentQuestionExpectation | undefined;
       answers?: Record<string, string | number | string[]> | undefined;
       structuredAnswers?: AgentAnswerPayload[] | undefined;
     }
@@ -660,6 +683,7 @@ export type AgentUserMessage =
     }
   | {
       type: "approval";
+      expectedProposal?: import("./schemas/agent-message").AgentProposalExpectation | undefined;
       approved: boolean;
       proposalId?: string | undefined;
       selectedChangeIds?: string[] | undefined;

@@ -542,6 +542,11 @@ retains evidence and blocks replay. Pre-Smart historical chats remain readable;
 Continue starts a fresh run with the current graph, while old queued callbacks
 stay fenced. Bounded store/native source and protocol reviews passed, as did
 local Chrome prepared-control, stored Add/reload/Undo and reconciliation fixtures.
+A stored Smart chat card can recover from a dropped response through the
+existing idempotency replay. The originating action, owner and base must match
+the stored receipt. Before displaying completion the browser compares the live
+workspace scope and draft with an authoritative read of the current saved head
+and its pending state. A later revision or Undo invalidates the old card.
 Cache/scheduler have no revision authority. See
 [validation and qualifications](PRODUCTION_READINESS.md#smart-kpi-validation) and
 [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).

@@ -1,4 +1,4 @@
-import type { LiteralUserQuantity, ModelAgentStructuredTurn } from "@vdt-studio/vdt-agent-runtime";
+import { agentQuestionSchema, type LiteralUserQuantity, type ModelAgentStructuredTurn } from "@vdt-studio/vdt-agent-runtime";
 import { calculationsWithoutPlannedInputs, extractReferencesFromAst, parseFormula } from "@vdt-studio/vdt-core";
 import type { localModelWorkingContext } from "./local-model-context";
 
@@ -136,6 +136,11 @@ export const CONSTRUCTION_QUESTION_CHECK = [
  * no answer or business decision, and cannot execute the proposed action. */
 export function localModelQuestionReviewPrompt(prompt: string, output: unknown, constructingTree = true): string | undefined {
   if (!object(output) || !object(output.action) || output.action.type !== "question" || !Array.isArray(output.action.questions)) return;
+  const [question] = output.action.questions;
+  // An authored definition is confirmed by the user after the Gateway has
+  // checked its exact evidence, before it becomes a saved decision.
+  if (output.action.questions.length === 1 && object(question) && question.decisionProposal != null
+    && agentQuestionSchema.shape.decisionProposal.safeParse(question.decisionProposal).success) return;
   const proposedQuestions = output.action.questions.slice(0, 5).flatMap((question) => object(question) && typeof question.question === "string" ? [{
     question: question.question.slice(0, 500),
     ...(typeof question.reason === "string" ? { reason: question.reason.slice(0, 240) } : {})

@@ -1,3 +1,5 @@
+import { isAdaptiveReasoningOffer } from "./adaptive-reasoning";
+import { AppleTransportError } from "@vdt-studio/local-runner/apple-foundation-models";
 import { isCurrentHarnessSession } from "./harness-session-bindings";
 import {
   agentStartRequestSchema,
@@ -106,7 +108,7 @@ export async function POST(request: Request) {
   let resolved: ReturnType<typeof resolveAgentStartRequest>;
   try {
     resolved = resolveAgentStartRequest(parsed.data as VdtAgentPublicStartRequest);
-    if (resolved.request.outcome && (!resolved.binding
+    if ((resolved.request.outcome || resolved.request.outcomeSelection) && (!resolved.binding
       || (!isStructuredModelExecutionBinding(resolved.binding) && !isExternalCliExecutionBinding(resolved.binding)))) {
       return jsonError(
         "Selecting a run outcome requires a Supervisor execution binding.",
@@ -146,6 +148,9 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     if (error instanceof AgentExecutionBindingError) {
+      if (error.code === "BINDING_CAPABILITY_DENIED") {
+        return jsonError(error.message, 409, "AGENT_EXECUTION_CAPABILITY_DENIED");
+      }
       return jsonError(
         "The requested execution binding is unavailable.",
         409,
@@ -156,8 +161,15 @@ export async function POST(request: Request) {
   }
 
   if (resolved.binding && isStructuredModelExecutionBinding(resolved.binding)) {
-    if (isOpenAiSessionBinding(resolved.binding.bindingId)) openAiSessionBindings(agentExecutionBindingRegistry).consume(resolved.binding.bindingId);
+    if (isOpenAiSessionBinding(resolved.binding.bindingId)
+      && !openAiSessionBindings(agentExecutionBindingRegistry).consume(resolved.binding.bindingId)) {
+      return jsonError("The API session offer has expired or has already started a run. Reconnect and start again.", 409, "AGENT_EXECUTION_BINDING_UNAVAILABLE");
+    }
     try {
+      if (isAdaptiveReasoningOffer(resolved.binding.bindingId)) {
+        agentExecutionBindingRegistry.resolveAdaptiveStart(resolved.binding.bindingId, resolved.request.workspace,
+          "expectedExecution" in parsed.data ? parsed.data.expectedExecution : undefined, true);
+      }
       const snapshot = await startStructuredModelAgentRun({
         request: resolved.request,
         bindingDefinition: resolved.binding,
@@ -165,9 +177,13 @@ export async function POST(request: Request) {
       });
       return Response.json({ ok: true, runId: snapshot.runId, snapshot: presentConversation(snapshot) });
     } catch (error) {
+      if (error instanceof AgentExecutionBindingError && error.code === "BINDING_CAPABILITY_DENIED") {
+        return jsonError(error.message, 409, "AGENT_EXECUTION_CAPABILITY_DENIED");
+      }
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);
       }
+      if (error instanceof AppleTransportError) return jsonError(error.message, 409, error.code);
       return storageWriteErrorResponse(
         error,
         "The bound Model Agent session could not be initialized."

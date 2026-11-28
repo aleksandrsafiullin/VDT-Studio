@@ -3,11 +3,13 @@ import { buildKpiSuggestionContext, createSmartKpiMeasuredFixture, kpiCanonicalJ
 import { IndexedDbApiKeyVault, encryptApiKey, type ApiKeyRecordStorage, type EncryptedApiKey } from "./api-key-vault";
 import { apiKeyScope } from "./api-key-persistence";
 import { applyGatewayPreset, applyLocalRunnerPreset, DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "./execution-mode-catalog";
-import { createSmartKpiPreparedSelection, prepareSmartThroughHttp } from "./smart-kpi-client";
+import { createAppleNativeSmartSelection, createSmartKpiPreparedSelection, prepareSmartThroughHttp } from "./smart-kpi-client";
 import { DesktopAiExecutionClient, resolveDesktopSmartExecution } from "./ai-execution-client";
 import { cancelSmartKpiPreparation, prepareSmartKpiResponse } from "./smart-kpi-service";
+import type { PublicAgentExecutionBindingSummary } from "./agent-client";
 import type { AiProvider } from "@vdt-studio/ai-harness";
 import { updateSmartKpiPreferences } from "./smart-kpi-settings";
+import { configureLocalReasoning } from "./execution-category";
 
 const empty = { status: "empty", rationale: "No reviewed immediate decomposition.", limitations: [], groups: [] };
 const ready = { status: "ready", rationale: "Productive time and rate are measurable operating inputs.", limitations: [], groups: [{ id: "context", title: "Operating inputs", selectionMode: "all", requiredKeys: ["hours", "rate"], formula: "hours * rate", recipeId: null, limitations: [], children: [
@@ -94,11 +96,81 @@ describe("stable credential and selection identities", () => {
     const proposal = await selected.prepare({ context: ctx, execution: selected.execution, signal: new AbortController().signal });
     expect(proposal).toMatchObject({ origin: { kind: "model", execution: selected.execution }, groups: [{ children: [{ name: "Productive time" }, { name: "Production rate" }] }] });
     const payload = JSON.parse(String(fetch.mock.calls[0]![1]?.body)); expect(payload.providerConfig).toMatchObject({ model: "selected", apiKey: "synthetic-a", baseUrl: "https://api.openai.com/v1", timeoutMs: 2000 });
+    expect(payload.expectedExecution).toEqual({ mode: "api_keys", profileVersion: 1, providerId: "openai_compatible", modelId: "selected", modelRevision: null });
     expect(payload.input.context.personalisation).toEqual(ctx.personalisation);
     await expect(selected.prepare({ context: ctx, execution: { ...selected.execution, credentialEpoch: "changed" }, signal: new AbortController().signal })).rejects.toMatchObject({ code: "STALE_EXECUTION" });
     const changed = await createSmartKpiPreparedSelection({ ...settings, model: "different" }, { vault, fetch }); expect(changed.execution.modelId).toBe("different");
     await vault.write(scope, "synthetic-b"); const replaced = await createSmartKpiPreparedSelection({ ...settings, apiKey: "synthetic-b" }, { vault, fetch }); expect(replaced.execution.credentialEpoch).not.toBe(selected.execution.credentialEpoch);
   });
+  it("keeps Apple Smart cache entries separate when the host binding changes on the same OS and locale", async () => {
+    const oldBinding: PublicAgentExecutionBindingSummary = {
+      appleIdentity: { osBuild: "26A434", locale: "en-US" },
+      admission: { mode: "local", providerId: "apple_foundation_models", profileVersion: 1,
+        modelId: "SystemLanguageModel.default", modelRevision: null },
+      bindingId: "apple_native_old", executionProfile: "model_agent", engineId: "model_agent",
+      engineAdapterId: "apple-native-guided-v1", backendId: "apple_foundation_models", modelId: "SystemLanguageModel.default"
+    };
+    const newBinding = { ...oldBinding, bindingId: "apple_native_new" };
+    const fetch = vi.fn(async () => json({ ok: true, binding: newBinding }));
+    const settings = DEFAULT_EXECUTION_SETTINGS;
+    const oldSelection = await createAppleNativeSmartSelection(oldBinding, () => true, { fetch });
+    const newSelection = await createAppleNativeSmartSelection(newBinding, () => true, { fetch });
+    const reopened = await createAppleNativeSmartSelection(newBinding, () => true, { fetch });
+    const ctx = await context();
+    const cacheKey = ({ execution }: typeof oldSelection) => kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, execution);
+    expect(cacheKey(newSelection)).not.toBe(cacheKey(oldSelection));
+    expect(cacheKey(reopened)).toBe(cacheKey(newSelection));
+    await expect(oldSelection.revalidate(settings)).resolves.toBe(false);
+    await expect(newSelection.revalidate(settings)).resolves.toBe(true);
+    await expect(newSelection.prepare({ context: ctx, execution: oldSelection.execution, signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "STALE_EXECUTION" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("keeps explicit Apple Smart pending past 15s and waits for exact cancellation cleanup", async () => {
+    const admission = { mode: "local", providerId: "apple_foundation_models", profileVersion: 1,
+      modelId: "SystemLanguageModel.default", modelRevision: null } as const;
+    const binding: PublicAgentExecutionBindingSummary = {
+      admission, appleIdentity: { osBuild: "fixture", locale: "en-US" }, bindingId: "apple_native_fixture",
+      executionProfile: "model_agent", engineId: "model_agent", engineAdapterId: "apple-native-guided-v1",
+      backendId: admission.providerId, modelId: admission.modelId
+    };
+    let acknowledge!: () => void, requestId = "", announce!: () => void;
+    const started = new Promise<void>(resolve => { announce = resolve; });
+    const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (url === "/api/ai/suggestions") {
+        expect(body).toMatchObject({ providerId: binding.backendId, providerConfig: { bindingId: binding.bindingId },
+          expectedExecution: admission, timeoutMs: 30_000 });
+        requestId = body.requestId;
+        announce();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+      }
+      expect(url).toBe("/api/ai/suggestions/cancel");
+      expect(body).toEqual({ requestId });
+      return new Promise<Response>(resolve => {
+        acknowledge = () => resolve(json({ requestId, cleanupConfirmed: true }));
+      });
+    });
+    const selected = await createAppleNativeSmartSelection(binding, () => true, { fetch });
+    const ctx = await context();
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let settled = false;
+    const pending = selected.prepare({ context: ctx, execution: selected.execution, signal: controller.signal })
+      .finally(() => { settled = true; });
+    void pending.catch(() => {});
+    await started;
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    controller.abort();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(settled).toBe(false);
+    acknowledge();
+    await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
+  });
+
   it("pins the separate Smart model/reasoning, invalidates stale selections and leaves chat untouched", async () => {
     const { vault } = records(), chat = apiSettings(); await vault.write(apiKeyScope(chat)!, chat.apiKey!);
     const model = { ...chat, smartKpiBySource: updateSmartKpiPreferences(chat, { model: "fast-smart" }) };
@@ -137,6 +209,22 @@ describe("stable credential and selection identities", () => {
     await createSmartKpiPreparedSelection(off, { fetch, appMode: "development_web" });
     expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body))).toMatchObject({ model: "fast-cli", modelReasoning: false });
     expect(settings.cliModelSelection?.customModel).toBe("selected");
+  });
+  it("pins Smart Fast independently and detects a change to the model's effective level", async () => {
+    const settings = configureLocalReasoning(DEFAULT_EXECUTION_SETTINGS, {
+      ...applyLocalRunnerPreset(DEFAULT_EXECUTION_SETTINGS, "ollama_openai"), localModel: "selected", timeoutSec: 2
+    });
+    let levels = ["high", "low"];
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async (url) => {
+      if (url === "/api/ai/suggestions/execution") return json({ ok: true, identity: { ...binding, backendId: "ollama", reasoningValues: levels } });
+      return json({ ok: true, result: empty });
+    });
+    const selected = await createSmartKpiPreparedSelection(settings, { fetch, appMode: "development_web" });
+    await selected.prepare({ context: await context(), execution: selected.execution, signal: new AbortController().signal });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({ modelReasoning: "vdt-fast" });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).providerConfig.modelReasoning).toBe("low");
+    levels = ["high"];
+    await expect(selected.revalidate(settings)).resolves.toBe(false);
   });
   it("never provisions credentials, changes backend, or uses an ephemeral identity fallback", async () => {
     const fetch = vi.fn();

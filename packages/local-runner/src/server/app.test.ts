@@ -4,7 +4,7 @@ import { lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuditEvent, BackendManifest } from "../cli/types";
 import { schemaTasks, VDT_SCHEMA_IDS } from "@vdt-studio/model-bridge";
 import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput, createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
@@ -99,6 +99,20 @@ afterEach(async () => {
 describe.skipIf(!hasLoopback)("Phase 2 transport and pairing", { timeout: 30_000 }, () => {
   it("refuses non-loopback binding", () => {
     expect(() => createLocalRunnerServer({ host: "0.0.0.0", port: 8765 })).toThrow("127.0.0.1");
+  });
+
+  it("rejects forged or unsupported Local diagnostic selections before any model call", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const server = await start({ host: "127.0.0.1", port: 0, executor: { fetch } });
+    const token = await pair(server);
+    const endpoint = "/v1/backends/ollama/test";
+    const model = "qwen3:8b";
+    const localHttpSelection = { profileVersion: "unregistered", modelRevision: `sha256:${"a".repeat(64)}` };
+    const forged = await call(server, endpoint, { method: "POST", token, body: { model, localHttpSelection } });
+    expect(forged).toMatchObject({ status: 422, body: { error: { code: "LOCAL_ROUTE_UNVERIFIED" } } });
+    const unsupported = await call(server, endpoint, { method: "POST", token, body: { model, expectedExecution: { mode: "local" } } });
+    expect(unsupported).toMatchObject({ status: 400, body: { error: { code: "UNKNOWN_FIELD" } } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("exposes only public health before pairing", async () => {

@@ -25,6 +25,40 @@ function chatTextResponse(content: string): Response {
 }
 
 describe("local HTTP executor repair", () => {
+  it.each([["vdt-fast", false], ["vdt-fast", "low"], [true, true], ["high", "high"]])(
+    "sends the exact native Ollama reasoning preference %s resolved as %s",
+    async (preference, effective) => {
+      const bodies: Array<Record<string, unknown>> = [];
+      const fetch: typeof globalThis.fetch = async (url, init) => {
+        if (String(url).endsWith("/api/show")) return Response.json({ thinking: { values: effective === "low" ? ["high", "low"] : [true, false, "high"] } });
+        expect(String(url)).toBe("http://127.0.0.1:11434/api/chat");
+        expect(init?.redirect).toBe("error");
+        bodies.push(JSON.parse(String(init?.body)));
+        return Response.json({ done: true, done_reason: "stop", message: { content: '{"ok":true}', thinking: "private trace" } });
+      };
+      const result = await executeCompletion(localHttpManifest(), {
+        requestId: crypto.randomUUID(), backendId: "ollama", taskType: "generate_tree",
+        schemaId: "connection-test-v1", input: { probe: true }, model: "qwen3", modelReasoning: preference
+      }, new AbortController().signal, { fetch });
+      expect(bodies).toEqual([expect.objectContaining({ model: "qwen3", think: effective,
+        format: expect.objectContaining({ properties: { ok: { const: true, type: "boolean" } } }) })]);
+      expect(result.output).toEqual({ ok: true });
+      expect(JSON.stringify(result)).not.toContain("private trace");
+    }
+  );
+
+  it("preserves Provider default when Fast metadata is unavailable", async () => {
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith("/api/show")) return new Response("Unknown endpoint", { status: 404 });
+      expect(String(url)).toBe("http://127.0.0.1:11434/v1/chat/completions");
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("think");
+      return chatResponse({ ok: true });
+    };
+    await expect(executeCompletion(localHttpManifest(), {
+      requestId: crypto.randomUUID(), backendId: "ollama", taskType: "generate_tree",
+      schemaId: "connection-test-v1", input: { probe: true }, model: "qwen3", modelReasoning: "vdt-fast"
+    }, new AbortController().signal, { fetch })).resolves.toMatchObject({ output: { ok: true } });
+  });
   it("uses agent-decision-v2 strict JSON Schema and normalizes callsJson", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetchMock: typeof fetch = async (_input, init) => {

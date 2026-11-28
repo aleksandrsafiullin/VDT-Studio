@@ -120,6 +120,15 @@ both launches to catch writes to sealed resources. For a notarized candidate,
 repeat the install and launch from a browser download that carries macOS quarantine.
 Keep notarized distribution and the production native preflight as separate gates.
 
+For the Apple AI preview, verify the embedded helper paths, signing team,
+digests and sealed default-off manifest. Use an empty data directory and a
+new WebKit profile for installed validation. Shipping automatic selection
+requires an offline, key-free first launch on eligible hardware, with untouched
+Skill picker, persisted revision and physical EN/RU audio evidence at each
+supported locale. Record attempted egress in a separate observable run and
+document individual alternate backend and voice decisions.
+See [the Apple execution ledger](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md).
+
 For standard Cursor chat, record the pinned activation, worker and CLI payload
 identities from the compiled package and installed runtime. Confirm that a
 clean profile prompts for the dedicated browser sign-in, then verify each

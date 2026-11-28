@@ -6,6 +6,7 @@ import {
   type CliModelSelection,
   type ExecutionSettings
 } from "./execution-mode-catalog";
+import { isAppleAnalyticalChoice } from "./apple-first-launch";
 import { resolveExecutionCategory } from "./execution-category";
 
 export interface ExecutionModeSummary {
@@ -42,6 +43,7 @@ function resolveCliModelLabel(
 }
 
 export function formatExecutionModeSummary(settings: ExecutionSettings): ExecutionModeSummary {
+  if (isAppleAnalyticalChoice(settings.analyticalSourceChoice)) return { modeLabel: "Local", primary: "Apple on-device" };
   if (settings.executionMode === "local_cli") {
     const presetId = settings.localRunnerPresetId ?? "ollama_openai";
     const preset = getLocalRunnerPreset(presetId);

@@ -37,6 +37,7 @@ const NODE_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export interface RunTaskRequestBody {
   taskType: string;
+  expectedExecution?: unknown;
   input: Record<string, unknown>;
   providerId?: string;
   providerConfig?: Record<string, unknown>;

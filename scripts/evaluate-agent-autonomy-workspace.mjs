@@ -13,20 +13,102 @@ const near = (actual, expected) => Number.isFinite(actual) && Math.abs(actual - 
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 const readJson = async (path) => JSON.parse(await readFile(new URL(path, suite), "utf8"));
 
-async function loadCase(path, id, marker, value) {
+const requestFiles = ["workspace-requests.v1.json", "workspace-requests.v2.json"];
+const oracleFiles = ["workspace-oracles.v1.json", "workspace-oracles.v2.json"];
+const locales = ["en", "ru"];
+
+async function readSuite(path, version, marker, value) {
   const data = await readJson(path);
-  if (data.schemaVersion !== 1 || data[marker] !== value) throw new Error(`Invalid workspace suite: ${path}`);
-  const matches = data.cases.filter((entry) => entry.id === id);
+  if (data.schemaVersion !== version || data[marker] !== value || !Array.isArray(data.cases)) {
+    throw new Error(`Invalid workspace suite: ${path}`);
+  }
+  const ids = new Set(data.cases.map((entry) => entry.id));
+  if (ids.size !== data.cases.length || ids.has(undefined)) throw new Error(`Duplicate or missing workspace case ID: ${path}`);
+  return data.cases;
+}
+
+async function loadCase(files, id, marker, value) {
+  const suites = await Promise.all(files.map((path, index) => readSuite(path, index + 1, marker, value)));
+  const matches = suites.flatMap((cases, index) => cases.filter((entry) => entry.id === id)
+    .map((entry) => ({ entry, version: index + 1 })));
   if (matches.length !== 1) throw new Error(`Unknown or duplicate workspace case: ${id}`);
   return matches[0];
 }
 
-export function loadWorkspaceRequest(id) {
-  return loadCase("workspace-requests.v1.json", id, "evaluationClass", "workspace_journey");
+function allowedKeys(object, keys) {
+  return object && typeof object === "object" && !Array.isArray(object)
+    && Object.keys(object).every((key) => keys.includes(key));
 }
 
-export function loadWorkspaceOracle(id) {
-  return loadCase("workspace-oracles.v1.json", id, "visibility", "evaluator_only");
+function validateRequest(entry) {
+  if (!allowedKeys(entry, ["id", "setup", "variants"]) || !/^[A-Z]+(?:-\d{2})?-[a-z0-9-]+$/.test(entry.id)
+    || !allowedKeys(entry.variants, locales)) throw new Error(`Invalid public workspace case: ${entry.id}`);
+  for (const locale of locales) {
+    const variant = entry.variants[locale];
+    if (!allowedKeys(variant, ["turns"]) || !Array.isArray(variant.turns) || !variant.turns.length
+      || variant.turns.some((turn) => !allowedKeys(turn, ["prompt"]) || !nonempty(turn.prompt))) {
+      throw new Error(`Invalid workspace request variant: ${entry.id}/${locale}`);
+    }
+  }
+  const paths = {
+    fixture: "assets/workspace-legacy-manual.v1.json",
+    catalog: "assets/workspace-q01-catalog.v2.json",
+  };
+  if (entry.setup !== undefined && (!allowedKeys(entry.setup, [...Object.keys(paths), "eventFile"])
+    || Object.entries(entry.setup).some(([key, value]) => key === "eventFile" ? !["duration-csv", "serial-xlsx"].includes(value) : paths[key] !== value))) {
+    throw new Error(`Invalid public workspace setup: ${entry.id}`);
+  }
+}
+
+/** Generation receives only the chosen original-language turn; callers apply
+ * public setup via the normal UI and never forward the whole case as a prompt. */
+export async function loadWorkspaceRequest(id, locale) {
+  const { entry, version } = await loadCase(requestFiles, id, "evaluationClass", "workspace_journey");
+  if (version === 1) return entry;
+  validateRequest(entry);
+  if (!locales.includes(locale)) throw new Error(`Select original workspace request locale: ${id}`);
+  return { id, ...(entry.setup && { setup: entry.setup }), turns: entry.variants[locale].turns };
+}
+
+export async function loadWorkspaceOracle(id) {
+  const { entry } = await loadCase(oracleFiles, id, "visibility", "evaluator_only");
+  return entry;
+}
+
+export async function checkWorkspaceSuites() {
+  const counts = [];
+  const union = new Set();
+  for (const [index, requestsPath] of requestFiles.entries()) {
+    const version = index + 1;
+    const oraclesPath = oracleFiles[index];
+    const [requests, oracles] = await Promise.all([
+      readSuite(requestsPath, version, "evaluationClass", "workspace_journey"),
+      readSuite(oraclesPath, version, "visibility", "evaluator_only"),
+    ]);
+    const byId = new Map(oracles.map((oracle) => [oracle.id, oracle]));
+    if (byId.size !== requests.length) throw new Error(`Workspace request/oracle count differs for v${version}`);
+    for (const entry of requests) {
+      const oracle = byId.get(entry.id);
+      if (union.has(entry.id) || !oracle || !Array.isArray(oracle.review)
+        || !oracle.review.length || !oracle.review.every(nonempty)
+        || !allowedKeys(oracle.checkpoints, Object.keys(oracle.checkpoints ?? {}))) {
+        throw new Error(`Invalid workspace oracle mapping: ${entry.id}`);
+      }
+      union.add(entry.id);
+      if (version === 2) {
+        validateRequest(entry);
+        if (!Array.isArray(oracle.operatorActions) || !oracle.operatorActions.every(nonempty)) {
+          throw new Error(`Invalid workspace operator instructions: ${entry.id}`);
+        }
+      }
+      for (const path of [entry.setup?.fixture, entry.setup?.catalog].filter(Boolean)) {
+        await readFile(new URL(path, suite));
+      }
+    }
+    const hash = async (path) => `sha256:${createHash("sha256").update(await readFile(new URL(path, suite))).digest("hex")}`;
+    counts.push({ version, caseCount: requests.length, requestHash: await hash(requestsPath), oracleHash: await hash(oraclesPath) });
+  }
+  return counts;
 }
 
 export function loadWorkspaceFixture() {
@@ -70,6 +152,12 @@ export function verifyWorkspaceWorkbook(project, savedRevisionId, scenario, work
       const cell = readCell(scenarioSheet, address);
       return near(cell.value, target) && nonempty(cell.formula);
     };
+    const overrideCell = cells.scenario.drivers[downtimeId]?.scenarioCell
+      ?? cells.scenario.additionalOverrides[downtimeId]?.scenarioCell;
+    const override = readCell(scenarioSheet, overrideCell);
+    if (!near(override.value, scenario.overrides.find(({ nodeId }) => nodeId === downtimeId)?.value) || override.formula) {
+      return false;
+    }
     return near(source.value, expected.downtime) && !source.formula && near(root.value, expected.root) && nonempty(root.formula)
       && isFormulaValue(totals.baselineCell, expected.root)
       && isFormulaValue(totals.scenarioCell, expected.scenario)
@@ -185,6 +273,26 @@ export function assessWorkspaceJourney(oracle, evidence) {
       previousModel = observed;
     }
     checkpoints[name] = { outcome: expected.outcome, checks };
+  }
+  if (oracle.dataGolden) {
+    const data = evidence.data;
+    checkpoints.data = { outcome: "data_reconciliation", checks: {
+      golden: !data ? "missing" : isDeepStrictEqual(data, oracle.dataGolden) ? "pass" : "fail",
+    } };
+  }
+  if (oracle.operatorActions) {
+    const attempt = evidence.attempt;
+    const checks = {};
+    checks.identity = !attempt ? "missing" : Number.isInteger(attempt.number) && attempt.number >= 1
+      && nonempty(attempt.id) && nonempty(attempt.locale) && locales.includes(attempt.locale)
+      && (attempt.number === 1 ? !attempt.priorAttemptId : nonempty(attempt.priorAttemptId) && attempt.priorAttemptId !== attempt.id)
+      && ["fixture", "live", "installed"].includes(attempt.source) ? "pass" : "fail";
+    const timeline = attempt?.timeline;
+    checks.operator_timeline = !timeline ? "missing" : Array.isArray(timeline) && timeline.length > 0
+      && timeline.every((event, index) => Number.isFinite(event.elapsedMs) && event.elapsedMs >= 0
+        && (index === 0 || event.elapsedMs >= timeline[index - 1].elapsedMs)
+        && nonempty(event.action) && nonempty(event.evidenceReference)) ? "pass" : "fail";
+    checkpoints.attempt = { outcome: "attempt_capture", checks };
   }
   const review = evidence.semanticReview;
   const reviewMatches = nonempty(review?.reviewer) && review.independentOfGenerator === true

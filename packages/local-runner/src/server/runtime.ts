@@ -5,7 +5,12 @@ import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_pro
 import { promisify } from "node:util";
 import {
   isVdtSchemaId,
+  FAST_LOCAL_REASONING,
+  LocalHttpRouteError,
+  parseLocalHttpSelection,
+  type LocalHttpSelection,
   isHarnessReasoningValue,
+  resolveLocalReasoning,
   type HarnessReasoningValue,
   schemaSupportsTask,
   type VdtAiTaskType
@@ -229,22 +234,27 @@ export async function listRuntimeModels(backendId: string, context: LocalRuntime
   }
 }
 
-export async function testRuntimeBackend(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
+export async function testRuntimeBackend(backendId: string, context: LocalRuntimeContext, model?: string, localHttpSelection?: LocalHttpSelection, modelReasoning?: HarnessReasoningValue): Promise<RuntimeResult> {
   return completeRuntime({
     requestId: randomUUID(),
     backendId,
     taskType: "generate_tree",
     schemaId: "connection-test-v1",
     input: { probe: true },
+    ...(model === undefined ? {} : { model }),
+    ...(modelReasoning === undefined ? {} : { modelReasoning }),
+    ...(localHttpSelection === undefined ? {} : { localHttpSelection }),
     timeoutMs: 30_000
   }, context);
 }
 
 /** Settings checks CLI/session readiness; the standalone runner retains its full schema probe. */
-export async function checkRuntimeBackendReadiness(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
+export async function checkRuntimeBackendReadiness(backendId: string, context: LocalRuntimeContext, model?: string, localHttpSelection?: LocalHttpSelection, modelReasoning?: HarnessReasoningValue): Promise<RuntimeResult> {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context);
+  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context, model, localHttpSelection, modelReasoning);
+  if (modelReasoning !== undefined) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "Subscription readiness does not execute with model reasoning.");
+  if (context.config.executor?.requireVerifiedLocalHttp || localHttpSelection !== undefined) throw new LocalRuntimeError(422, "LOCAL_TARGET_REJECTED", "Subscription diagnostics cannot use a verified local model selection.");
 
   const agentId = subscriptionAgentIdForBackend(backendId);
   if (!agentId) {
@@ -399,7 +409,7 @@ export async function completeRuntime(request: CompletionRequest, context: Local
       ...(hasRepairAttempt(error) ? { repairAttempted: true, repairSucceeded: false } : {}),
       errorCode: normalized.code
     });
-    return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
+    return { statusCode: error instanceof LocalHttpRouteError ? error.statusCode : normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
   } finally {
     callerSignal?.removeEventListener("abort", callerAbort);
     if (smartLane) {
@@ -720,7 +730,7 @@ export async function cancelRuntimeRequestWithAcknowledgement(requestId: string,
   return { statusCode: 200, payload: { ok: true, requestId, status: run.status, cleanupConfirmed: true } };
 }
 
-export async function resolveSmartRuntimeExecution(model: string | undefined, context: LocalRuntimeContext, caller: AbortSignal, timeoutMs = 5_000, backendId = "codex_subscription", modelReasoning?: HarnessReasoningValue): Promise<RuntimeResult> {
+export async function resolveSmartRuntimeExecution(model: string | undefined, context: LocalRuntimeContext, caller: AbortSignal, timeoutMs = 5_000, backendId = "codex_subscription", modelReasoning?: HarnessReasoningValue, localHttpSelection?: LocalHttpSelection): Promise<RuntimeResult> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new LocalRuntimeError(400, "INVALID_TIMEOUT", "Invalid metadata deadline.");
   const controller = new AbortController(), abort = () => controller.abort(); caller.addEventListener("abort", abort, { once: true }); if (caller.aborted) abort();
   let timedOut = false;
@@ -730,12 +740,19 @@ export async function resolveSmartRuntimeExecution(model: string | undefined, co
     if (["ollama", "lm_studio", "vllm"].includes(backendId)) {
       const manifest = context.manifests.get(backendId);
       if (!manifest?.localHttp || manifest.kind !== "local_http") throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "The selected host does not expose this local model backend.");
-      const capabilities = await readLocalSmartReasoningCapabilities(manifest, model ?? "", controller.signal, context.config.executor);
+      const capabilities = await readLocalSmartReasoningCapabilities(manifest, model ?? "", controller.signal, context.config.executor, localHttpSelection,
+        "suggest_incoming_kpis", modelReasoning === FAST_LOCAL_REASONING);
       const reasoningValues = capabilities?.values ?? [];
-      if (modelReasoning !== undefined && !reasoningValues.some(value => value === modelReasoning || modelReasoning === false && ["none", "off", "disabled"].includes(String(value)))) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting.");
-      const bindingVersion = `sha256:${createHash("sha256").update(JSON.stringify(["smart-local-metadata.v1", backendId, manifest.localHttp.baseUrl, model, modelReasoning ?? null])).digest("hex")}`;
-      return { statusCode: 200, payload: { ok: true, identity: { backendId, modelId: model, requestModel: model, modelResolution: "exact", bindingVersion, credentialEpoch: "manifest-no-credential.v1", reasoningValues } } };
+      const effective = resolveLocalReasoning(capabilities, modelReasoning);
+      if (!effective.supported) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting.");
+      const bindingVersion = `sha256:${createHash("sha256").update(JSON.stringify([
+        "smart-local-metadata.v1", backendId, manifest.localHttp.baseUrl, model, modelReasoning ?? null,
+        ...(effective.value !== modelReasoning ? [effective.value ?? null] : []),
+        ...(localHttpSelection ? [localHttpSelection.profileVersion, localHttpSelection.modelRevision] : [])
+      ])).digest("hex")}`;
+      return { statusCode: 200, payload: { ok: true, identity: { backendId, modelId: model, requestModel: model, modelResolution: "exact", bindingVersion, credentialEpoch: "manifest-no-credential.v1", processingBoundary: localHttpSelection ? "on_device" : "unverified", reasoningValues } } };
     }
+    if (context.config.executor?.requireVerifiedLocalHttp || localHttpSelection !== undefined) throw new LocalRuntimeError(422, "LOCAL_TARGET_REJECTED", "This backend cannot use a verified local model selection.");
     const identity = await resolveSmartHarnessIdentity(backendId, model, controller.signal, env, modelReasoning);
     controller.signal.throwIfAborted();
     return { statusCode: 200, payload: { ok: true, identity } };
@@ -848,7 +865,7 @@ export function parseCompletionPayload(value: unknown): CompletionRequest {
   for (const forbidden of ["command", "args", "providerConfig", "schema", "systemPrompt", "userPrompt", "cwd", "env", "extraArgs"]) {
     if (forbidden in value) throw new LocalRuntimeError(400, "FORBIDDEN_FIELD", `Completion body must not include ${forbidden}.`);
   }
-  const allowed = new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"]);
+  const allowed = new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs", "localHttpSelection"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new LocalRuntimeError(400, "UNKNOWN_FIELD", `Unknown completion field: ${key}.`);
   }
@@ -874,16 +891,40 @@ export function parseCompletionPayload(value: unknown): CompletionRequest {
     throw new LocalRuntimeError(400, "INVALID_MODEL", "model must be a bounded string.");
   }
   if (value.modelReasoning !== undefined && !isHarnessReasoningValue(value.modelReasoning)) throw new LocalRuntimeError(400, "INVALID_REASONING", "modelReasoning must be a bounded provider reasoning value.");
+  const localHttpSelection = readRuntimeLocalHttpSelection(value.localHttpSelection);
   return {
     requestId,
     backendId,
     taskType,
     schemaId,
     input: value.input,
+    ...(localHttpSelection && { localHttpSelection }),
     ...(typeof value.model === "string" ? { model: value.model } : {}),
     ...(isHarnessReasoningValue(value.modelReasoning) ? { modelReasoning: value.modelReasoning } : {}),
     ...(typeof timeoutMs === "number" ? { timeoutMs } : {})
   };
+}
+
+export function readRuntimeLocalHttpSelection(value: unknown): LocalHttpSelection | undefined {
+  if (value === undefined) return undefined;
+  const selection = parseLocalHttpSelection(value);
+  if (!selection) throw new LocalRuntimeError(400, "INVALID_LOCAL_SELECTION", "A local HTTP selection must reference an exact host profile version and model revision.");
+  return selection;
+}
+
+export function parseRuntimeBackendTestSelection(value: unknown): { model?: string; localHttpSelection?: LocalHttpSelection; modelReasoning?: HarnessReasoningValue } {
+  if (value === undefined) return {};
+  if (!isRecord(value) || Object.keys(value).some(key => !["model", "modelReasoning", "localHttpSelection"].includes(key))) {
+    throw new LocalRuntimeError(400, "UNKNOWN_FIELD", "A diagnostic accepts only the model, reasoning and local HTTP selection.");
+  }
+  const { model, modelReasoning } = value;
+  if (model !== undefined && (typeof model !== "string" || !model || model.length > 160 || model.includes("\0"))) {
+    throw new LocalRuntimeError(400, "INVALID_MODEL", "An explicit bounded model ID is required.");
+  }
+  const localHttpSelection = readRuntimeLocalHttpSelection(value.localHttpSelection);
+  if (modelReasoning !== undefined && !isHarnessReasoningValue(modelReasoning))
+    throw new LocalRuntimeError(400, "INVALID_REASONING", "modelReasoning must be a bounded provider reasoning value.");
+  return { ...(model !== undefined && { model }), ...(modelReasoning !== undefined && { modelReasoning }), ...(localHttpSelection && { localHttpSelection }) };
 }
 
 function publicRun(run: ActiveRun): RunSnapshot {
@@ -892,6 +933,7 @@ function publicRun(run: ActiveRun): RunSnapshot {
 }
 
 function publicRuntimeError(error: unknown): { code: string; message: string } {
+  if (error instanceof LocalHttpRouteError) return { code: error.code, message: error.message };
   const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "EXECUTION_FAILED";
   const messages: Record<string, string> = {
     CANCELLED: "Completion was cancelled.",

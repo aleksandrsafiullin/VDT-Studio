@@ -30,6 +30,9 @@ const child = spawn(process.execPath, [next, nextCommand, "--hostname", "127.0.0
   stdio: "inherit",
   env: {
     ...developmentWebEnvironment(),
+    ...(process.env.VDT_E2E_DESKTOP_MODE === "1" ? {
+      VDT_APP_MODE: "desktop", NEXT_PUBLIC_VDT_APP_MODE: "desktop"
+    } : {}),
     VDT_DATA_DIR: dataDir,
     VDT_ALLOW_MOCK_PROVIDER: "true",
     NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER: "true",

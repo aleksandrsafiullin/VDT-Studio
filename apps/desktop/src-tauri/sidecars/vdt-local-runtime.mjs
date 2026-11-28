@@ -7,6 +7,1083 @@ var __export = (target, all) => {
 // ../local-runner/src/sidecar/index.ts
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
+// ../local-runner/src/apple-foundation-models/transport.ts
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { open, realpath } from "node:fs/promises";
+var MAX_REQUEST_BYTES = 64 * 1024;
+var MAX_RESPONSE_BYTES = 32 * 1024;
+var MAX_HELPER_BYTES = 16 * 1024 * 1024;
+var nativeErrors = {
+  unsupported_os: "The Apple model is unavailable on this macOS version.",
+  unsupported_sdk: "This build has no native Apple model support.",
+  device_not_eligible: "This device does not support the Apple model.",
+  apple_intelligence_disabled: "Apple Intelligence is disabled.",
+  model_not_ready: "The Apple model is not ready.",
+  unsupported_locale: "The Apple model does not support the selected locale.",
+  stale_identity: "The Apple model execution identity changed.",
+  token_api_unavailable: "The Apple SDK cannot verify this request's context budget.",
+  context_exceeded: "The Apple model request exceeds the available context.",
+  invalid_request: "The native Apple model request is invalid.",
+  invalid_guide: "The native Apple model guide is unsupported.",
+  invalid_output: "The native Apple model returned invalid output.",
+  refused: "The Apple model declined the request.",
+  rate_limited: "The Apple model is temporarily rate limited.",
+  busy: "The Apple model is already running a request.",
+  timeout: "The Apple model request timed out.",
+  cancelled: "The Apple model request was cancelled.",
+  unavailable: "The Apple model request could not be completed.",
+  helper_identity: "The bundled Apple helper is missing or its integrity check failed.",
+  helper_protocol: "The Apple helper returned an invalid or uncorrelated reply.",
+  helper_exit: "The Apple helper exited before completing the request."
+};
+var AppleTransportError = class extends Error {
+  constructor(code, invalidOutputOrigin, timeoutOrigin) {
+    super(nativeErrors[code]);
+    this.code = code;
+    this.invalidOutputOrigin = invalidOutputOrigin;
+    this.timeoutOrigin = timeoutOrigin;
+    this.name = "AppleTransportError";
+  }
+  code;
+  invalidOutputOrigin;
+  timeoutOrigin;
+};
+async function verifyAppleHelper(path16, expectedHash) {
+  try {
+    if (await realpath(path16) !== path16) throw new Error();
+    const handle = await open(path16, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat3 = await handle.stat();
+      if (!stat3.isFile() || stat3.size <= 0 || stat3.size > MAX_HELPER_BYTES || !(stat3.mode & 73)) throw new Error();
+      const hash3 = createHash("sha256");
+      let bytes2 = 0;
+      for await (const chunk of handle.createReadStream({ autoClose: false })) {
+        bytes2 += chunk.length;
+        if (bytes2 > stat3.size) throw new Error();
+        hash3.update(chunk);
+      }
+      if (bytes2 !== stat3.size || hash3.digest("hex") !== expectedHash) throw new Error();
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    throw new AppleTransportError("helper_identity");
+  }
+}
+
+// ../local-runner/src/speech/runtime.ts
+import { spawn as spawn2 } from "node:child_process";
+import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, lstat as lstat2, mkdir, mkdtemp as mkdtemp2, open as open2, readFile, rename, rm as rm2, statfs, writeFile } from "node:fs/promises";
+import os2 from "node:os";
+import path2 from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { inflateRawSync } from "node:zlib";
+
+// ../local-runner/src/speech/catalog.ts
+var SPEECH_MODELS = [
+  { id: "tiny", label: "Tiny", description: "Fastest, lower accuracy", bytes: 77691713 },
+  { id: "base", label: "Base", description: "Balanced speed and accuracy", bytes: 147951465 },
+  { id: "small", label: "Small", description: "Higher accuracy, more processing", bytes: 487601967 }
+];
+var SPEECH_LANGUAGES = [
+  { id: "auto", label: "Detect automatically" },
+  { id: "ru", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" },
+  { id: "en", label: "English" },
+  { id: "kk", label: "\u049A\u0430\u0437\u0430\u049B\u0448\u0430" },
+  { id: "de", label: "Deutsch" },
+  { id: "fr", label: "Fran\xE7ais" },
+  { id: "es", label: "Espa\xF1ol" },
+  { id: "zh", label: "\u4E2D\u6587" }
+];
+var SPEECH_TTS_MAX_TEXT = 120;
+var SPEECH_TTS_MAX_WAVE_BASE64 = 613336;
+var SPEECH_SAMPLE_RATE = 16e3;
+var SPEECH_MAX_SECONDS = 12;
+var SPEECH_MAX_AUDIO_BYTES = 44 + SPEECH_SAMPLE_RATE * SPEECH_MAX_SECONDS * 2;
+function isSpeechModelId(value) {
+  return SPEECH_MODELS.some((model2) => model2.id === value);
+}
+function isSpeechLanguage(value) {
+  return SPEECH_LANGUAGES.some((language) => language.id === value);
+}
+
+// ../local-runner/src/speech/admission.ts
+var SpeechError = class extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+  statusCode;
+};
+var analyticsModes = ["local", "cli_subscription", "api_keys", "legacy"];
+var providers = ["whisper_local", "apple_local", "subscription", "api"];
+function closedRecord(value, fields) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new SpeechError("Invalid voice route selection.");
+  const record7 = value;
+  if (Object.keys(record7).length !== fields.length || fields.some((field) => !Object.hasOwn(record7, field))) {
+    throw new SpeechError("Voice route selection contains an unsupported or missing field.");
+  }
+  return record7;
+}
+function boundedText(value, max = 240) {
+  return typeof value === "string" && value.length > 0 && value.length <= max && value === value.trim() && !/[\x00-\x1f\x7f]/.test(value);
+}
+function readComponent(value) {
+  if (value === null) return null;
+  const record7 = closedRecord(value, ["providerId", "modelId"]);
+  if (!providers.includes(record7.providerId) || !boundedText(record7.modelId)) throw new SpeechError("Invalid voice component.");
+  return { providerId: record7.providerId, modelId: record7.modelId };
+}
+function parseSpeechSelection(input2) {
+  const record7 = closedRecord(input2, ["version", "analytics", "scopeId", "language", "stt", "tts", "realtime"]);
+  const analytics = closedRecord(record7.analytics, ["mode", "providerId", "modelId"]);
+  if (record7.version !== 1 || !boundedText(record7.scopeId, 400) || !isSpeechLanguage(record7.language) || !analyticsModes.includes(analytics.mode) || !boundedText(analytics.providerId) || analytics.modelId !== null && !boundedText(analytics.modelId)) throw new SpeechError("Invalid voice route identity or language.");
+  return {
+    version: 1,
+    language: record7.language,
+    scopeId: record7.scopeId,
+    analytics: { mode: analytics.mode, providerId: analytics.providerId, modelId: analytics.modelId },
+    stt: readComponent(record7.stt),
+    tts: readComponent(record7.tts),
+    realtime: readComponent(record7.realtime)
+  };
+}
+function speechRouteEligible(mode, route, grants) {
+  if (!grants.explicitComponentConsent) return false;
+  if (route.boundary === "on_device") return route.billing === "none" && route.component !== "realtime";
+  if (mode === "cli_subscription" && route.billing === "subscription") return grants.verifiedSubscription === true;
+  return (mode === "api_keys" || mode === "cli_subscription") && route.billing === "api" && grants.explicitApiBilling === true;
+}
+function parseAppleVoicePreview(input2) {
+  const preview = closedRecord(input2, ["locale", "voiceId", "ratePercent", "volumePercent"]);
+  if (!isSpeechLanguage(preview.locale) || preview.locale === "auto" || !boundedText(preview.voiceId, 200) || typeof preview.ratePercent !== "number" || !Number.isInteger(preview.ratePercent) || preview.ratePercent < 75 || preview.ratePercent > 125 || typeof preview.volumePercent !== "number" || !Number.isInteger(preview.volumePercent) || preview.volumePercent < 0 || preview.volumePercent > 100) {
+    throw new SpeechError("Choose an installed system voice and a valid preview rate and volume.");
+  }
+  return { locale: preview.locale, voiceId: preview.voiceId, ratePercent: preview.ratePercent, volumePercent: preview.volumePercent };
+}
+function admitDictationSelection(selection, hasAppleVoice = false) {
+  if (selection.realtime && (selection.stt || selection.tts)) throw new SpeechError("Choose unified voice or separate voice components.", 409);
+  const component = selection.stt;
+  let identity;
+  if (component?.providerId === "whisper_local" && isSpeechModelId(component.modelId)) {
+    identity = { providerId: "whisper_local", modelId: component.modelId };
+  } else if (hasAppleVoice && component?.providerId === "apple_local" && component.modelId === "system" && selection.language !== "auto") {
+    identity = { providerId: "apple_local", modelId: "system" };
+  } else throw new SpeechError("The selected speech component is unavailable. Choose an installed local recognizer.", 409);
+  if (selection.tts || selection.realtime) throw new SpeechError("The selected spoken response or realtime component is unavailable.", 409);
+  const route = {
+    boundary: "on_device",
+    billing: "none",
+    credential: { kind: "none" },
+    consent: "explicit_component",
+    scope: "bound_voice_session"
+  };
+  if (!speechRouteEligible(selection.analytics.mode, { ...route, component: "stt" }, { explicitComponentConsent: true })) throw new SpeechError("This voice route cannot be used with the selected analytics mode.", 409);
+  const stt = { ...route, ...identity };
+  return { state: "open", scopeId: selection.scopeId, language: selection.language, analytics: selection.analytics, stt, tts: null, realtime: null };
+}
+
+// ../local-runner/src/speech/apple-voice.ts
+import { spawn } from "node:child_process";
+import { lstat, mkdtemp, realpath as realpath2, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+var AppleVoiceOutputTooLargeError = class extends Error {
+  constructor() {
+    super("Apple spoken output exceeded the waveform limit.");
+  }
+};
+var outputLimit = 75e4;
+var recognitionStatuses = /* @__PURE__ */ new Set(["installed", "asset_required", "downloading", "unsupported_locale", "unsupported_os_or_sdk", "unavailable"]);
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function voiceStatus(value) {
+  if (value.status !== "ok" || value.boundary !== "on_device" || !Array.isArray(value.recognition) || !Array.isArray(value.installedVoices) || value.recognition.length > 20 || value.installedVoices.length > 400) throw new SpeechError("Apple voice metadata is unavailable.", 503);
+  const recognition = value.recognition.map((entry) => {
+    const value2 = asRecord(entry);
+    if (!value2 || !isSpeechLanguage(value2.locale) || value2.locale === "auto" || typeof value2.status !== "string" || !recognitionStatuses.has(value2.status)) {
+      throw new SpeechError("Apple recognition metadata is unavailable.", 503);
+    }
+    return {
+      locale: value2.locale,
+      status: value2.status,
+      ...typeof value2.systemLocale === "string" && value2.systemLocale.length <= 35 ? { systemLocale: value2.systemLocale } : {}
+    };
+  });
+  const voices = value.installedVoices.map((entry) => {
+    const value2 = asRecord(entry);
+    if (!value2 || typeof value2.id !== "string" || value2.id.length > 200 || typeof value2.label !== "string" || value2.label.length > 200 || typeof value2.locale !== "string" || value2.locale.length > 35 || typeof value2.quality !== "number" || ![1, 2, 3].includes(value2.quality)) {
+      throw new SpeechError("Apple system voice metadata is unavailable.", 503);
+    }
+    return {
+      id: value2.id,
+      label: value2.label,
+      locale: value2.locale,
+      quality: value2.quality,
+      ...value2.systemDefault === true ? { systemDefault: true } : {}
+    };
+  });
+  return { state: "apple_voice_status", supported: true, recognition, voices };
+}
+function createAppleVoiceAdapter(verifiedHelper) {
+  if (process.platform !== "darwin" || process.arch !== "arm64") throw new SpeechError("Apple voice helper is unavailable.", 503);
+  async function call(request, signal, onProgress) {
+    signal?.throwIfAborted();
+    let executable;
+    try {
+      executable = await verifiedHelper();
+      if (!path.isAbsolute(executable) || path.basename(executable) !== "vdt-apple-voice" || !(await lstat(executable)).isFile() || await realpath2(executable) !== executable) {
+        throw new Error("Helper path mismatch.");
+      }
+    } catch {
+      throw new SpeechError("Apple voice helper is unavailable.", 503);
+    }
+    const scratch = await mkdtemp(path.join(os.tmpdir(), "vdt-apple-voice-"));
+    try {
+      signal?.throwIfAborted();
+      return await new Promise((resolve, reject) => {
+        const child = spawn(executable, [], { stdio: ["pipe", "pipe", "pipe"], env: { NODE_ENV: "production", TMPDIR: scratch } });
+        const chunks = [];
+        let bytes2 = 0;
+        const kill = () => {
+          child.kill("SIGKILL");
+        };
+        let terminal;
+        let pending = "";
+        let forceStop;
+        const stop = () => {
+          child.kill("SIGTERM");
+          forceStop ??= setTimeout(kill, 2e3);
+        };
+        const timer = setTimeout(onProgress ? stop : kill, onProgress ? 20 * 6e4 : 2e4);
+        signal?.addEventListener("abort", onProgress ? stop : kill, { once: true });
+        child.stdout.on("data", (chunk) => {
+          bytes2 += chunk.length;
+          if (bytes2 > outputLimit) kill();
+          else if (!onProgress) chunks.push(chunk);
+          else {
+            pending += chunk.toString("utf8");
+            const lines = pending.split("\n");
+            pending = lines.pop() ?? "";
+            for (const line of lines) {
+              try {
+                const frame = asRecord(JSON.parse(line));
+                if (!frame || terminal) {
+                  kill();
+                  return;
+                }
+                if (frame.status === "progress") {
+                  const fraction = frame.fraction;
+                  onProgress(typeof fraction === "number" && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1 ? fraction : void 0);
+                } else terminal = frame;
+              } catch {
+                kill();
+                return;
+              }
+            }
+          }
+        });
+        child.stderr.resume();
+        child.stdin.on("error", () => {
+        });
+        child.once("error", () => {
+        });
+        child.once("close", (code) => {
+          clearTimeout(timer);
+          if (forceStop) clearTimeout(forceStop);
+          signal?.removeEventListener("abort", onProgress ? stop : kill);
+          if (signal?.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          if (code === 0 && bytes2 <= outputLimit) {
+            try {
+              const reply = onProgress ? terminal : asRecord(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+              if (reply) {
+                resolve(reply);
+                return;
+              }
+            } catch {
+            }
+          }
+          reject(new SpeechError("Apple voice helper could not complete the request.", 503));
+        });
+        child.stdin.end(JSON.stringify(request));
+      });
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  }
+  return {
+    async status() {
+      return voiceStatus(await call({ operation: "status" }));
+    },
+    async recognize(wav, locale, signal) {
+      const reply = await call({ operation: "recognize", locale, audioBase64: Buffer.from(wav).toString("base64") }, signal);
+      if (reply.status !== "ok" || reply.boundary !== "on_device" || typeof reply.text !== "string" || reply.text.length > 2e4) {
+        throw new SpeechError("Apple recognition is unavailable for this language. Check its on-device speech assets or select Whisper.");
+      }
+      return reply.text;
+    },
+    async install(locale, systemLocale, signal, onProgress) {
+      const reply = await call({ operation: "install_asset", locale, systemLocale, confirmed: true }, signal, onProgress);
+      if (reply.status !== "installed") throw new SpeechError("Apple could not confirm the selected speech assets.");
+    },
+    async preview(selection) {
+      const reply = await call({ operation: "preview", ...selection });
+      if (reply.status !== "ok" || reply.boundary !== "on_device" || typeof reply.waveformBase64 !== "string" || reply.waveformBase64.length > 613400 || !/^[A-Za-z0-9+/]+={0,2}$/.test(reply.waveformBase64)) {
+        throw new SpeechError("The local system voice could not prepare a preview.");
+      }
+      return reply.waveformBase64;
+    },
+    async synthesize(selection, text2, signal) {
+      const reply = await call({ operation: "synthesize", ...selection, text: text2 }, signal);
+      if (reply.status === "output_too_large") throw new AppleVoiceOutputTooLargeError();
+      if (reply.status !== "ok" || reply.boundary !== "on_device" || typeof reply.waveformBase64 !== "string" || reply.waveformBase64.length > SPEECH_TTS_MAX_WAVE_BASE64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(reply.waveformBase64)) {
+        throw new SpeechError("The local system voice could not prepare spoken output.");
+      }
+      return reply.waveformBase64;
+    }
+  };
+}
+
+// ../local-runner/src/speech/audio.ts
+function pcmWave(samples) {
+  const bytes2 = new Uint8Array(44 + samples.length * 2);
+  const view = new DataView(bytes2.buffer);
+  const ascii = (offset, text2) => {
+    for (let i = 0; i < text2.length; i++) bytes2[offset + i] = text2.charCodeAt(i);
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, bytes2.length - 8, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, SPEECH_SAMPLE_RATE, true);
+  view.setUint32(28, SPEECH_SAMPLE_RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i] ?? 0));
+    view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+  }
+  return bytes2;
+}
+
+// ../local-runner/src/speech/notices.ts
+var SPEECH_LICENSE_NOTICES = `Local voice input: whisper.cpp and Whisper model weights
+
+whisper.cpp: Copyright (c) 2023-2024 The ggml authors
+Whisper model weights: Copyright (c) 2022 OpenAI
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Native build provenance:
+Apple silicon: https://github.com/OpenWhispr/whisper.cpp/releases/tag/0.0.10
+Intel Mac / Windows x64: https://github.com/sjoerdteunisse/whisper.cpp/releases/tag/v1.0.0
+Weights: https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1
+`;
+
+// ../local-runner/src/speech/neural-voice-catalog.ts
+var repository = "https://huggingface.co/rhasspy/piper-voices";
+var revision = "cf910fb59f1d79ab3b625a63993a108751c6c25d";
+var NEURAL_VOICE_ENGINE = Object.freeze({
+  name: "Piper",
+  minimumVersion: "1.5",
+  license: "GPL-3.0-or-later",
+  licenseUrl: "https://github.com/OHF-Voice/piper1-gpl/blob/main/COPYING"
+});
+function voice(id3, label, locale, directory, hashes, sizes) {
+  const source = `${repository}/resolve/${revision}/${directory}`;
+  const assets = [
+    { name: "model.onnx", url: `${source}/${id3}.onnx`, bytes: sizes[0], sha256: hashes[0] },
+    { name: "model.onnx.json", url: `${source}/${id3}.onnx.json`, bytes: sizes[1], sha256: hashes[1] },
+    { name: "MODEL_CARD", url: `${source}/MODEL_CARD`, bytes: sizes[2], sha256: hashes[2] }
+  ];
+  const dataset = directory.split("/").slice(1, -1).join("/");
+  return Object.freeze({
+    id: id3,
+    label,
+    locale,
+    revision,
+    sampleRate: 22050,
+    provenance: Object.freeze({
+      modelCardUrl: `${source}/MODEL_CARD`,
+      datasetUrl: `https://github.com/OHF-Voice/voice-datasets/tree/master/${dataset}`,
+      datasetLicense: "CC0-1.0",
+      baseModelCardUrl: `${repository}/resolve/${revision}/nl/nl_BE/rdh/medium/MODEL_CARD`,
+      baseDatasetUrl: "https://github.com/r-dh/dutch-vl-tts",
+      baseDatasetLicense: "CC0-1.0",
+      distribution: "upstream_download_only"
+    }),
+    assets: Object.freeze(assets.map((asset) => Object.freeze(asset)))
+  });
+}
+var NEURAL_VOICES = Object.freeze([
+  voice("en_US-joe-medium", "Joe", "en-US", "en/en_US/joe/medium", [
+    "abf4b998e34045cbd00eaf050de2de620f81ded6eb8b85a24b022a1c2b3f08d2",
+    "7b5f0293c0bf5bda8e377be1696da84af798befeef31038e43beefc01fe858da",
+    "4b319248135916e8f5433ce7a9fe5271026b05cb598bab05807b22cb17fd129b"
+  ], [63221984, 5465, 423]),
+  voice("ru_RU-denis-medium", "Denis", "ru-RU", "ru/ru_RU/denis/medium", [
+    "879bc365cb14d1380e3f5ed6044162ccf54c99f6161871569b7f830aec3ce841",
+    "e4fb4ab60262d1ab802c8c39301976c4135e545bc834a33c6eedc1f764df3bd6",
+    "917110d5056810771fd3daea2644bbadf1341816b7631f2043b33be245903432"
+  ], [63221984, 5464, 418])
+]);
+
+// ../local-runner/src/speech/neural-voice-assets.ts
+var OFFER_TTL_MS = 2 * 6e4;
+var DOWNLOAD_TIMEOUT_MS = 5 * 6e4;
+
+// ../local-runner/src/speech/neural-voice-engine.ts
+var MAX_WAVE_BYTES = Math.floor(SPEECH_TTS_MAX_WAVE_BASE64 / 4) * 3;
+
+// ../local-runner/src/speech/runtime.ts
+var MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
+var MODEL_HASHES = {
+  tiny: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+  base: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+  small: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+};
+var ENGINE_RELEASE = "https://github.com/sjoerdteunisse/whisper.cpp/releases/download/v1.0.0/";
+var ENGINES = {
+  "darwin-arm64": { file: "whisper-cpp-darwin-arm64", bytes: 1215153, sha256: "7a2f420abef4313f49332f58c2c69bff5f65c37ad932d1fb09f7d95ffec45989", binarySha256: "ebc3c2a1d7d706bd3367c81a2d70ff1d0201576af7ada17516d9398e6e787656", downloadUrl: "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.10/whisper-cpp-darwin-arm64.zip" },
+  "darwin-x64": { file: "whisper-cpp-darwin-x64", bytes: 1131934, sha256: "f0f2ab6c2e92b7022ac02f0759a7a38f3ea110764e00b05a6f0d6c1dcadd571c", binarySha256: "4d7ffa39b71ab9847f519f61d1baddfeddd6c83a445ff87add54857cc41fbe18" },
+  "win32-x64": { file: "whisper-cpp-win32-x64-cpu.exe", bytes: 718766, sha256: "80f6b6481794825f65043001e408e70aea4257918b15906b7e070d2c7b205da5", binarySha256: "31ceb2a375f19c993ce52bf29b34c68449adac9b54cf0c840a16ac6fb24df262" }
+};
+var SESSION_IDLE_MS = 12e4;
+var SPEECH_TTS_LEASE_MS = 3e4;
+var validIdentifier = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function parseTtsInput(confirmed, eventId, text2) {
+  if (confirmed !== true || typeof eventId !== "string" || !/^[a-f0-9]{64}$/.test(eventId) || typeof text2 !== "string" || !text2.trim() || text2.length > SPEECH_TTS_MAX_TEXT || /[\x00-\x1f\x7f]/.test(text2)) {
+    throw new SpeechError("Confirm local speech and provide a valid spoken notification.");
+  }
+  return { confirmed, eventId, text: text2 };
+}
+function parseSpeechRequest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new SpeechError("Invalid voice input request.");
+  const body = value;
+  const keys = {
+    status: ["operation"],
+    install: ["operation", "modelId", "confirmed"],
+    cancel_install: ["operation"],
+    apple_status: ["operation"],
+    apple_preview: ["operation", "preview"],
+    open_tts: ["operation", "selection", "preview", "eventId", "text", "confirmed"],
+    tts_result: ["operation", "sessionId"],
+    close_tts: ["operation", "sessionId"],
+    apple_install_offer: ["operation", "locale"],
+    apple_install: ["operation", "locale", "setupId", "confirmed"],
+    apple_install_status: ["operation", "setupId"],
+    apple_cancel_install: ["operation", "setupId"],
+    open_session: ["operation", "selection"],
+    close_session: ["operation", "sessionId"],
+    keep_session: ["operation", "sessionId"],
+    transcribe: ["operation", "sessionId", "audioBase64", "jobId"],
+    result: ["operation", "sessionId", "jobId"],
+    cancel: ["operation", "sessionId", "jobId"]
+  };
+  const allowed = typeof body.operation === "string" && Object.hasOwn(keys, body.operation) ? keys[body.operation] : void 0;
+  if (!allowed || Object.keys(body).some((key2) => !allowed.includes(key2))) throw new SpeechError("Unsupported voice input operation or field.");
+  if (body.operation === "install") {
+    if (!isSpeechModelId(body.modelId)) throw new SpeechError("Choose a supported speech model.");
+    if (body.confirmed !== true) throw new SpeechError("Confirm the speech model download first.");
+  }
+  if (allowed.includes("locale") && (!isSpeechLanguage(body.locale) || body.locale === "auto")) throw new SpeechError("Choose a supported Apple speech language.");
+  if (allowed.includes("setupId") && !validIdentifier(body.setupId)) throw new SpeechError("Open the Apple speech setup confirmation first.");
+  if (body.operation === "apple_install" && body.confirmed !== true) throw new SpeechError("Confirm the Apple speech asset download first.");
+  if (body.operation === "apple_preview") return { operation: "apple_preview", preview: parseAppleVoicePreview(body.preview) };
+  if (body.operation === "open_tts") {
+    const utterance = parseTtsInput(body.confirmed, body.eventId, body.text);
+    return {
+      operation: "open_tts",
+      selection: parseSpeechSelection(body.selection),
+      preview: parseAppleVoicePreview(body.preview),
+      ...utterance
+    };
+  }
+  if (body.operation === "open_session") return { operation: "open_session", selection: parseSpeechSelection(body.selection) };
+  if (allowed.includes("sessionId") && !validIdentifier(body.sessionId)) throw new SpeechError("Invalid voice session identifier.");
+  if (allowed.includes("jobId") && !validIdentifier(body.jobId)) throw new SpeechError("Invalid transcription identifier.");
+  if (body.operation === "transcribe") {
+    if (typeof body.audioBase64 !== "string" || body.audioBase64.length > Math.ceil(SPEECH_MAX_AUDIO_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audioBase64)) {
+      throw new SpeechError("The audio fragment is invalid or too large.");
+    }
+  }
+  return body;
+}
+function speechDirectory() {
+  if (process.env.VDT_SPEECH_DATA_DIR) return path2.resolve(process.env.VDT_SPEECH_DATA_DIR);
+  const base = process.platform === "darwin" ? path2.join(os2.homedir(), "Library", "Application Support") : process.env.LOCALAPPDATA || path2.join(os2.homedir(), "AppData", "Local");
+  return path2.join(base, "VDT Studio", "speech");
+}
+var SpeechRuntime = class {
+  directory;
+  #engine;
+  #fetcher;
+  #recognize;
+  #appleVoice;
+  #neuralVoice;
+  #preparingPreview = false;
+  #appleOffer;
+  #appleSetup;
+  #installation = { state: "idle", downloadedBytes: 0, totalBytes: 0 };
+  #installController;
+  #jobs = /* @__PURE__ */ new Map();
+  #recognizing = false;
+  #captureSession;
+  #openingSession = false;
+  #tts;
+  #renderingTts = false;
+  #spokenEvents = /* @__PURE__ */ new Set();
+  #verified = /* @__PURE__ */ new Map();
+  constructor(options = {}) {
+    this.directory = options.directory ?? speechDirectory();
+    this.#engine = ENGINES[`${options.platform ?? process.platform}-${options.arch ?? process.arch}`];
+    this.#fetcher = options.fetcher ?? fetch;
+    this.#recognize = options.recognize;
+    this.#appleVoice = options.appleVoice;
+    this.#neuralVoice = options.neuralVoice;
+  }
+  async request(input2) {
+    const request = parseSpeechRequest(input2);
+    if (request.operation === "status") return this.status();
+    if (request.operation === "apple_status") {
+      return this.#appleVoice ? this.#appleVoice.status() : { state: "apple_voice_status", supported: false, recognition: [], voices: [] };
+    }
+    if (this.#captureSession && Date.now() - this.#captureSession.touchedAt > SESSION_IDLE_MS) {
+      this.closeSession(this.#captureSession.admission.sessionId);
+    }
+    if (request.operation === "apple_install_offer") return this.appleInstallOffer(request.locale);
+    if (request.operation === "apple_install") return this.beginAppleInstall(request);
+    if (request.operation === "apple_install_status" || request.operation === "apple_cancel_install") {
+      const setup = this.#appleSetup;
+      if (!setup || setup.id !== request.setupId) throw new SpeechError("This Apple speech setup has expired.", 404);
+      if (request.operation === "apple_cancel_install" && setup.active) {
+        setup.result = { ...setup.result, phase: "cancelling" };
+        setup.controller.abort();
+      }
+      return setup.result;
+    }
+    if (request.operation === "install") {
+      if (!this.#engine) throw new SpeechError("Local voice input supports macOS (Apple silicon / Intel) and Windows x64.");
+      return this.install(request.modelId);
+    }
+    if (request.operation === "cancel_install") {
+      this.#installController?.abort();
+      return this.status();
+    }
+    if (request.operation === "apple_preview") {
+      if (!this.#appleVoice) throw new SpeechError("Apple system voices are unavailable on this host.", 409);
+      if (this.#captureSession || this.#openingSession || this.#preparingPreview || this.#appleSetup?.active || this.#tts || this.#renderingTts) throw new SpeechError("Stop capture or the current spoken output before preparing a voice preview.", 409);
+      this.#preparingPreview = true;
+      try {
+        return { state: "apple_voice_preview", waveformBase64: await this.#appleVoice.preview(request.preview) };
+      } finally {
+        this.#preparingPreview = false;
+      }
+    }
+    if (request.operation === "open_tts") return this.openTts(request);
+    if (request.operation === "close_tts") {
+      this.closeTts(request.sessionId);
+      return { state: "closed" };
+    }
+    if (request.operation === "tts_result") {
+      const active = this.#tts;
+      if (!active || active.admission.sessionId !== request.sessionId) throw new SpeechError("Spoken output has expired.", 404);
+      const result = active.result;
+      if (result?.state === "tts_complete") active.result = { state: "tts_error" };
+      return result ?? { state: "tts_processing" };
+    }
+    if (request.operation === "open_session") {
+      const admitted = admitDictationSelection(request.selection, this.#appleVoice !== void 0);
+      if (this.#appleSetup?.active) throw new SpeechError("Wait for Apple speech asset setup before starting capture.", 409);
+      if (this.#preparingPreview || this.#tts || this.#renderingTts) throw new SpeechError("Wait for spoken playback to finish before starting capture.", 409);
+      if (this.#captureSession || this.#openingSession) throw new SpeechError("Voice input already owns the microphone.", 409);
+      this.#openingSession = true;
+      try {
+        await this.requireRecognizer(admitted);
+        const admission = { ...admitted, sessionId: randomUUID2() };
+        this.#captureSession = { admission, touchedAt: Date.now() };
+        return admission;
+      } finally {
+        this.#openingSession = false;
+      }
+    }
+    if (request.operation === "close_session") {
+      this.closeSession(request.sessionId);
+      return { state: "closed" };
+    }
+    const session = this.#captureSession;
+    if (!session || session.admission.sessionId !== request.sessionId) {
+      throw new SpeechError("This voice session has expired. Start dictation again.", 404);
+    }
+    if (request.operation === "keep_session") {
+      session.touchedAt = Date.now();
+      return { state: "active" };
+    }
+    if (request.operation === "transcribe") {
+      session.touchedAt = Date.now();
+      return this.transcribe(request, session.admission);
+    }
+    const job = this.#jobs.get(request.jobId);
+    if (!job || job.sessionId !== request.sessionId) throw new SpeechError("This transcription has expired. Start dictation again.", 404);
+    session.touchedAt = Date.now();
+    job.updated = Date.now();
+    if (request.operation === "cancel") {
+      job.controller.abort();
+      job.result = { state: "cancelled" };
+    }
+    return job.result;
+  }
+  openTts(request) {
+    const voice2 = this.#appleVoice;
+    const { selection, preview, eventId } = request;
+    if (!voice2?.synthesize || selection.stt || selection.realtime || selection.tts?.providerId !== "apple_local" || selection.tts.modelId !== preview.voiceId || selection.language !== preview.locale) {
+      throw new SpeechError("A verified installed Apple voice is required for spoken output.", 409);
+    }
+    return this.startTts(selection.scopeId, eventId, (signal) => voice2.synthesize(preview, request.text, signal));
+  }
+  /** Host-only entry point. The host selects the exact consented, installed voice. */
+  openNeuralTts(request, engine = this.#neuralVoice) {
+    if (!engine) throw new SpeechError("An approved neural voice engine is required.", 409);
+    const { scopeId } = request;
+    const { eventId, text: text2 } = parseTtsInput(request.confirmed, request.eventId, request.text);
+    if (typeof scopeId !== "string" || !/^[a-f0-9]{64}$/.test(scopeId)) throw new SpeechError("Invalid speech scope.");
+    const preview = parseAppleVoicePreview(request.preview);
+    return this.startTts(scopeId, eventId, (signal) => engine.synthesize(preview, text2, signal));
+  }
+  startTts(scopeId, eventId, synthesize) {
+    if (this.#captureSession || this.#openingSession || this.#preparingPreview || this.#appleSetup?.active || this.#tts || this.#renderingTts) {
+      throw new SpeechError("The local voice runtime is busy with capture or spoken output.", 409);
+    }
+    if (this.#spokenEvents.has(eventId)) throw new SpeechError("This notification was already received.", 409);
+    const admission = {
+      state: "tts_open",
+      sessionId: randomUUID2(),
+      scopeId,
+      eventId,
+      boundary: "on_device",
+      billing: "none",
+      consent: "explicit_component"
+    };
+    const controller = new AbortController();
+    const active = { admission, controller, expiry: setTimeout(() => this.closeTts(admission.sessionId), SPEECH_TTS_LEASE_MS) };
+    active.expiry.unref?.();
+    this.#tts = active;
+    this.#spokenEvents.add(eventId);
+    if (this.#spokenEvents.size > 2048) this.#spokenEvents.delete(this.#spokenEvents.values().next().value);
+    this.#renderingTts = true;
+    void Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return synthesize(controller.signal);
+    }).then((waveformBase64) => {
+      if (this.#tts !== active) return;
+      if (!waveformBase64 || waveformBase64.length > SPEECH_TTS_MAX_WAVE_BASE64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(waveformBase64)) {
+        active.result = { state: "tts_error" };
+      } else active.result = { state: "tts_complete", eventId, waveformBase64 };
+    }, (error63) => {
+      if (this.#tts === active) {
+        active.result = error63 instanceof AppleVoiceOutputTooLargeError ? { state: "tts_error", code: "waveform_too_large", eventId } : { state: "tts_error" };
+      }
+    }).finally(() => {
+      this.#renderingTts = false;
+    });
+    return admission;
+  }
+  closeTts(sessionId) {
+    const active = this.#tts;
+    if (!active || active.admission.sessionId !== sessionId) return;
+    this.#tts = void 0;
+    clearTimeout(active.expiry);
+    active.controller.abort();
+  }
+  async appleInstallOffer(locale) {
+    if (!this.#appleVoice?.install) throw new SpeechError("Apple speech asset setup is unavailable on this host.", 409);
+    if (this.#appleSetup?.active) throw new SpeechError("Apple speech asset setup is already in progress.", 409);
+    const status = await this.#appleVoice.status();
+    const match = status.recognition.find((item) => item.locale === locale && item.status === "asset_required");
+    if (!status.supported || !match?.systemLocale) throw new SpeechError("The selected language does not need or cannot use Apple speech setup.", 409);
+    const value = { state: "apple_asset_offer", setupId: randomUUID2(), locale, systemLocale: match.systemLocale };
+    this.#appleOffer = { value, expiresAt: Date.now() + 6e4 };
+    return value;
+  }
+  beginAppleInstall(request) {
+    const offer = this.#appleOffer;
+    if (!offer || offer.expiresAt < Date.now() || offer.value.setupId !== request.setupId || offer.value.locale !== request.locale) {
+      throw new SpeechError("Confirm a fresh setup for this Apple speech language.", 409);
+    }
+    const adapter = this.#appleVoice;
+    if (!adapter?.install || this.#installController || this.#appleSetup?.active || this.#captureSession || this.#openingSession || this.#preparingPreview || this.#tts || this.#renderingTts) {
+      throw new SpeechError("Finish the current voice operation before starting Apple speech setup.", 409);
+    }
+    this.#appleOffer = void 0;
+    const setup = {
+      id: request.setupId,
+      controller: new AbortController(),
+      active: true,
+      result: { state: "apple_asset_setup", phase: "preparing", locale: request.locale }
+    };
+    this.#appleSetup = setup;
+    const signal = setup.controller.signal;
+    void Promise.resolve().then(async () => {
+      signal.throwIfAborted();
+      const current = await adapter.status();
+      signal.throwIfAborted();
+      if (!current.supported || !current.recognition.some((item) => item.locale === request.locale && item.systemLocale === offer.value.systemLocale && item.status === "asset_required")) {
+        throw new SpeechError("The selected Apple speech assets changed after confirmation.");
+      }
+      await adapter.install(request.locale, offer.value.systemLocale, signal, (fraction) => {
+        if (!signal.aborted) setup.result = { ...setup.result, phase: "downloading", ...fraction === void 0 ? {} : { fraction } };
+      });
+      signal.throwIfAborted();
+      setup.result = { ...setup.result, phase: "verifying" };
+      const latest = await adapter.status();
+      signal.throwIfAborted();
+      if (!latest.recognition.some((item) => item.locale === request.locale && item.systemLocale === offer.value.systemLocale && item.status === "installed")) {
+        throw new SpeechError("Apple has not finished installing the selected assets.");
+      }
+      setup.result = { ...setup.result, phase: "ready" };
+    }).catch(() => {
+      setup.result = signal.aborted ? { ...setup.result, phase: "cancelled" } : { ...setup.result, phase: "error", error: "Apple could not confirm the speech assets. Refresh readiness or try setup again." };
+    }).finally(() => {
+      setup.active = false;
+    });
+    return setup.result;
+  }
+  closeSession(sessionId) {
+    if (this.#captureSession?.admission.sessionId !== sessionId) return;
+    this.#captureSession = void 0;
+    for (const [jobId, job] of this.#jobs) {
+      if (job.sessionId !== sessionId) continue;
+      job.controller.abort();
+      this.#jobs.delete(jobId);
+    }
+  }
+  async requireRecognizer(admission) {
+    if (admission.stt.providerId === "apple_local") {
+      const status2 = await this.#appleVoice?.status();
+      if (!status2?.supported || !status2.recognition.some((entry) => entry.locale === admission.language && entry.status === "installed")) {
+        throw new SpeechError("Apple recognition requires installed on-device assets for the selected language. Choose an installed language or select Whisper.", 409);
+      }
+      return;
+    }
+    const status = await this.status();
+    if (!status.engineReady || !status.installedModels.includes(admission.stt.modelId)) {
+      throw new SpeechError("Download the selected speech model in Settings \u2192 Voice input first.", 409);
+    }
+  }
+  async status() {
+    const engineReady = Boolean(this.#engine && await this.verifiedFile(this.enginePath(), this.#engine.binarySha256));
+    const installed = await Promise.all(SPEECH_MODELS.map(async (model2) => await this.verifiedFile(this.modelPath(model2.id), MODEL_HASHES[model2.id], model2.bytes) ? model2.id : void 0));
+    return {
+      supported: Boolean(this.#engine),
+      engineReady,
+      installedModels: installed.filter((id3) => Boolean(id3)),
+      installation: { ...this.#installation },
+      ...!this.#engine ? { message: "Local voice input supports macOS (Apple silicon / Intel) and Windows x64." } : {}
+    };
+  }
+  modelPath(id3) {
+    return path2.join(this.directory, `ggml-${id3}.bin`);
+  }
+  enginePath() {
+    return path2.join(this.directory, this.#engine?.file ?? "unavailable");
+  }
+  async verifiedFile(file2, digest, size) {
+    if (!/^[a-f0-9]{64}$/.test(digest)) return false;
+    try {
+      const stat3 = await lstat2(file2);
+      if (!stat3.isFile() || stat3.isSymbolicLink() || size !== void 0 && stat3.size !== size) return false;
+      const cached2 = this.#verified.get(file2);
+      if (cached2?.size === stat3.size && cached2.mtime === stat3.mtimeMs) return true;
+      const hash3 = createHash2("sha256");
+      for await (const chunk of createReadStream(file2)) hash3.update(chunk);
+      if (hash3.digest("hex") !== digest) return false;
+      this.#verified.set(file2, { size: stat3.size, mtime: stat3.mtimeMs });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async install(modelId) {
+    if (this.#installController || this.#appleSetup?.active) throw new SpeechError("A speech model download is already in progress.", 409);
+    const controller = new AbortController();
+    this.#installController = controller;
+    try {
+      await mkdir(this.directory, { recursive: true, mode: 448 });
+      if ((await lstat2(this.directory)).isSymbolicLink()) throw new SpeechError("The voice input directory must not be a symbolic link.");
+      const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
+      const disk = await statfs(this.directory);
+      if (disk.bavail * disk.bsize < model2.bytes * 2 + 256 * 1024 * 1024) throw new SpeechError("Free at least 1.5 GB of disk space before installing a speech model.");
+      const status = await this.status();
+      if (status.engineReady && status.installedModels.includes(modelId) && this.#installation.state === "ready") {
+        this.#installController = void 0;
+        return status;
+      }
+      this.#installation = { state: "downloading", phase: "engine", modelId, downloadedBytes: 0, totalBytes: model2.bytes + this.#engine.bytes };
+      void this.performInstall(modelId, status, controller).finally(() => {
+        this.#installController = void 0;
+      });
+      return this.status();
+    } catch (error63) {
+      this.#installController = void 0;
+      throw error63;
+    }
+  }
+  async performInstall(modelId, initial, controller) {
+    const engine = this.#engine;
+    let staging;
+    try {
+      staging = await mkdtemp2(path2.join(this.directory, ".install-"));
+      if (!initial.engineReady) {
+        const archive = path2.join(staging, "engine.zip");
+        const asset = engine.file.replace(/\.exe$/, "");
+        await this.download("downloadUrl" in engine ? engine.downloadUrl : `${ENGINE_RELEASE}${asset}.zip`, archive, engine.bytes, engine.sha256, controller.signal);
+        const binary = extractPinnedExecutable(await readFile(archive), engine.file);
+        const target = path2.join(staging, engine.file);
+        await writeFile(target, binary, { flag: "wx", mode: 448 });
+        await chmod(target, 448);
+        if (createHash2("sha256").update(binary).digest("hex") !== engine.binarySha256) throw new SpeechError("Speech engine verification failed.");
+        controller.signal.throwIfAborted();
+        await rename(target, this.enginePath());
+      }
+      this.#installation.phase = "model";
+      if (!initial.installedModels.includes(modelId)) {
+        const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
+        const target = path2.join(staging, "model.bin");
+        await this.download(`https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-${modelId}.bin`, target, model2.bytes, MODEL_HASHES[modelId], controller.signal);
+        controller.signal.throwIfAborted();
+        await rename(target, this.modelPath(modelId));
+      }
+      this.#installation = { ...this.#installation, state: "verifying", downloadedBytes: this.#installation.totalBytes };
+      await this.recognize(this.modelPath(modelId), pcmWave(new Float32Array(SPEECH_SAMPLE_RATE)), "en", controller.signal);
+      await writeFile(path2.join(this.directory, "LICENSES.txt"), SPEECH_LICENSE_NOTICES, { mode: 384 });
+      this.#installation = { ...this.#installation, state: "ready" };
+    } catch (error63) {
+      this.#installation = {
+        ...this.#installation,
+        state: controller.signal.aborted ? "cancelled" : "error",
+        ...controller.signal.aborted ? {} : { error: error63 instanceof SpeechError ? error63.message : "The download could not be completed. Check your connection and try again." }
+      };
+    } finally {
+      if (staging) await rm2(staging, { recursive: true, force: true }).catch(() => void 0);
+    }
+  }
+  async download(url2, file2, expectedBytes, digest, signal) {
+    const timeout = AbortSignal.timeout(15 * 6e4);
+    const combined = AbortSignal.any([signal, timeout]);
+    let response;
+    for (let redirects = 0; redirects < 8; redirects++) {
+      const target = new URL(url2);
+      if (target.protocol !== "https:" || !allowedDownloadHost(target.hostname)) throw new SpeechError("The model download returned an unsupported destination.");
+      response = await this.#fetcher(target, { signal: combined, redirect: "manual" });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new SpeechError("The model download could not be opened.");
+        url2 = new URL(location, target).href;
+      } else break;
+    }
+    if (!response?.ok || !response.body) throw new SpeechError("The download is unavailable. Check your connection and try again.");
+    const output2 = await open2(file2, "wx", 384);
+    const hash3 = createHash2("sha256");
+    let bytes2 = 0;
+    try {
+      const reader = response.body.getReader();
+      for (; ; ) {
+        combined.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes2 += value.byteLength;
+        if (bytes2 > expectedBytes) {
+          await reader.cancel();
+          throw new SpeechError("The downloaded file has an unexpected size.");
+        }
+        hash3.update(value);
+        await output2.writeFile(value);
+        this.#installation.downloadedBytes += value.byteLength;
+      }
+      this.#installation.state = "verifying";
+      if (bytes2 !== expectedBytes || hash3.digest("hex") !== digest) throw new SpeechError("Download verification failed. Please retry.");
+      this.#installation.state = "downloading";
+    } finally {
+      await output2.close();
+    }
+  }
+  async transcribe(request, admission) {
+    for (const [id3, job2] of this.#jobs) if (Date.now() - job2.updated > 12e4 && job2.result.state !== "processing") this.#jobs.delete(id3);
+    if (this.#jobs.has(request.jobId)) throw new SpeechError("This transcription identifier is already in use.", 409);
+    if (this.#recognizing) throw new SpeechError("Voice recognition is busy. Try again in a moment.", 409);
+    if (this.#jobs.size >= 100) throw new SpeechError("Too many transcription requests. Try again shortly.", 429);
+    const wav = Buffer.from(request.audioBase64, "base64");
+    validateSpeechWave(wav);
+    const job = { result: { state: "processing" }, controller: new AbortController(), updated: Date.now(), sessionId: admission.sessionId };
+    this.#recognizing = true;
+    this.#jobs.set(request.jobId, job);
+    try {
+      if (admission.stt.providerId === "whisper_local") await this.requireRecognizer(admission);
+    } catch (error63) {
+      this.#recognizing = false;
+      this.#jobs.delete(request.jobId);
+      throw error63;
+    }
+    const recognize = this.#recognize ?? this.recognize.bind(this);
+    void Promise.resolve().then(() => {
+      job.controller.signal.throwIfAborted();
+      if (admission.stt.providerId === "apple_local") {
+        if (!this.#appleVoice || admission.language === "auto") throw new SpeechError("Apple recognition is unavailable.", 409);
+        return this.#appleVoice.recognize(wav, admission.language, job.controller.signal);
+      }
+      return recognize(this.modelPath(admission.stt.modelId), wav, admission.language, job.controller.signal);
+    }).then((text2) => {
+      if (!job.controller.signal.aborted) job.result = { state: "complete", text: text2.trim().slice(0, 2e4) };
+    }).catch((error63) => {
+      job.result = job.controller.signal.aborted ? { state: "cancelled" } : { state: "error", error: error63 instanceof SpeechError ? error63.message : "Recognition failed. Try a shorter phrase or a smaller model." };
+    }).finally(() => {
+      this.#recognizing = false;
+      job.updated = Date.now();
+    });
+    return { state: "processing" };
+  }
+  async recognize(model2, wav, language, signal) {
+    const output2 = await runWhisper(this.enginePath(), [
+      "-m",
+      model2,
+      "-f",
+      "-",
+      "-of",
+      "vdt-dictation",
+      "-l",
+      language,
+      "-nt",
+      "-np",
+      "-t",
+      "4",
+      "-bs",
+      "1",
+      "-bo",
+      "1",
+      "-ng"
+    ], this.directory, wav, signal);
+    return output2.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
+  }
+};
+function allowedDownloadHost(host) {
+  return ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "huggingface.co"].includes(host) || host.endsWith(".huggingface.co") || host.endsWith(".hf.co");
+}
+function extractPinnedExecutable(zip, expectedName) {
+  let end = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65557); i--) if (zip.readUInt32LE(i) === 101010256) {
+    end = i;
+    break;
+  }
+  if (end < 0 || zip.readUInt16LE(end + 10) !== 1) throw new SpeechError("The speech engine archive is invalid.");
+  const central = zip.readUInt32LE(end + 16);
+  if (central + 46 > zip.length || zip.readUInt32LE(central) !== 33639248) throw new SpeechError("The speech engine archive is invalid.");
+  const name = zip.subarray(central + 46, central + 46 + zip.readUInt16LE(central + 28)).toString("utf8");
+  const mode = zip.readUInt32LE(central + 38) >>> 16;
+  if (name !== expectedName || (mode & 61440) === 40960) throw new SpeechError("The speech engine archive contains unexpected files.");
+  const length = zip.readUInt32LE(central + 24);
+  const compressed = zip.readUInt32LE(central + 20);
+  const local = zip.readUInt32LE(central + 42);
+  if (length > 32 * 1024 * 1024 || local + 30 > zip.length || zip.readUInt32LE(local) !== 67324752) throw new SpeechError("The speech engine archive exceeds its limits.");
+  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+  if (start + compressed > central) throw new SpeechError("The speech engine archive is truncated.");
+  const data = zip.subarray(start, start + compressed);
+  const method = zip.readUInt16LE(central + 10);
+  const binary = method === 0 ? data : method === 8 ? inflateRawSync(data, { maxOutputLength: length }) : void 0;
+  if (!binary || binary.length !== length) throw new SpeechError("The speech engine archive could not be unpacked.");
+  return binary;
+}
+function validateSpeechWave(wav) {
+  if (wav.length < 44 || wav.length > SPEECH_MAX_AUDIO_BYTES || wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE" || wav.toString("ascii", 12, 16) !== "fmt " || wav.readUInt32LE(16) !== 16 || wav.readUInt16LE(20) !== 1 || wav.readUInt16LE(22) !== 1 || wav.readUInt32LE(24) !== SPEECH_SAMPLE_RATE || wav.readUInt32LE(28) !== SPEECH_SAMPLE_RATE * 2 || wav.readUInt16LE(32) !== 2 || wav.readUInt16LE(34) !== 16 || wav.toString("ascii", 36, 40) !== "data" || wav.readUInt32LE(40) !== wav.length - 44 || wav.readUInt32LE(4) !== wav.length - 8 || wav.length % 2 !== 0) {
+    throw new SpeechError("Voice input requires a bounded 16 kHz mono PCM audio fragment.");
+  }
+}
+function runWhisper(binary, args, cwd, wav, signal) {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const environment = { ...process.env, GGML_METAL_DEVICES: "0" };
+    delete environment.GGML_BACKEND_PATH;
+    const child = spawn2(binary, args, { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+    const outputDecoder = new StringDecoder("utf8");
+    let output2 = "";
+    let diagnostics = "";
+    let size = 0;
+    let failed = false;
+    let killTimer;
+    const stop = () => {
+      failed = true;
+      child.kill();
+      killTimer ??= setTimeout(() => child.kill("SIGKILL"), 2e3);
+    };
+    const timer = setTimeout(stop, 45e3);
+    signal.addEventListener("abort", stop, { once: true });
+    child.stdout.on("data", (data) => {
+      size += data.length;
+      if (size > 128 * 1024) stop();
+      else output2 += outputDecoder.write(data);
+    });
+    child.stderr.on("data", (data) => {
+      size += data.length;
+      if (size > 128 * 1024) stop();
+      else diagnostics += data.toString("latin1");
+    });
+    child.once("error", () => {
+      failed = true;
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      signal.removeEventListener("abort", stop);
+      const acknowledged = diagnostics.split(/\r?\n/).slice(0, -1).includes(`read_audio_data: read ${wav.byteLength} bytes from stdin`);
+      if (failed || code !== 0 || !acknowledged) {
+        reject(new SpeechError("Local recognition failed. Try the Tiny model or restart dictation."));
+      } else {
+        resolve(output2 + outputDecoder.end());
+      }
+    });
+    child.stdin.on("error", stop);
+    child.stdin.end(wav);
+  });
+}
+var globalSpeech = globalThis;
+function getSpeechRuntime(options = {}) {
+  if (globalSpeech.__vdtSpeechRuntimeRevision !== 9) {
+    globalSpeech.__vdtSpeechRuntime = new SpeechRuntime(options);
+    globalSpeech.__vdtSpeechRuntimeRevision = 9;
+  }
+  return globalSpeech.__vdtSpeechRuntime ??= new SpeechRuntime(options);
+}
+
 // ../model-bridge/src/fake-backend.ts
 var FAKE_CAPABILITIES = Object.freeze({
   structuredOutput: true,
@@ -305,39 +1382,39 @@ function validateDataDiscoveryOutput(schemaId, value) {
   const errors = validate(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], value, "$");
   return { valid: errors.length === 0, errors };
 }
-function validate(schema, value, path15) {
+function validate(schema, value, path16) {
   if (Array.isArray(schema.anyOf)) {
-    const results = schema.anyOf.map((branch) => validate(branch, value, path15));
+    const results = schema.anyOf.map((branch) => validate(branch, value, path16));
     return results.some((errors2) => errors2.length === 0) ? [] : results.flat().slice(0, 16);
   }
   const errors = [];
   if (schema.type === "object") {
-    if (!record(value)) return [`${path15} must be an object.`];
+    if (!record(value)) return [`${path16} must be an object.`];
     const properties = schema.properties;
-    for (const key2 of schema.required) if (!Object.hasOwn(value, key2)) errors.push(`${path15}.${key2} is required.`);
+    for (const key2 of schema.required) if (!Object.hasOwn(value, key2)) errors.push(`${path16}.${key2} is required.`);
     for (const [key2, item] of Object.entries(value)) {
-      if (!Object.hasOwn(properties, key2)) errors.push(`${path15}.${key2} is not an approved field.`);
-      else errors.push(...validate(properties[key2], item, `${path15}.${key2}`));
+      if (!Object.hasOwn(properties, key2)) errors.push(`${path16}.${key2} is not an approved field.`);
+      else errors.push(...validate(properties[key2], item, `${path16}.${key2}`));
     }
   } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return [`${path15} must be an array.`];
-    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path15} has too few items.`);
-    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path15} has too many items.`);
-    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path15}[${index}]`)));
+    if (!Array.isArray(value)) return [`${path16} must be an array.`];
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path16} has too few items.`);
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path16} has too many items.`);
+    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path16}[${index}]`)));
   } else if (schema.type === "string") {
-    if (typeof value !== "string") return [`${path15} must be a string.`];
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path15} is too short.`);
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path15} is too long.`);
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path15} has an invalid format.`);
+    if (typeof value !== "string") return [`${path16} must be a string.`];
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path16} is too short.`);
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path16} is too long.`);
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path16} has an invalid format.`);
   } else if (schema.type === "number" || schema.type === "integer") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path15} must be a finite number.`];
-    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path15} must be an integer.`);
-    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path15} is below the minimum.`);
-    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path15} exceeds the maximum.`);
-    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path15} must be greater than ${schema.exclusiveMinimum}.`);
+    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path16} must be a finite number.`];
+    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path16} must be an integer.`);
+    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path16} is below the minimum.`);
+    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path16} exceeds the maximum.`);
+    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path16} must be greater than ${schema.exclusiveMinimum}.`);
   }
-  if ("const" in schema && schema.const !== value) errors.push(`${path15} must equal ${String(schema.const)}.`);
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path15} is not an allowed value.`);
+  if ("const" in schema && schema.const !== value) errors.push(`${path16} must equal ${String(schema.const)}.`);
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path16} is not an allowed value.`);
   return errors;
 }
 
@@ -580,8 +1657,8 @@ var FormulaParser = class {
     throw new FormulaParseError("Expected a number, reference, or parenthesized expression.");
   }
   parseCall(name) {
-    const open4 = this.advance();
-    if (open4.type !== "left_paren") {
+    const open5 = this.advance();
+    if (open5.type !== "left_paren") {
       throw new FormulaParseError("Expected '(' after function name.");
     }
     if (this.peek().type === "right_paren") {
@@ -705,6 +1782,10 @@ function physical(unit) {
   }
   return { dimensions: clean(dimensions), scale, known };
 }
+function hasKnownFiniteBasis(unit) {
+  const { known, scale } = physical(unit);
+  return known && Number.isFinite(scale) && scale > 0;
+}
 function compatible(actual, expected, coefficient) {
   if (same(actual, expected)) return true;
   const from = physical(actual), to = physical(expected);
@@ -713,7 +1794,7 @@ function compatible(actual, expected, coefficient) {
   const ratio = from.scale / to.scale;
   return coefficient !== void 0 && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
 }
-function parseValidationUnit(text2, enforcePercentageScale = false) {
+function parseValidationUnit(text2, enforcePercentageScale = false, options = {}) {
   if (!text2.trim() || text2.length > 256) return void 0;
   const tokens = text2.trim().toLowerCase().replace(/[·×]/g, "*").match(/[^*/^()]+|[*/^()]/g) ?? [];
   let cursor = 0;
@@ -727,6 +1808,7 @@ function parseValidationUnit(text2, enforcePercentageScale = false) {
     } else {
       const atom2 = Object.hasOwn(aliases, token) ? aliases[token] : token;
       result = enforcePercentageScale && percent.has(atom2) ? { "%": 1 } : scalar.has(atom2) ? {} : { [atom2]: 1 };
+      if (options.requireKnownFiniteBasis && !hasKnownFiniteBasis(result)) throw new Error("Unknown unit atom");
     }
     if (tokens[cursor] === "^") {
       cursor++;
@@ -746,7 +1828,8 @@ function parseValidationUnit(text2, enforcePercentageScale = false) {
   };
   try {
     const result = expression();
-    return cursor === tokens.length ? clean(result) : void 0;
+    if (cursor !== tokens.length || options.requireKnownFiniteBasis && !hasKnownFiniteBasis(result)) return void 0;
+    return clean(result);
   } catch {
     return void 0;
   }
@@ -777,7 +1860,7 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
     if (!unit) report(key2, `The unit of \u201C${target.name}\u201D is missing or cannot be checked. Set a unit to verify the formula for \u201C${node3.name}\u201D.`, verifyTime ? "error" : "warning");
     return unit;
   };
-  const add = (left, right, path15, operator) => {
+  const add = (left, right, path16, operator) => {
     if (left.literal && right.literal) {
       const a = left.coefficient, b = right.coefficient;
       return { unit: {}, literal: true, coefficient: a === void 0 || b === void 0 ? void 0 : operator === "+" ? a + b : operator === "-" ? a - b : operator.startsWith("min") ? Math.min(a, b) : Math.max(a, b) };
@@ -789,7 +1872,7 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
       const leftToRight = matchUnits(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: void 0 };
       const scaleHint = (enforcePercentageScale || verifyTime) && left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
-      report(path15, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 && !verifyTime ? "warning" : "error");
+      report(path16, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 && !verifyTime ? "warning" : "error");
     }
     return {
       unit: left.unit && right.unit ? left.unit : void 0,
@@ -797,19 +1880,19 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
       coefficient: left.coefficient === right.coefficient ? left.coefficient : void 0
     };
   };
-  const visit2 = (ast, path15) => {
+  const visit2 = (ast, path16) => {
     if (ast.type === "number") return { unit: {}, literal: true, coefficient: ast.value };
     if (ast.type === "reference") {
       const target = nodes.get(ast.name);
       return { unit: target ? readUnit(target, `reference-${ast.name}`) : void 0, literal: false, coefficient: 1 };
     }
     if (ast.type === "unary") {
-      const result = visit2(ast.expression, `${path15}-unary`);
+      const result = visit2(ast.expression, `${path16}-unary`);
       return { ...result, coefficient: result.coefficient === void 0 ? void 0 : -result.coefficient };
     }
-    if (ast.type === "call") return ast.args.map((arg, index) => visit2(arg, `${path15}-${index}`)).reduce((left2, right2, index) => add(left2, right2, `${path15}-${index}`, `${ast.name}(...)`));
-    const left = visit2(ast.left, `${path15}-left`), right = visit2(ast.right, `${path15}-right`);
-    if (ast.operator === "+" || ast.operator === "-") return add(left, right, path15, ast.operator);
+    if (ast.type === "call") return ast.args.map((arg, index) => visit2(arg, `${path16}-${index}`)).reduce((left2, right2, index) => add(left2, right2, `${path16}-${index}`, `${ast.name}(...)`));
+    const left = visit2(ast.left, `${path16}-left`), right = visit2(ast.right, `${path16}-right`);
+    if (ast.operator === "+" || ast.operator === "-") return add(left, right, path16, ast.operator);
     const multiply = ast.operator === "*";
     const unit = left.unit && right.unit ? combine(left.unit, right.unit, multiply ? 1 : -1) : void 0;
     const coefficient = left.coefficient === void 0 || right.coefficient === void 0 ? void 0 : multiply ? left.coefficient * right.coefficient : left.coefficient / right.coefficient;
@@ -1227,6 +2310,10 @@ var DEFAULT_SVG_LAYOUT = Object.freeze({
   horizontalGap: 180,
   verticalGap: 32
 });
+
+// ../vdt-core/src/operations/decomposition-assumption.ts
+var sameUnitRelationshipKinds = ["serial_capacity", "independent_additive"];
+var decompositionRelationshipKinds = [...sameUnitRelationshipKinds, "quantity_rate"];
 
 // ../vdt-core/src/export/excel.ts
 var NUMBER_KINDS = ["base", "potential", "plain", "percent"];
@@ -2123,11 +3210,13 @@ var modelSchema = (group, maxGroups = KPI_SUGGESTION_LIMITS.groups) => object2({
   groups: list(group, maxGroups)
 });
 var KPI_SUGGESTION_MODEL_JSON_SCHEMA = modelSchema(object2(groupFields));
-var SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable formula for context.target, identified by context.targetNodeId. Determine the selected target's own definition and cohort before choosing factors. Ancestor formulas and selected-skill examples for other metrics provide context for that target. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
+function smartKpiInstruction(format) {
+  const json2 = format === "json";
+  return `Propose ONE immediate mathematical input layer and a usable formula for context.target, identified by context.targetNodeId. Determine the selected target's own definition and cohort before choosing factors. Ancestor formulas and selected-skill examples for other metrics provide context for that target. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, ${json2 ? "in addition to the JSON schema." : "in addition to the guided schema."} Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. ${json2 ? "Return only strict JSON, without tools" : "Return only the guided fields, without tools"}, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
 
-Read responseContract.references.excludedTarget before defining any factors. That KPI is the formula result. Its identity cannot appear in a child key, conceptKey, existingNodeId or as a repeated factor label. Appending a currency or adding a qualifier without a distinct measured quantity still repeats the target. Distinct subtotals may use its unit. If openAiCustomFactorKeys is supplied, return one group with the count, mean, exact units and formula in responseContract.definition.adjustmentTotal, or return empty if the records cannot be defined. Use the supplied aliases consistently in the children, requiredKeys and formula.
+Read responseContract.references.excludedTarget before defining any factors. That KPI is the formula result. Its identity cannot appear in a child key, conceptKey, existingNodeId or as a repeated factor label. Appending a currency or adding a qualifier without a distinct measured quantity still repeats the target. Distinct subtotals may use its unit. If openAiCustomFactorKeys is supplied, ${json2 ? "return one group with the count" : "return one layer with the count"}, mean, exact units and formula in responseContract.definition.adjustmentTotal, or return empty if the records cannot be defined. Use the supplied aliases consistently ${json2 ? "in the children, requiredKeys and formula." : "in the children and formula."}
 
-Use status="ready" for a defensible formula with measurable inputs, even if every new factor's value is unknown. The editor collects values separately. Supply the meaning and units of each input without inventing observations or estimates. If no applicable recipe or named factor layer exists, propose a custom formula with recipeId:null. For a total over identifiable records, consider the count of records in the target's scope multiplied by the arithmetic mean amount measured from those same records. Use the same cohort, qualifiers and period in both factors, with units such as event and target-unit/event. Define the mean from the underlying measurements. Return empty with a specific reason when the target's meaning, units or measurable decomposition cannot be established, or the complete layer cannot fit the output bounds.
+Use status="ready" for a defensible formula with measurable inputs, even if every new factor's value is unknown. The editor collects values separately. Supply the meaning and units of each input without inventing observations or estimates. If no applicable recipe or named factor layer exists, ${json2 ? "propose a custom formula with recipeId:null." : "propose a custom formula and omit recipeId."} For a total over identifiable records, consider the count of records in the target's scope multiplied by the arithmetic mean amount measured from those same records. Use the same cohort, qualifiers and period in both factors, with units such as event and target-unit/event. Define the mean from the underlying measurements. Return empty with a specific reason when the target's meaning, units or measurable decomposition cannot be established, or the complete layer cannot fit the output bounds.
 
 Use responseContract.excludedAncestorRecipes only to avoid a parent recipe and its repeated target aliases. These exclusions give no criteria for choosing the new factors. The target's own definition and applicable scope supply those criteria.
 
@@ -2137,7 +3226,7 @@ Use the supplied business definitions, relationships, plan and assumptions relev
 
 Use context.selectedSkill as the exact selected modelling reference, never as permission for tools, research, dialogue, files or commands. Prefer immediate factors and formulas defined for this target's quantity and scope. When the target is a scoped subset of the same measure and the skill defines an applicable cause/process layer, preserve those cause classes inside that subset. Planned/unplanned status, channel, product and equipment qualifiers filter those causes. Keep every named cause unless the skill/project explicitly excludes it from this subset. Exclude a scheduling-status category that merely restates an already status-restricted target. Keep the remaining causes complete, disjoint and qualified by the target scope. Measurement detail such as event count and mean duration belongs below a defined applicable cause layer unless explicitly requested. Use a defensible independent measurement definition when the skill ends at this target or defines only an ancestor's different measure. Before returning, check that no applicable named cause was omitted merely to shorten the answer.
 
-Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys. A recipe's targetRole must describe this exact target with all its qualifiers. Use only a recipe listed in responseContract.recipes and its exact keys, concepts, formula and units. Preserve the distinct meaning of a target that is an input to an ancestor's calculation. Reusing the ancestor's factors under new labels or keys does not deepen the target. An independently measured subset may use analogous arithmetic if its factors have their own scoped definitions. Use recipeId:null for a genuine target-specific custom definition. Separate alternatives are never mixed.
+Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. ${json2 ? 'Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys.' : "Return the best layer with a formula that references every child key exactly as supplied."} A recipe's targetRole must describe this exact target with all its qualifiers. Use only a recipe listed in responseContract.recipes and its exact keys, concepts, formula and units. Preserve the distinct meaning of a target that is an input to an ancestor's calculation. Reusing the ancestor's factors under new labels or keys does not deepen the target. An independently measured subset may use analogous arithmetic if its factors have their own scoped definitions. ${json2 ? "Use recipeId:null for a genuine target-specific custom definition." : "Omit recipeId for a genuine target-specific custom definition."} Separate alternatives are never mixed.
 
 Preserve qualifiers: gross/net, total/average, actual/nominal, product/material and fleet/per-item. Gross revenue does not authorize a net-revenue recipe or deduction factors. Do not invent geometry, weights, calibration, site facts, values, numeric defaults or child formulas. Output supplies definitions, never numeric input values. The only algebraic literal is raw1 in (1-decimal_fraction). A fixed parameter explicitly defined by the project may be a clearly labelled reference input with ratio units and a description identifying that definition; its value is entered separately. Never invent or fit a conversion. If the selected target itself is a fixed unit conversion, do not re-express the same reference quantity in two units as supposedly distinct components; return empty. This does not block another target from using a project-defined fixed input.
 
@@ -2147,7 +3236,9 @@ Event counts and event-weighted mean durations must cover the same event populat
 
 Preserve decomposition direction. Ancestors and siblings are context, never suggested inputs. If P=A/B defines a parent, A=P*B or B=A/P reverses that identity rather than deepening the target. Use new factor definitions with the target's population and period. A scoped total can also be a sum of complete disjoint subtotals. An average operations-per-item may use independently logged operation count divided by its matching item count.
 
-Reuse only IDs and their exact units from responseContract.references.reusableDirectChildren. If none have a unit, every existingNodeId must be null. Never reuse or rename the target, root, ancestors or siblings, including when existingNodeId is null. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
+Reuse only IDs and their exact units from responseContract.references.reusableDirectChildren. If none have a unit, ${json2 ? "every existingNodeId must be null." : "omit existingNodeId for every child."} Never reuse or rename the target, root, ancestors or siblings, including when existingNodeId is null. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
+}
+var SMART_KPI_INSTRUCTION = smartKpiInstruction("json");
 function validateKpiSuggestionTaskInput(value) {
   smartRecord(value, ["schemaVersion", "context", "recipes", "responseContract"], ["schemaVersion", "context", "recipes"]);
   smartAssert(value.schemaVersion === KPI_SUGGESTION_TASK_SCHEMA, "INVALID_CONTEXT", "Unknown Smart task schema.");
@@ -3453,10 +4544,10 @@ function validateRegisteredSchemaDetailed(schemaId, output2) {
   }
   return { valid: true, errors: [] };
 }
-function validateJsonSchemaSubset(schema, value, path15 = "$") {
+function validateJsonSchemaSubset(schema, value, path16 = "$") {
   if (!isRecord2(schema)) return { valid: true, errors: [] };
   if (Array.isArray(schema.anyOf)) {
-    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path15));
+    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path16));
     if (branchResults.some((result) => result.valid)) {
       return { valid: true, errors: [] };
     }
@@ -3469,57 +4560,57 @@ function validateJsonSchemaSubset(schema, value, path15 = "$") {
   const type = schema.type;
   if (type === "object") {
     if (!isRecord2(value)) {
-      return { valid: false, errors: [`${path15} must be an object.`] };
+      return { valid: false, errors: [`${path16} must be an object.`] };
     }
     const properties = isRecord2(schema.properties) ? schema.properties : {};
     const required2 = Array.isArray(schema.required) ? schema.required.filter((key2) => typeof key2 === "string") : [];
     for (const key2 of required2) {
-      if (!(key2 in value)) errors.push(`${path15}.${key2} is required.`);
+      if (!(key2 in value)) errors.push(`${path16}.${key2} is required.`);
     }
     if (schema.additionalProperties === false) {
       for (const key2 of Object.keys(value)) {
-        if (!(key2 in properties)) errors.push(`${path15}.${key2} is not an approved field.`);
+        if (!(key2 in properties)) errors.push(`${path16}.${key2} is not an approved field.`);
       }
     }
     for (const [key2, propertySchema] of Object.entries(properties)) {
-      if (key2 in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key2], `${path15}.${key2}`).errors);
+      if (key2 in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key2], `${path16}.${key2}`).errors);
     }
   } else if (type === "array") {
     if (!Array.isArray(value)) {
-      return { valid: false, errors: [`${path15} must be an array.`] };
+      return { valid: false, errors: [`${path16} must be an array.`] };
     }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path15} must contain at least ${schema.minItems} item(s).`);
+      errors.push(`${path16} must contain at least ${schema.minItems} item(s).`);
     }
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-      errors.push(`${path15} must contain at most ${schema.maxItems} item(s).`);
+      errors.push(`${path16} must contain at most ${schema.maxItems} item(s).`);
     }
     value.forEach((item, index) => {
-      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path15}[${index}]`).errors);
+      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path16}[${index}]`).errors);
     });
   } else if (type === "string") {
     if (typeof value !== "string") {
-      return { valid: false, errors: [`${path15} must be a string.`] };
+      return { valid: false, errors: [`${path16} must be a string.`] };
     }
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-      errors.push(`${path15} must be at most ${schema.maxLength} character(s).`);
+      errors.push(`${path16} must be at most ${schema.maxLength} character(s).`);
     }
   } else if (type === "number") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      return { valid: false, errors: [`${path15} must be a finite number.`] };
+      return { valid: false, errors: [`${path16} must be a finite number.`] };
     }
     if (typeof schema.minimum === "number" && value < schema.minimum) {
-      errors.push(`${path15} must be at least ${schema.minimum}.`);
+      errors.push(`${path16} must be at least ${schema.minimum}.`);
     }
     if (typeof schema.maximum === "number" && value > schema.maximum) {
-      errors.push(`${path15} must be at most ${schema.maximum}.`);
+      errors.push(`${path16} must be at most ${schema.maximum}.`);
     }
   } else if (type === "boolean") {
     if (typeof value !== "boolean") {
-      return { valid: false, errors: [`${path15} must be a boolean.`] };
+      return { valid: false, errors: [`${path16} must be a boolean.`] };
     }
   }
-  if ("const" in schema && value !== schema.const) errors.push(`${path15} must equal ${String(schema.const)}.`);
+  if ("const" in schema && value !== schema.const) errors.push(`${path16} must equal ${String(schema.const)}.`);
   return { valid: errors.length === 0, errors };
 }
 
@@ -3844,19 +4935,19 @@ function evaluateClaudeVersion(version2) {
 }
 
 // ../model-bridge/src/subscription-cli/executable-scope.ts
-import { lstat, realpath } from "node:fs/promises";
-import path from "node:path";
+import { lstat as lstat3, realpath as realpath3 } from "node:fs/promises";
+import path3 from "node:path";
 function inside(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+  const relative = path3.relative(root, candidate);
+  return relative === "" || !relative.startsWith(`..${path3.sep}`) && relative !== ".." && !path3.isAbsolute(relative);
 }
 async function currentWorkspaceRoot() {
-  const cwd = await realpath(process.cwd());
+  const cwd = await realpath3(process.cwd());
   let root = cwd;
   let directory = cwd;
   for (let level = 0; level < 12; level += 1) {
-    if (await lstat(path.join(directory, ".git")).catch(() => void 0) || await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
-    const parent = path.dirname(directory);
+    if (await lstat3(path3.join(directory, ".git")).catch(() => void 0) || await lstat3(path3.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
+    const parent = path3.dirname(directory);
     if (parent === directory) break;
     directory = parent;
   }
@@ -3864,12 +4955,12 @@ async function currentWorkspaceRoot() {
 }
 
 // ../model-bridge/src/subscription-cli/codex/executable-selection.ts
-import { execFile as execFile2, spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { access, lstat as lstat2, mkdtemp, realpath as realpath2, rm } from "node:fs/promises";
-import os from "node:os";
-import path2 from "node:path";
-import { StringDecoder } from "node:string_decoder";
+import { execFile as execFile2, spawn as spawn3 } from "node:child_process";
+import { constants as constants2 } from "node:fs";
+import { access, lstat as lstat4, mkdtemp as mkdtemp3, realpath as realpath4, rm as rm3 } from "node:fs/promises";
+import os3 from "node:os";
+import path4 from "node:path";
+import { StringDecoder as StringDecoder2 } from "node:string_decoder";
 var CODEX_SELECTION_LIMITS = Object.freeze({
   maxDirectories: 128,
   maxCandidates: 8,
@@ -3908,9 +4999,9 @@ function compareVersions(left, right) {
 }
 async function candidatesOnPath(options) {
   const platform = options.platform ?? process.platform;
-  const pathApi = platform === "win32" ? path2.win32 : path2.posix;
+  const pathApi = platform === "win32" ? path4.win32 : path4.posix;
   const env = options.env ?? process.env;
-  const appDirectories = options.applicationDirectories ?? (platform === "darwin" && options.path === void 0 ? ["/Applications", ...env.HOME && path2.posix.isAbsolute(env.HOME) ? [path2.posix.join(env.HOME, "Applications")] : []].map((directory) => path2.posix.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")) : []);
+  const appDirectories = options.applicationDirectories ?? (platform === "darwin" && options.path === void 0 ? ["/Applications", ...env.HOME && path4.posix.isAbsolute(env.HOME) ? [path4.posix.join(env.HOME, "Applications")] : []].map((directory) => path4.posix.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")) : []);
   const directories = [...(options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":"), ...appDirectories].filter((directory) => pathApi.isAbsolute(directory) && !directory.includes("\0")).slice(0, CODEX_SELECTION_LIMITS.maxDirectories);
   const extensions = platform === "win32" ? ["", ...(options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").map((part) => part.trim().toLowerCase())] : [""];
   const workspace = await currentWorkspaceRoot();
@@ -3921,11 +5012,11 @@ async function candidatesOnPath(options) {
       const candidate = pathApi.join(directory, `codex${extension}`);
       if (inside(workspace, candidate)) continue;
       try {
-        const info = await lstat2(candidate);
+        const info = await lstat4(candidate);
         if (!info.isFile() && !info.isSymbolicLink()) continue;
-        const resolved = await realpath2(candidate);
-        if (!path2.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat2(resolved)).isFile()) continue;
-        await access(resolved, constants.X_OK);
+        const resolved = await realpath4(candidate);
+        if (!path4.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat4(resolved)).isFile()) continue;
+        await access(resolved, constants2.X_OK);
         if (options.executableCheck && !await options.executableCheck(candidate)) continue;
         seen.add(resolved);
         if (seen.size >= CODEX_SELECTION_LIMITS.maxCandidates) return [...seen];
@@ -3948,7 +5039,7 @@ async function probeOwnedCliVersion(executable, cwd, env, options, versionArgs =
 async function probeOwnedCliOutput(executable, cwd, env, options, args, timeoutMs, conversation) {
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [...args], {
+    const child = spawn3(executable, [...args], {
       cwd,
       env,
       shell: false,
@@ -3965,7 +5056,7 @@ async function probeOwnedCliOutput(executable, cwd, env, options, args, timeoutM
     let terminating = false;
     let termination = Promise.resolve();
     let terminationDeadline;
-    const stdoutDecoder = new StringDecoder("utf8"), stderrDecoder = new StringDecoder("utf8");
+    const stdoutDecoder = new StringDecoder2("utf8"), stderrDecoder = new StringDecoder2("utf8");
     const abort = () => {
       failure2 ??= Object.assign(new Error("CLI metadata probe cancelled."), { code: "CANCELLED", name: "AbortError" });
       terminate();
@@ -3991,7 +5082,7 @@ async function probeOwnedCliOutput(executable, cwd, env, options, args, timeoutM
       }, CODEX_SELECTION_LIMITS.terminationGraceMs);
       if (!child.pid) return;
       if (process.platform === "win32") {
-        const taskkill = path2.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
+        const taskkill = path4.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
         termination = new Promise((done) => {
           let completed = false;
           let killer;
@@ -4077,7 +5168,7 @@ async function selectCodexExecutable(options = {}) {
   options.signal?.throwIfAborted();
   const candidates = await candidatesOnPath(options);
   if (!candidates.length) return null;
-  const cwd = await mkdtemp(path2.join(os.tmpdir(), "vdt-codex-selection-"));
+  const cwd = await mkdtemp3(path4.join(os3.tmpdir(), "vdt-codex-selection-"));
   let retained = false;
   try {
     const env = versionEnvironment(options.env ?? process.env);
@@ -4124,19 +5215,35 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
     }
     return selected;
   } finally {
-    if (!retained) await rm(cwd, { recursive: true, force: true });
+    if (!retained) await rm3(cwd, { recursive: true, force: true });
   }
 }
 
 // ../model-bridge/src/subscription-cli/claude/models.ts
-import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
+import { mkdtemp as mkdtemp4, rm as rm4 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path3 from "node:path";
+import path5 from "node:path";
 
 // ../model-bridge/src/subscription-cli/reasoning.ts
 var REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 function isHarnessReasoningValue(value) {
   return typeof value === "boolean" || typeof value === "string" && /^[a-z][a-z0-9_.-]{0,47}$/.test(value) || typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 32768;
+}
+var FAST_LOCAL_REASONING = "vdt-fast";
+var LOCAL_OFF_VALUES = [false, "none", "off", "disabled"];
+var LOCAL_REASONING_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+function resolveLocalReasoning(capabilities3, preference) {
+  if (preference === void 0) return { supported: true };
+  const values = capabilities3?.values ?? [];
+  const off = LOCAL_OFF_VALUES.find((value2) => values.includes(value2));
+  if (preference === FAST_LOCAL_REASONING) {
+    const named = LOCAL_REASONING_ORDER.find((value3) => values.includes(value3));
+    const only = values.length === 1 ? values[0] : void 0;
+    const value2 = off ?? named ?? only;
+    return value2 === void 0 ? { supported: true } : { supported: true, value: value2 };
+  }
+  const value = preference === false ? off : values.find((value2) => value2 === preference);
+  return value === void 0 ? { supported: false } : { supported: true, value };
 }
 function parseLocalModelReasoningCapabilities(metadata, backendId) {
   const record7 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -4146,7 +5253,7 @@ function parseLocalModelReasoningCapabilities(metadata, backendId) {
   }
   const reasoning = record7(meta3.reasoning ?? caps.reasoning);
   const raw = backendId === "ollama" ? thinking.values : meta3.supported_reasoning_efforts ?? reasoning.values ?? reasoning.supported_efforts;
-  const values = Array.isArray(raw) ? [...new Set(raw.filter(isHarnessReasoningValue))].slice(0, 16).filter((value) => backendId === "ollama" ? typeof value !== "number" : typeof value === "string") : [];
+  const values = Array.isArray(raw) ? [...new Set(raw.filter(isHarnessReasoningValue))].slice(0, 16).filter((value) => value !== FAST_LOCAL_REASONING && (backendId === "ollama" ? typeof value !== "number" : typeof value === "string")) : [];
   if (!values.length) return void 0;
   return { parameter: backendId === "ollama" ? "think" : "reasoning_effort", values, source: "provider", ...values.includes(thinking.default) ? { defaultValue: thinking.default } : {} };
 }
@@ -4206,9 +5313,9 @@ function modelOptions(reply) {
   return [...unique.values()];
 }
 async function listClaudeModelOptions(executable, options = {}) {
-  if (!path3.isAbsolute(executable)) return [];
+  if (!path5.isAbsolute(executable)) return [];
   options.signal?.throwIfAborted();
-  const workspace = await mkdtemp2(path3.join(tmpdir(), "vdt-claude-models-"));
+  const workspace = await mkdtemp4(path5.join(tmpdir(), "vdt-claude-models-"));
   let cleanupConfirmed = true;
   try {
     const env = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts" };
@@ -4250,7 +5357,7 @@ async function listClaudeModelOptions(executable, options = {}) {
     cleanupConfirmed = error63?.code !== "CLEANUP_UNCONFIRMED";
     throw error63;
   } finally {
-    if (cleanupConfirmed) await rm2(workspace, { recursive: true, force: true });
+    if (cleanupConfirmed) await rm4(workspace, { recursive: true, force: true });
   }
 }
 async function listClaudeModels(executable, options) {
@@ -4938,8 +6045,8 @@ ${result.stderr}`.trim())?.raw ?? null;
 
 // ../model-bridge/src/subscription-cli/cursor/windows-launch.ts
 import { lstatSync, realpathSync } from "node:fs";
-import { lstat as lstat3, readdir, realpath as realpath3 } from "node:fs/promises";
-import path4 from "node:path";
+import { lstat as lstat5, readdir, realpath as realpath5 } from "node:fs/promises";
+import path6 from "node:path";
 var versionName = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/i;
 var WINDOWS_CURSOR_VERSION_TIMEOUT_MS = 25e3;
 var WINDOWS_CURSOR_MODELS_TIMEOUT_MS = 25e3;
@@ -4957,7 +6064,7 @@ function windowsCursorLaunchIssueMessage(issue3) {
   return "The Windows Cursor CLI payload could not be verified. Repair the official installation, then rescan.";
 }
 async function regular(candidate) {
-  if (!(await lstat3(candidate)).isFile() || path4.relative(candidate, await realpath3(candidate)) !== "") {
+  if (!(await lstat5(candidate)).isFile() || path6.relative(candidate, await realpath5(candidate)) !== "") {
     throw new Error("Cursor's installed Windows payload is incomplete or redirected. Repair the official Cursor CLI installation.");
   }
 }
@@ -4969,21 +6076,21 @@ async function resolveWindowsCursorShim(shim, localAppData = process.env.LOCALAP
     throw new WindowsCursorLaunchError("unsupported");
   }
 }
-function isOfficialWindowsCursorShim(shim, localAppData = process.env.LOCALAPPDATA, pathApi = path4) {
+function isOfficialWindowsCursorShim(shim, localAppData = process.env.LOCALAPPDATA, pathApi = path6) {
   return Boolean(localAppData && pathApi.isAbsolute(localAppData) && pathApi.relative(pathApi.join(localAppData, "cursor-agent"), pathApi.dirname(shim)) === "" && /^(?:agent|cursor-agent)\.cmd$/i.test(pathApi.basename(shim)));
 }
 async function readWindowsCursorPayload(shim, localAppData) {
-  if (!localAppData || !path4.isAbsolute(localAppData)) throw new Error("The official Cursor CLI installation directory could not be verified.");
-  const root = path4.join(localAppData, "cursor-agent");
+  if (!localAppData || !path6.isAbsolute(localAppData)) throw new Error("The official Cursor CLI installation directory could not be verified.");
+  const root = path6.join(localAppData, "cursor-agent");
   if (!isOfficialWindowsCursorShim(shim, localAppData)) {
     throw new Error("This Cursor command launcher is unsupported. Install the official Windows Cursor CLI.");
   }
   await regular(shim);
-  const versions = path4.join(root, "versions");
-  if (path4.relative(versions, await realpath3(versions))) throw new Error("Cursor's installed Windows versions directory is redirected.");
+  const versions = path6.join(root, "versions");
+  if (path6.relative(versions, await realpath5(versions))) throw new Error("Cursor's installed Windows versions directory is redirected.");
   const entries = await readdir(versions, { withFileTypes: true });
   const pending = entries.find((entry) => entry.name.toLowerCase() === "pending-launchers");
-  if (entries.some((entry) => /(?:\.new$|^\.promote-lock$)/i.test(entry.name)) || pending && (!pending.isDirectory() || (await readdir(path4.join(versions, pending.name))).some((name) => /\.pending$/i.test(name)))) {
+  if (entries.some((entry) => /(?:\.new$|^\.promote-lock$)/i.test(entry.name)) || pending && (!pending.isDirectory() || (await readdir(path6.join(versions, pending.name))).some((name) => /\.pending$/i.test(name)))) {
     throw new WindowsCursorLaunchError("pending");
   }
   const releases = entries.flatMap((entry) => {
@@ -4994,28 +6101,28 @@ async function readWindowsCursorPayload(shim, localAppData) {
   if (!release?.entry.isDirectory() || releases[1]?.date === release.date) {
     throw new WindowsCursorLaunchError(releases[1]?.date === release?.date && release ? "ambiguous" : "unsupported");
   }
-  const folder = path4.join(versions, release.entry.name);
-  const entrypoint = path4.join(folder, "index.js");
+  const folder = path6.join(versions, release.entry.name);
+  const entrypoint = path6.join(folder, "index.js");
   await regular(entrypoint);
-  await regular(path4.join(folder, "node.exe"));
+  await regular(path6.join(folder, "node.exe"));
   return entrypoint;
 }
 function cursorHost() {
   return { platform: process.platform, localAppData: process.env.LOCALAPPDATA };
 }
 function isWindowsCursorPayload(executable, host = cursorHost()) {
-  if (host.platform !== "win32" || !host.localAppData || !path4.isAbsolute(host.localAppData)) return false;
-  const version2 = path4.dirname(executable);
-  return path4.relative(path4.join(host.localAppData, "cursor-agent", "versions"), path4.dirname(version2)) === "" && versionName.test(path4.basename(version2)) && path4.basename(executable).toLowerCase() === "index.js";
+  if (host.platform !== "win32" || !host.localAppData || !path6.isAbsolute(host.localAppData)) return false;
+  const version2 = path6.dirname(executable);
+  return path6.relative(path6.join(host.localAppData, "cursor-agent", "versions"), path6.dirname(version2)) === "" && versionName.test(path6.basename(version2)) && path6.basename(executable).toLowerCase() === "index.js";
 }
 function cursorLaunchTarget(executable, args, environment, host = cursorHost()) {
   if (!isWindowsCursorPayload(executable, host)) {
     return { executable, args: [...args], env: environment, bundled: false };
   }
-  const node3 = path4.join(path4.dirname(executable), "node.exe");
+  const node3 = path6.join(path6.dirname(executable), "node.exe");
   try {
     for (const candidate of [executable, node3]) {
-      if (!lstatSync(candidate).isFile() || path4.relative(candidate, realpathSync(candidate)) !== "") {
+      if (!lstatSync(candidate).isFile() || path6.relative(candidate, realpathSync(candidate)) !== "") {
         throw new WindowsCursorLaunchError("unsupported");
       }
     }
@@ -5028,13 +6135,13 @@ function cursorLaunchTarget(executable, args, environment, host = cursorHost()) 
   }
   env.CURSOR_INVOKED_AS = "agent.cmd";
   if (environment === void 0 && !Object.keys(env).some((key2) => /^NODE_COMPILE_CACHE$/i.test(key2))) {
-    env.NODE_COMPILE_CACHE = path4.join(host.localAppData, "cursor-compile-cache");
+    env.NODE_COMPILE_CACHE = path6.join(host.localAppData, "cursor-compile-cache");
   }
   return { executable: node3, args: [executable, ...args], env, bundled: true };
 }
 
 // ../model-bridge/src/subscription-cli/cursor/adapter.ts
-import path7 from "node:path";
+import path9 from "node:path";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
 import { execFile as execFile5 } from "node:child_process";
@@ -5132,8 +6239,8 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
 // ../model-bridge/src/detection.ts
 import { execFile as execFile4 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access as access2, realpath as realpath4, stat } from "node:fs/promises";
-import path6 from "node:path";
+import { access as access2, realpath as realpath6, stat } from "node:fs/promises";
+import path8 from "node:path";
 import { promisify as promisify3 } from "node:util";
 
 // ../model-bridge/src/harness/catalog.ts
@@ -5176,21 +6283,21 @@ function isHarnessBackendId(value) {
 }
 
 // ../model-bridge/src/harness/profiles.ts
-import { createHash, randomUUID } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
 import { homedir } from "node:os";
-import path5 from "node:path";
+import path7 from "node:path";
 import { existsSync, lstatSync as lstatSync2, readFileSync } from "node:fs";
-import { chmod, mkdir, rename, rm as rm3, writeFile } from "node:fs/promises";
+import { chmod as chmod2, mkdir as mkdir2, rename as rename2, rm as rm5, writeFile as writeFile2 } from "node:fs/promises";
 var fail = (message) => Object.assign(new Error(message), { code: "INVALID_HARNESS_PROFILE" });
 function validateHarnessProfile(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw fail("A harness profile object is required.");
   const v = value;
   if (Object.keys(v).some((k) => !["id", "name", "transport", "command", "args", "environmentRefs", "defaultModel", "timeoutMs", "baseHarness"].includes(k))) throw fail("Unknown harness profile field.");
-  const id3 = v.id ?? `custom-${randomUUID()}`;
+  const id3 = v.id ?? `custom-${randomUUID3()}`;
   if (!isHarnessId(id3) || !id3.startsWith("custom-")) throw fail("Custom harness IDs must start with custom-.");
   if (typeof v.name !== "string" || !v.name.trim() || v.name.length > 100 || /[\x00-\x1f]/.test(v.name)) throw fail("Enter a name of at most 100 characters.");
   if (v.transport !== "acp" && v.transport !== "vdt-jsonl") throw fail("Choose ACP or the VDT JSONL adapter protocol.");
-  if (typeof v.command !== "string" || !v.command.trim() || v.command.length > 4096 || /[\x00\r\n]/.test(v.command) || /^(?:sh|bash|zsh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)$/i.test(path5.basename(v.command))) throw fail("Choose an executable, not a shell command.");
+  if (typeof v.command !== "string" || !v.command.trim() || v.command.length > 4096 || /[\x00\r\n]/.test(v.command) || /^(?:sh|bash|zsh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)$/i.test(path7.basename(v.command))) throw fail("Choose an executable, not a shell command.");
   if (!Array.isArray(v.args) || v.args.length > 64 || v.args.some((a) => typeof a !== "string" || a.length > 4096)) throw fail("Arguments must be an array of at most 64 strings.");
   assertArgsSafe(v.args);
   const refs = v.environmentRefs ?? {};
@@ -5215,7 +6322,7 @@ function validateHarnessProfile(value) {
   };
 }
 function harnessProfilesPath(env = process.env) {
-  return env.VDT_HARNESS_CONFIG ? path5.resolve(env.VDT_HARNESS_CONFIG) : path5.join(homedir(), ".vdt-studio", "harnesses.json");
+  return env.VDT_HARNESS_CONFIG ? path7.resolve(env.VDT_HARNESS_CONFIG) : path7.join(homedir(), ".vdt-studio", "harnesses.json");
 }
 function readHarnessProfiles(env = process.env) {
   const file2 = harnessProfilesPath(env);
@@ -5261,16 +6368,16 @@ function updateHarnessProfiles(operation, env = process.env) {
     if (next.length > 64) throw fail("At most 64 custom systems can be saved.");
     const serialized = JSON.stringify({ version: 1, profiles: next }, null, 2) + "\n";
     if (Buffer.byteLength(serialized) > 256 * 1024) throw fail("Harness configuration exceeds 256 KiB.");
-    const file2 = harnessProfilesPath(env), dir = path5.dirname(file2);
-    await mkdir(dir, { recursive: true, mode: 448 });
+    const file2 = harnessProfilesPath(env), dir = path7.dirname(file2);
+    await mkdir2(dir, { recursive: true, mode: 448 });
     if (lstatSync2(dir).isSymbolicLink()) throw fail("Harness configuration directory cannot be a symbolic link.");
-    const temp = path5.join(dir, `.harnesses-${randomUUID()}.tmp`);
+    const temp = path7.join(dir, `.harnesses-${randomUUID3()}.tmp`);
     try {
-      await writeFile(temp, serialized, { mode: 384, flag: "wx" });
-      await rename(temp, file2);
-      await chmod(file2, 384);
+      await writeFile2(temp, serialized, { mode: 384, flag: "wx" });
+      await rename2(temp, file2);
+      await chmod2(file2, 384);
     } finally {
-      await rm3(temp, { force: true });
+      await rm5(temp, { force: true });
     }
     return next;
   });
@@ -5315,7 +6422,7 @@ async function findExecutableOnPath(aliases2, options = {}) {
   const pathValue = options.path ?? process.env.PATH ?? "";
   const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
   const check2 = options.executableCheck ?? defaultExecutableCheck;
-  const pathApi = platform === "win32" ? path6.win32 : path6.posix;
+  const pathApi = platform === "win32" ? path8.win32 : path8.posix;
   const directories = pathValue.split(platform === "win32" ? ";" : ":").filter(Boolean);
   for (const alias of aliases2) {
     if (pathApi.basename(alias) !== alias || alias === "." || alias === "..") continue;
@@ -5337,7 +6444,7 @@ async function detectSubscriptionCli(id3, options = {}) {
     const selected = await selectCodexExecutable(options);
     return selected ? { id: id3, backendId: definition.backendId, installed: true, ...selected } : { id: id3, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   }
-  const explicit = harness?.custom && path6.isAbsolute(harness.command) ? harness.command : void 0;
+  const explicit = harness?.custom && path8.isAbsolute(harness.command) ? harness.command : void 0;
   const windowsCursor = id3 === "cursor-agent" && (options.platform ?? process.platform) === "win32";
   const cursorPath = (options.path ?? process.env.PATH ?? "").split(";").filter((directory) => /^(?:[a-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/i.test(directory)).join(";");
   const workspace = windowsCursor && !options.executableCheck ? await currentWorkspaceRoot() : void 0;
@@ -5347,7 +6454,7 @@ async function detectSubscriptionCli(id3, options = {}) {
     pathExt: ".EXE;.COM;.CMD",
     executableCheck: options.executableCheck ?? (async (candidate) => {
       try {
-        if (workspace && (inside(workspace, candidate) || inside(workspace, await realpath4(candidate)))) return false;
+        if (workspace && (inside(workspace, candidate) || inside(workspace, await realpath6(candidate)))) return false;
         return (await stat(candidate)).isFile() && await defaultExecutableCheck(candidate);
       } catch {
         return false;
@@ -5355,10 +6462,10 @@ async function detectSubscriptionCli(id3, options = {}) {
     })
   } : options;
   let match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit) ? { executable: explicit, alias: explicit } : await findExecutableOnPath(definition.aliases, search);
-  if (windowsCursor && match?.executable.toLowerCase().endsWith(".cmd") && !isOfficialWindowsCursorShim(match.executable, process.env.LOCALAPPDATA, path6.win32)) {
+  if (windowsCursor && match?.executable.toLowerCase().endsWith(".cmd") && !isOfficialWindowsCursorShim(match.executable, process.env.LOCALAPPDATA, path8.win32)) {
     const verified = await findExecutableOnPath(definition.aliases, {
       ...search,
-      executableCheck: async (candidate) => isOfficialWindowsCursorShim(candidate, process.env.LOCALAPPDATA, path6.win32) && Boolean(await search.executableCheck?.(candidate))
+      executableCheck: async (candidate) => isOfficialWindowsCursorShim(candidate, process.env.LOCALAPPDATA, path8.win32) && Boolean(await search.executableCheck?.(candidate))
     });
     match = verified ?? match;
   }
@@ -5608,7 +6715,7 @@ function buildCursorDynamicArgs(input2) {
   const args = [];
   if (input2.enableWorkspaceTrust) args.push("--trust");
   if (input2.model) args.push("--model", input2.model);
-  const workspace = input2.cwd ?? (input2.promptPath ? path7.dirname(input2.promptPath) : void 0);
+  const workspace = input2.cwd ?? (input2.promptPath ? path9.dirname(input2.promptPath) : void 0);
   if (workspace) args.push("--workspace", workspace);
   assertArgsSafe(args, { allowScopedTrust: input2.enableWorkspaceTrust === true });
   return Object.freeze(args);
@@ -5764,462 +6871,213 @@ function getSubscriptionCliAdapter(backendId) {
   return ADAPTERS.get(backendId);
 }
 
-// ../local-runner/src/sidecar/runtime.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-
-// ../local-runner/src/speech/runtime.ts
-import { spawn as spawn2 } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod as chmod2, lstat as lstat4, mkdir as mkdir2, mkdtemp as mkdtemp3, open, readFile, rename as rename2, rm as rm4, statfs, writeFile as writeFile2 } from "node:fs/promises";
-import os2 from "node:os";
-import path8 from "node:path";
-import { inflateRawSync } from "node:zlib";
-
-// ../local-runner/src/speech/catalog.ts
-var SPEECH_MODELS = [
-  { id: "tiny", label: "Tiny", description: "Fastest, lower accuracy", bytes: 77691713 },
-  { id: "base", label: "Base", description: "Balanced speed and accuracy", bytes: 147951465 },
-  { id: "small", label: "Small", description: "Higher accuracy, more processing", bytes: 487601967 }
-];
-var SPEECH_LANGUAGES = [
-  { id: "auto", label: "Detect automatically" },
-  { id: "ru", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" },
-  { id: "en", label: "English" },
-  { id: "kk", label: "\u049A\u0430\u0437\u0430\u049B\u0448\u0430" },
-  { id: "de", label: "Deutsch" },
-  { id: "fr", label: "Fran\xE7ais" },
-  { id: "es", label: "Espa\xF1ol" },
-  { id: "zh", label: "\u4E2D\u6587" }
-];
-var SPEECH_SAMPLE_RATE = 16e3;
-var SPEECH_MAX_SECONDS = 12;
-var SPEECH_MAX_AUDIO_BYTES = 44 + SPEECH_SAMPLE_RATE * SPEECH_MAX_SECONDS * 2;
-function isSpeechModelId(value) {
-  return SPEECH_MODELS.some((model2) => model2.id === value);
-}
-function isSpeechLanguage(value) {
-  return SPEECH_LANGUAGES.some((language) => language.id === value);
-}
-
-// ../local-runner/src/speech/audio.ts
-function pcmWave(samples) {
-  const bytes2 = new Uint8Array(44 + samples.length * 2);
-  const view = new DataView(bytes2.buffer);
-  const ascii = (offset, text2) => {
-    for (let i = 0; i < text2.length; i++) bytes2[offset + i] = text2.charCodeAt(i);
-  };
-  ascii(0, "RIFF");
-  view.setUint32(4, bytes2.length - 8, true);
-  ascii(8, "WAVE");
-  ascii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, SPEECH_SAMPLE_RATE, true);
-  view.setUint32(28, SPEECH_SAMPLE_RATE * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  ascii(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    const sample = Math.max(-1, Math.min(1, samples[i] ?? 0));
-    view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+// ../model-bridge/src/local-inference-queue.ts
+var LocalInferenceQueueFullError = class extends Error {
+  code = "LOCAL_INFERENCE_QUEUE_FULL";
+  statusCode = 429;
+  constructor() {
+    super("The local inference queue is full. Wait for the active request or cancel a queued request.");
   }
-  return bytes2;
-}
-
-// ../local-runner/src/speech/notices.ts
-var SPEECH_LICENSE_NOTICES = `Local voice input: whisper.cpp and Whisper model weights
-
-whisper.cpp: Copyright (c) 2023-2024 The ggml authors
-Whisper model weights: Copyright (c) 2022 OpenAI
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Native build provenance:
-Apple silicon: https://github.com/OpenWhispr/whisper.cpp/releases/tag/0.0.10
-Intel Mac / Windows x64: https://github.com/sjoerdteunisse/whisper.cpp/releases/tag/v1.0.0
-Weights: https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1
-`;
-
-// ../local-runner/src/speech/runtime.ts
-var MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
-var MODEL_HASHES = {
-  tiny: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
-  base: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-  small: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
 };
-var ENGINE_RELEASE = "https://github.com/sjoerdteunisse/whisper.cpp/releases/download/v1.0.0/";
-var ENGINES = {
-  "darwin-arm64": { file: "whisper-cpp-darwin-arm64", bytes: 1215153, sha256: "7a2f420abef4313f49332f58c2c69bff5f65c37ad932d1fb09f7d95ffec45989", binarySha256: "ebc3c2a1d7d706bd3367c81a2d70ff1d0201576af7ada17516d9398e6e787656", downloadUrl: "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.10/whisper-cpp-darwin-arm64.zip" },
-  "darwin-x64": { file: "whisper-cpp-darwin-x64", bytes: 1131934, sha256: "f0f2ab6c2e92b7022ac02f0759a7a38f3ea110764e00b05a6f0d6c1dcadd571c", binarySha256: "4d7ffa39b71ab9847f519f61d1baddfeddd6c83a445ff87add54857cc41fbe18" },
-  "win32-x64": { file: "whisper-cpp-win32-x64-cpu.exe", bytes: 718766, sha256: "80f6b6481794825f65043001e408e70aea4257918b15906b7e070d2c7b205da5", binarySha256: "31ceb2a375f19c993ce52bf29b34c68449adac9b54cf0c840a16ac6fb24df262" }
-};
-var SpeechError = class extends Error {
-  constructor(message, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
+var LocalInferenceQueue = class {
+  constructor(maxWaiting = 4) {
+    this.maxWaiting = maxWaiting;
+    if (!Number.isSafeInteger(maxWaiting) || maxWaiting < 0) throw new RangeError("Invalid local inference queue bound.");
   }
-  statusCode;
-};
-function parseSpeechRequest(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new SpeechError("Invalid voice input request.");
-  const body = value;
-  const keys = {
-    status: ["operation"],
-    install: ["operation", "modelId", "confirmed"],
-    cancel_install: ["operation"],
-    transcribe: ["operation", "modelId", "language", "audioBase64", "jobId"],
-    result: ["operation", "jobId"],
-    cancel: ["operation", "jobId"]
-  };
-  const allowed = typeof body.operation === "string" && Object.hasOwn(keys, body.operation) ? keys[body.operation] : void 0;
-  if (!allowed || Object.keys(body).some((key2) => !allowed.includes(key2))) throw new SpeechError("Unsupported voice input operation or field.");
-  if (body.operation === "install" || body.operation === "transcribe") {
-    if (!isSpeechModelId(body.modelId)) throw new SpeechError("Choose a supported speech model.");
-  }
-  if (body.operation === "install" && body.confirmed !== true) throw new SpeechError("Confirm the speech model download first.");
-  if (body.operation === "transcribe" || body.operation === "result" || body.operation === "cancel") {
-    if (typeof body.jobId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.jobId)) {
-      throw new SpeechError("Invalid transcription identifier.");
-    }
-  }
-  if (body.operation === "transcribe") {
-    if (!isSpeechLanguage(body.language)) throw new SpeechError("Choose a supported dictation language.");
-    if (typeof body.audioBase64 !== "string" || body.audioBase64.length > Math.ceil(SPEECH_MAX_AUDIO_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audioBase64)) {
-      throw new SpeechError("The audio fragment is invalid or too large.");
-    }
-  }
-  return body;
-}
-function speechDirectory() {
-  if (process.env.VDT_SPEECH_DATA_DIR) return path8.resolve(process.env.VDT_SPEECH_DATA_DIR);
-  const base = process.platform === "darwin" ? path8.join(os2.homedir(), "Library", "Application Support") : process.env.LOCALAPPDATA || path8.join(os2.homedir(), "AppData", "Local");
-  return path8.join(base, "VDT Studio", "speech");
-}
-var SpeechRuntime = class {
-  directory;
-  #engine;
-  #fetcher;
-  #recognize;
-  #installation = { state: "idle", downloadedBytes: 0, totalBytes: 0 };
-  #installController;
-  #jobs = /* @__PURE__ */ new Map();
-  #recognizing = false;
-  #verified = /* @__PURE__ */ new Map();
-  constructor(options = {}) {
-    this.directory = options.directory ?? speechDirectory();
-    this.#engine = ENGINES[`${options.platform ?? process.platform}-${options.arch ?? process.arch}`];
-    this.#fetcher = options.fetcher ?? fetch;
-    this.#recognize = options.recognize;
-  }
-  async request(input2) {
-    const request = parseSpeechRequest(input2);
-    if (request.operation === "status") return this.status();
-    if (!this.#engine) throw new SpeechError("Local voice input supports macOS (Apple silicon / Intel) and Windows x64.");
-    if (request.operation === "install") return this.install(request.modelId);
-    if (request.operation === "cancel_install") {
-      this.#installController?.abort();
-      return this.status();
-    }
-    if (request.operation === "transcribe") return this.transcribe(request);
-    const job = this.#jobs.get(request.jobId);
-    if (!job) throw new SpeechError("This transcription has expired. Start dictation again.", 404);
-    job.updated = Date.now();
-    if (request.operation === "cancel") {
-      job.controller.abort();
-      job.result = { state: "cancelled" };
-    }
-    return job.result;
-  }
-  async status() {
-    const engineReady = Boolean(this.#engine && await this.verifiedFile(this.enginePath(), this.#engine.binarySha256));
-    const installed = await Promise.all(SPEECH_MODELS.map(async (model2) => await this.verifiedFile(this.modelPath(model2.id), MODEL_HASHES[model2.id], model2.bytes) ? model2.id : void 0));
-    return {
-      supported: Boolean(this.#engine),
-      engineReady,
-      installedModels: installed.filter((id3) => Boolean(id3)),
-      installation: { ...this.#installation },
-      ...!this.#engine ? { message: "Local voice input supports macOS (Apple silicon / Intel) and Windows x64." } : {}
-    };
-  }
-  modelPath(id3) {
-    return path8.join(this.directory, `ggml-${id3}.bin`);
-  }
-  enginePath() {
-    return path8.join(this.directory, this.#engine?.file ?? "unavailable");
-  }
-  async verifiedFile(file2, digest, size) {
-    if (!/^[a-f0-9]{64}$/.test(digest)) return false;
-    try {
-      const stat3 = await lstat4(file2);
-      if (!stat3.isFile() || stat3.isSymbolicLink() || size !== void 0 && stat3.size !== size) return false;
-      const cached2 = this.#verified.get(file2);
-      if (cached2?.size === stat3.size && cached2.mtime === stat3.mtimeMs) return true;
-      const hash3 = createHash2("sha256");
-      for await (const chunk of createReadStream(file2)) hash3.update(chunk);
-      if (hash3.digest("hex") !== digest) return false;
-      this.#verified.set(file2, { size: stat3.size, mtime: stat3.mtimeMs });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  async install(modelId) {
-    if (this.#installController) throw new SpeechError("A speech model download is already in progress.", 409);
-    const controller = new AbortController();
-    this.#installController = controller;
-    try {
-      await mkdir2(this.directory, { recursive: true, mode: 448 });
-      if ((await lstat4(this.directory)).isSymbolicLink()) throw new SpeechError("The voice input directory must not be a symbolic link.");
-      const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
-      const disk = await statfs(this.directory);
-      if (disk.bavail * disk.bsize < model2.bytes * 2 + 256 * 1024 * 1024) throw new SpeechError("Free at least 1.5 GB of disk space before installing a speech model.");
-      const status = await this.status();
-      if (status.engineReady && status.installedModels.includes(modelId) && this.#installation.state === "ready") {
-        this.#installController = void 0;
-        return status;
-      }
-      this.#installation = { state: "downloading", phase: "engine", modelId, downloadedBytes: 0, totalBytes: model2.bytes + this.#engine.bytes };
-      void this.performInstall(modelId, status, controller).finally(() => {
-        this.#installController = void 0;
-      });
-      return this.status();
-    } catch (error63) {
-      this.#installController = void 0;
-      throw error63;
-    }
-  }
-  async performInstall(modelId, initial, controller) {
-    const engine = this.#engine;
-    let staging;
-    try {
-      staging = await mkdtemp3(path8.join(this.directory, ".install-"));
-      if (!initial.engineReady) {
-        const archive = path8.join(staging, "engine.zip");
-        const asset = engine.file.replace(/\.exe$/, "");
-        await this.download("downloadUrl" in engine ? engine.downloadUrl : `${ENGINE_RELEASE}${asset}.zip`, archive, engine.bytes, engine.sha256, controller.signal);
-        const binary = extractPinnedExecutable(await readFile(archive), engine.file);
-        const target = path8.join(staging, engine.file);
-        await writeFile2(target, binary, { flag: "wx", mode: 448 });
-        await chmod2(target, 448);
-        if (createHash2("sha256").update(binary).digest("hex") !== engine.binarySha256) throw new SpeechError("Speech engine verification failed.");
-        controller.signal.throwIfAborted();
-        await rename2(target, this.enginePath());
-      }
-      this.#installation.phase = "model";
-      if (!initial.installedModels.includes(modelId)) {
-        const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
-        const target = path8.join(staging, "model.bin");
-        await this.download(`https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-${modelId}.bin`, target, model2.bytes, MODEL_HASHES[modelId], controller.signal);
-        controller.signal.throwIfAborted();
-        await rename2(target, this.modelPath(modelId));
-      }
-      this.#installation = { ...this.#installation, state: "verifying", downloadedBytes: this.#installation.totalBytes };
-      await this.recognize(this.modelPath(modelId), pcmWave(new Float32Array(SPEECH_SAMPLE_RATE)), "en", controller.signal);
-      await writeFile2(path8.join(this.directory, "LICENSES.txt"), SPEECH_LICENSE_NOTICES, { mode: 384 });
-      this.#installation = { ...this.#installation, state: "ready" };
-    } catch (error63) {
-      this.#installation = {
-        ...this.#installation,
-        state: controller.signal.aborted ? "cancelled" : "error",
-        ...controller.signal.aborted ? {} : { error: error63 instanceof SpeechError ? error63.message : "The download could not be completed. Check your connection and try again." }
+  maxWaiting;
+  active = false;
+  waiting = [];
+  acquire(signal) {
+    signal?.throwIfAborted();
+    if (this.active && this.waiting.length >= this.maxWaiting) throw new LocalInferenceQueueFullError();
+    const started = performance.now();
+    const pendingAhead = this.waiting.length + Number(this.active);
+    return new Promise((resolve, reject) => {
+      const abandon = () => {
+        const index = this.waiting.indexOf(waiter);
+        if (index >= 0) this.waiting.splice(index, 1);
+        reject(signal?.reason);
       };
-    } finally {
-      if (staging) await rm4(staging, { recursive: true, force: true }).catch(() => void 0);
-    }
-  }
-  async download(url2, file2, expectedBytes, digest, signal) {
-    const timeout = AbortSignal.timeout(15 * 6e4);
-    const combined = AbortSignal.any([signal, timeout]);
-    let response;
-    for (let redirects = 0; redirects < 8; redirects++) {
-      const target = new URL(url2);
-      if (target.protocol !== "https:" || !allowedDownloadHost(target.hostname)) throw new SpeechError("The model download returned an unsupported destination.");
-      response = await this.#fetcher(target, { signal: combined, redirect: "manual" });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        await response.body?.cancel();
-        if (!location) throw new SpeechError("The model download could not be opened.");
-        url2 = new URL(location, target).href;
-      } else break;
-    }
-    if (!response?.ok || !response.body) throw new SpeechError("The download is unavailable. Check your connection and try again.");
-    const output2 = await open(file2, "wx", 384);
-    const hash3 = createHash2("sha256");
-    let bytes2 = 0;
-    try {
-      const reader = response.body.getReader();
-      for (; ; ) {
-        combined.throwIfAborted();
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes2 += value.byteLength;
-        if (bytes2 > expectedBytes) {
-          await reader.cancel();
-          throw new SpeechError("The downloaded file has an unexpected size.");
-        }
-        hash3.update(value);
-        await output2.writeFile(value);
-        this.#installation.downloadedBytes += value.byteLength;
+      const waiter = { admit: () => {
+        signal?.removeEventListener("abort", abandon);
+        this.active = true;
+        let settled = false;
+        resolve({
+          admission: { waitMs: performance.now() - started, pendingAhead },
+          release: () => {
+            if (settled) return;
+            settled = true;
+            this.active = false;
+            this.waiting.shift()?.admit();
+          }
+        });
+      } };
+      if (!this.active) waiter.admit();
+      else {
+        this.waiting.push(waiter);
+        signal?.addEventListener("abort", abandon, { once: true });
       }
-      this.#installation.state = "verifying";
-      if (bytes2 !== expectedBytes || hash3.digest("hex") !== digest) throw new SpeechError("Download verification failed. Please retry.");
-      this.#installation.state = "downloading";
-    } finally {
-      await output2.close();
-    }
-  }
-  async transcribe(request) {
-    for (const [id3, job2] of this.#jobs) if (Date.now() - job2.updated > 12e4 && job2.result.state !== "processing") this.#jobs.delete(id3);
-    if (this.#jobs.has(request.jobId)) throw new SpeechError("This transcription identifier is already in use.", 409);
-    if (this.#recognizing) throw new SpeechError("Voice recognition is busy. Try again in a moment.", 409);
-    if (this.#jobs.size >= 100) throw new SpeechError("Too many transcription requests. Try again shortly.", 429);
-    const wav = Buffer.from(request.audioBase64, "base64");
-    validateSpeechWave(wav);
-    const job = { result: { state: "processing" }, controller: new AbortController(), updated: Date.now() };
-    this.#recognizing = true;
-    this.#jobs.set(request.jobId, job);
-    try {
-      const status = await this.status();
-      if (!status.engineReady || !status.installedModels.includes(request.modelId)) throw new SpeechError("Download the selected speech model in Settings \u2192 Voice input first.", 409);
-    } catch (error63) {
-      this.#recognizing = false;
-      this.#jobs.delete(request.jobId);
-      throw error63;
-    }
-    const recognize = this.#recognize ?? this.recognize.bind(this);
-    void Promise.resolve().then(() => recognize(this.modelPath(request.modelId), wav, request.language, job.controller.signal)).then((text2) => {
-      if (!job.controller.signal.aborted) job.result = { state: "complete", text: text2.trim().slice(0, 2e4) };
-    }).catch((error63) => {
-      job.result = job.controller.signal.aborted ? { state: "cancelled" } : { state: "error", error: error63 instanceof SpeechError ? error63.message : "Recognition failed. Try a shorter phrase or a smaller model." };
-    }).finally(() => {
-      this.#recognizing = false;
-      job.updated = Date.now();
     });
-    return { state: "processing" };
   }
-  async recognize(model2, wav, language, signal) {
-    const directory = await mkdtemp3(path8.join(os2.tmpdir(), "vdt-speech-audio-"));
+  async fetch(dispatch, signal) {
+    const { release, admission } = await this.acquire(signal);
     try {
-      const input2 = path8.join(directory, "input.wav");
-      await writeFile2(input2, wav, { flag: "wx", mode: 384 });
-      const output2 = await runWhisper(this.enginePath(), ["-m", model2, "-f", input2, "-l", language, "-nt", "-np", "-t", "4", "-bs", "1", "-bo", "1", "-ng"], directory, signal);
-      return output2.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
-    } finally {
-      await rm4(directory, { recursive: true, force: true });
+      signal?.throwIfAborted();
+      const response = await dispatch(admission);
+      if (!response.body) {
+        release();
+        signal?.throwIfAborted();
+        return response;
+      }
+      return responseWithLease(response, release, signal);
+    } catch (error63) {
+      release();
+      throw error63;
     }
   }
 };
-function allowedDownloadHost(host) {
-  return ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "huggingface.co"].includes(host) || host.endsWith(".huggingface.co") || host.endsWith(".hf.co");
-}
-function extractPinnedExecutable(zip, expectedName) {
-  let end = -1;
-  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65557); i--) if (zip.readUInt32LE(i) === 101010256) {
-    end = i;
-    break;
+function responseWithLease(response, release, signal) {
+  const reader = response.body.getReader();
+  let cancellation;
+  function finish() {
+    signal?.removeEventListener("abort", abort);
+    release();
   }
-  if (end < 0 || zip.readUInt16LE(end + 10) !== 1) throw new SpeechError("The speech engine archive is invalid.");
-  const central = zip.readUInt32LE(end + 16);
-  if (central + 46 > zip.length || zip.readUInt32LE(central) !== 33639248) throw new SpeechError("The speech engine archive is invalid.");
-  const name = zip.subarray(central + 46, central + 46 + zip.readUInt16LE(central + 28)).toString("utf8");
-  const mode = zip.readUInt32LE(central + 38) >>> 16;
-  if (name !== expectedName || (mode & 61440) === 40960) throw new SpeechError("The speech engine archive contains unexpected files.");
-  const length = zip.readUInt32LE(central + 24);
-  const compressed = zip.readUInt32LE(central + 20);
-  const local = zip.readUInt32LE(central + 42);
-  if (length > 32 * 1024 * 1024 || local + 30 > zip.length || zip.readUInt32LE(local) !== 67324752) throw new SpeechError("The speech engine archive exceeds its limits.");
-  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
-  if (start + compressed > central) throw new SpeechError("The speech engine archive is truncated.");
-  const data = zip.subarray(start, start + compressed);
-  const method = zip.readUInt16LE(central + 10);
-  const binary = method === 0 ? data : method === 8 ? inflateRawSync(data, { maxOutputLength: length }) : void 0;
-  if (!binary || binary.length !== length) throw new SpeechError("The speech engine archive could not be unpacked.");
-  return binary;
-}
-function validateSpeechWave(wav) {
-  if (wav.length < 44 || wav.length > SPEECH_MAX_AUDIO_BYTES || wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE" || wav.toString("ascii", 12, 16) !== "fmt " || wav.readUInt32LE(16) !== 16 || wav.readUInt16LE(20) !== 1 || wav.readUInt16LE(22) !== 1 || wav.readUInt32LE(24) !== SPEECH_SAMPLE_RATE || wav.readUInt32LE(28) !== SPEECH_SAMPLE_RATE * 2 || wav.readUInt16LE(32) !== 2 || wav.readUInt16LE(34) !== 16 || wav.toString("ascii", 36, 40) !== "data" || wav.readUInt32LE(40) !== wav.length - 44 || wav.readUInt32LE(4) !== wav.length - 8 || wav.length % 2 !== 0) {
-    throw new SpeechError("Voice input requires a bounded 16 kHz mono PCM audio fragment.");
+  function cancel(reason) {
+    cancellation ??= reader.cancel(reason).finally(finish);
+    return cancellation;
   }
+  let controller;
+  function abort() {
+    controller.error(signal?.reason);
+    void cancel(signal?.reason).catch(() => void 0);
+  }
+  return new Response(new ReadableStream({
+    start(value) {
+      controller = value;
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    },
+    async pull(output2) {
+      try {
+        const { value, done } = await reader.read();
+        if (cancellation) return;
+        if (done) {
+          output2.close();
+          finish();
+        } else output2.enqueue(value);
+      } catch (error63) {
+        if (cancellation) return;
+        output2.error(error63);
+        finish();
+      }
+    },
+    cancel
+  }), { status: response.status, statusText: response.statusText, headers: response.headers });
 }
-function runWhisper(binary, args, cwd, signal) {
-  return new Promise((resolve, reject) => {
-    signal.throwIfAborted();
-    const environment = { ...process.env, GGML_METAL_DEVICES: "0" };
-    delete environment.GGML_BACKEND_PATH;
-    const child = spawn2(binary, args, { cwd, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, shell: false });
-    let output2 = "";
-    let size = 0;
-    let failed = false;
-    let killTimer;
-    const stop = () => {
-      failed = true;
-      child.kill();
-      killTimer ??= setTimeout(() => child.kill("SIGKILL"), 2e3);
+
+// ../model-bridge/src/local-execution-http.ts
+var LocalHttpRouteError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+  statusCode = 422;
+};
+function parseLocalHttpSelection(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  if (Object.keys(value).length !== 2 || !("profileVersion" in value && Object.hasOwn(value, "profileVersion")) || !("modelRevision" in value && Object.hasOwn(value, "modelRevision"))) return void 0;
+  const { profileVersion, modelRevision } = value;
+  if (typeof profileVersion !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,159}$/.test(profileVersion) || typeof modelRevision !== "string" || !/^sha256:[a-f0-9]{64}$/.test(modelRevision)) return void 0;
+  return { profileVersion, modelRevision };
+}
+function assertLocalHttpTarget(baseUrl, model2) {
+  const url2 = URL.parse(baseUrl);
+  if (!url2 || !/^https?:\/\/(?:127\.0\.0\.1|\[::1\])(?::[0-9]+)?(?:\/|$)/.test(baseUrl) || url2.username || url2.password || url2.search || url2.hash || !["/", "/v1", "/v1/"].includes(url2.pathname)) {
+    throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "Choose a host-configured loopback model endpoint.");
+  }
+  if (model2 !== void 0 && (!/^[a-zA-Z0-9_][a-zA-Z0-9_./:-]{0,159}$/.test(model2) || /(?:^|[/:._-])cloud(?:$|[/:._-])/i.test(model2) || model2.includes("://"))) {
+    throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The selected model uses an invalid identifier or a cloud alias.");
+  }
+  return url2;
+}
+var runtimeQueueKey = /* @__PURE__ */ Symbol.for("vdt-studio.owned-local-inference-queue");
+var runtime = globalThis;
+var ownedInferenceQueue = runtime[runtimeQueueKey] ??= new LocalInferenceQueue(4);
+function resolveLocalHttpFetch(target, selection, resolve) {
+  const url2 = assertLocalHttpTarget(target.baseUrl, target.model);
+  const pin = parseLocalHttpSelection(selection);
+  const identity = Object.freeze({ ...target });
+  function ownedRoute() {
+    const proof = pin && resolve?.(identity, Object.freeze(pin));
+    if (!proof || proof.backendId !== identity.backendId || proof.baseUrl !== identity.baseUrl || proof.model !== identity.model || proof.task !== identity.task || proof.profileVersion !== pin?.profileVersion || proof.modelRevision !== pin?.modelRevision || typeof proof.fetch !== "function") {
+      throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "The host cannot verify this model revision and its offline runtime. Refresh the model or choose another execution route.");
+    }
+    if (proof.ollamaKeepAliveMinutes !== void 0 && (identity.backendId !== "ollama" || ![5, 15, 30].includes(proof.ollamaKeepAliveMinutes))) {
+      throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The local runtime residency policy is unsupported.");
+    }
+    return proof;
+  }
+  const admittedResidency = ownedRoute().ollamaKeepAliveMinutes;
+  return async (input2, init) => {
+    const endpoint = typeof input2 === "string" ? URL.parse(input2) : void 0;
+    const native = identity.backendId === "ollama" && (endpoint?.pathname === "/api/chat" || endpoint?.pathname === "/api/show");
+    const compatible2 = endpoint?.pathname === (url2.pathname === "/" ? "" : "/v1") + "/chat/completions";
+    const metadata = endpoint?.pathname === (url2.pathname === "/" ? "" : "/v1") + "/models/" + encodeURIComponent(identity.model);
+    let wire;
+    if (typeof init?.body === "string") {
+      try {
+        wire = JSON.parse(init.body);
+      } catch {
+      }
+    }
+    if (!endpoint || endpoint.origin !== url2.origin || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || new Headers(init?.headers).has("authorization") || !((native || compatible2) && init?.method === "POST" && wire?.model === identity.model || metadata && init?.method === "GET" && init.body == null)) {
+      throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The local request does not match the host-admitted endpoint and model.");
+    }
+    const nativeChat = identity.backendId === "ollama" && endpoint.pathname === "/api/chat";
+    const isInference = nativeChat || compatible2;
+    if (wire && Object.hasOwn(wire, "keep_alive")) {
+      throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "Choose Ollama residency in the host-owned connection.");
+    }
+    const dispatch = async (admission) => {
+      init?.signal?.throwIfAborted();
+      const route = ownedRoute();
+      if (route.ollamaKeepAliveMinutes !== admittedResidency) {
+        throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "The local runtime residency policy changed while waiting. Refresh the connection.");
+      }
+      if (admission) {
+        try {
+          route.onInferenceAdmission?.(admission);
+        } catch {
+        }
+      }
+      const body = nativeChat && admittedResidency !== void 0 ? JSON.stringify({ ...wire, keep_alive: `${admittedResidency}m` }) : init?.body;
+      const response = await route.fetch(input2, { ...init, ...body !== void 0 ? { body } : {}, redirect: "error" });
+      if (response.redirected || response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => void 0);
+        throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The local model endpoint returned a redirect.");
+      }
+      return response;
     };
-    const timer = setTimeout(stop, 45e3);
-    signal.addEventListener("abort", stop, { once: true });
-    child.stdout.on("data", (data) => {
-      size += data.length;
-      if (size > 128 * 1024) stop();
-      else output2 += data.toString("utf8");
-    });
-    child.stderr.on("data", (data) => {
-      size += data.length;
-      if (size > 128 * 1024) stop();
-    });
-    child.once("error", () => {
-      failed = true;
-    });
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      clearTimeout(killTimer);
-      signal.removeEventListener("abort", stop);
-      if (failed || code !== 0) reject(new SpeechError("Local recognition failed. Try the Tiny model or restart dictation."));
-      else resolve(output2);
-    });
-  });
+    return isInference ? ownedInferenceQueue.fetch(dispatch, init?.signal) : dispatch();
+  };
 }
-var globalSpeech = globalThis;
-function getSpeechRuntime() {
-  if (globalSpeech.__vdtSpeechRuntimeRevision !== 3) {
-    globalSpeech.__vdtSpeechRuntime = new SpeechRuntime();
-    globalSpeech.__vdtSpeechRuntimeRevision = 3;
-  }
-  return globalSpeech.__vdtSpeechRuntime ??= new SpeechRuntime();
-}
+
+// ../local-runner/src/sidecar/runtime.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
 
 // ../model-bridge/src/harness/rpc-session.ts
-import { spawn as spawn3 } from "node:child_process";
-import { chmod as chmod3, mkdtemp as mkdtemp4, realpath as realpath5, rm as rm5, writeFile as writeFile3 } from "node:fs/promises";
+import { spawn as spawn4 } from "node:child_process";
+import { chmod as chmod3, mkdtemp as mkdtemp5, realpath as realpath7, rm as rm6, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import path10 from "node:path";
-import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import path11 from "node:path";
+import { createHash as createHash4, randomUUID as randomUUID4 } from "node:crypto";
 
 // ../model-bridge/src/harness/credential-metadata.ts
 import { execFileSync } from "node:child_process";
 import { realpathSync as realpathSync2, statSync } from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 var unavailable = () => Object.assign(new Error("Vibe credential-store changes cannot be verified on this host. Use an explicitly verified environment/.env credential source, or an inspectable macOS keychain, then rescan."), { code: "CREDENTIAL_IDENTITY_UNVERIFIED" });
 function credentialFileMetadata(file2) {
   try {
@@ -6245,7 +7103,7 @@ function vibeKeyringMetadata(env, options = {}) {
   } catch {
     throw unavailable();
   }
-  if (search.length === 0 || search.length > 32 || search.some((file2) => typeof file2 !== "string" || !path9.isAbsolute(file2) || file2.length > 4096 || /[\x00-\x1f]/.test(file2))) throw unavailable();
+  if (search.length === 0 || search.length > 32 || search.some((file2) => typeof file2 !== "string" || !path10.isAbsolute(file2) || file2.length > 4096 || /[\x00-\x1f]/.test(file2))) throw unavailable();
   const encryptedFileMetadata = (filename, required2) => {
     try {
       const canonical = realpathSync2(filename), s = statSync(canonical);
@@ -6270,8 +7128,8 @@ var credentialRootVariables = Object.freeze({
   kilo: ["KILO_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
 });
 function resolveCredentialRoot(value, env) {
-  const expanded = value === "~" ? env.HOME ?? value : value.startsWith("~/") ? path9.join(env.HOME ?? "", value.slice(2)) : value;
-  return path9.resolve(expanded);
+  const expanded = value === "~" ? env.HOME ?? value : value.startsWith("~/") ? path10.join(env.HOME ?? "", value.slice(2)) : value;
+  return path10.resolve(expanded);
 }
 
 // ../model-bridge/src/harness/rpc-session.ts
@@ -6312,7 +7170,7 @@ var HarnessRpcSession = class {
   async open(signal, existingSessionId) {
     signal.throwIfAborted();
     const js = /\.[cm]?js$/.test(this.options.executable);
-    this.child = spawn3(js ? process.execPath : this.options.executable, js ? [this.options.executable, ...this.definition.args] : [...this.definition.args], {
+    this.child = spawn4(js ? process.execPath : this.options.executable, js ? [this.options.executable, ...this.definition.args] : [...this.definition.args], {
       cwd: this.options.cwd,
       env: this.options.environment,
       shell: false,
@@ -6699,10 +7557,10 @@ function createHarnessSession(h, options) {
   return new HarnessRpcSession(h, options);
 }
 async function resolveHarnessExecutable(h, env = process.env) {
-  const selected = path10.isAbsolute(h.command) ? h.command : (await findExecutableOnPath([h.command], env.PATH ? { path: env.PATH } : {}))?.executable;
+  const selected = path11.isAbsolute(h.command) ? h.command : (await findExecutableOnPath([h.command], env.PATH ? { path: env.PATH } : {}))?.executable;
   if (!selected) throw fail2("BACKEND_NOT_INSTALLED", "The selected harness executable was not found.");
-  const executable = await realpath5(selected);
-  if (!path10.isAbsolute(executable) || executable === path10.parse(executable).root) throw fail2("UNSAFE_EXECUTABLE", "The harness executable must resolve to an absolute file.");
+  const executable = await realpath7(selected);
+  if (!path11.isAbsolute(executable) || executable === path11.parse(executable).root) throw fail2("UNSAFE_EXECUTABLE", "The harness executable must resolve to an absolute file.");
   return executable;
 }
 function harnessEnvironment(h, env = process.env) {
@@ -6729,7 +7587,7 @@ async function withHarnessSession(h, signal, use, options = {}) {
   signal.throwIfAborted();
   const executable = options.executable ?? await resolveHarnessExecutable(h, options.env);
   const environment = harnessEnvironment(h, options.env);
-  const cwd = await mkdtemp4(path10.join(tmpdir2(), "vdt-harness-"));
+  const cwd = await mkdtemp5(path11.join(tmpdir2(), "vdt-harness-"));
   await chmod3(cwd, 448);
   const session = createHarnessSession(h, { executable, cwd, environment, ...options.maxBytes ? { maxBytes: options.maxBytes } : {} });
   let retained = false;
@@ -6745,11 +7603,11 @@ async function withHarnessSession(h, signal, use, options = {}) {
       await session.close();
     } catch (e) {
       retained = true;
-      await writeFile3(path10.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed", observedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 }).catch(() => {
+      await writeFile3(path11.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed", observedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 }).catch(() => {
       });
       throw Object.assign(e, { retainedDirectory: cwd });
     } finally {
-      if (!retained) await rm5(cwd, { recursive: true, force: true });
+      if (!retained) await rm6(cwd, { recursive: true, force: true });
     }
   }
 }
@@ -6757,14 +7615,14 @@ async function probeHarnessModels(h, signal, env = process.env) {
   return withHarnessSession(h, signal, async (session) => session.models(), { env });
 }
 function harnessOpaqueIdentity(h, executable, version2, env = process.env, metadata = {}) {
-  const hash3 = (v) => createHash3("sha256").update(JSON.stringify(v)).digest("hex");
+  const hash3 = (v) => createHash4("sha256").update(JSON.stringify(v)).digest("hex");
   const childEnv = harnessEnvironment(h, env), base = h.baseHarness ?? h.id;
   const authFiles = harnessCredentialFiles[base] ?? [];
   const roots = Object.fromEntries((credentialRootVariables[base] ?? []).map((name) => [name, childEnv[name] ?? null]));
   const prefix = { kimi: [".kimi-code/", childEnv.KIMI_CODE_HOME], vibe: [".vibe/", childEnv.VIBE_HOME], qwen: [".qwen/", childEnv.QWEN_HOME], "grok-build": [".grok/", childEnv.GROK_HOME], pi: [".pi/agent/", childEnv.PI_CODING_AGENT_DIR] }[base];
-  const resolveFile = (name) => prefix?.[1] && name.startsWith(prefix[0]) ? path10.join(prefix[1], name.slice(prefix[0].length)) : base === "kilo" && name.startsWith(".local/share/kilo/") ? path10.join(childEnv.XDG_DATA_HOME ?? path10.join(childEnv.HOME ?? "", ".local/share"), "kilo", name.slice(".local/share/kilo/".length)) : base === "kilo" && name.startsWith(".config/kilo/") ? path10.join(childEnv.XDG_CONFIG_HOME ?? path10.join(childEnv.HOME ?? "", ".config"), "kilo", name.slice(".config/kilo/".length)) : path10.join(childEnv.HOME ?? "", name);
+  const resolveFile = (name) => prefix?.[1] && name.startsWith(prefix[0]) ? path11.join(prefix[1], name.slice(prefix[0].length)) : base === "kilo" && name.startsWith(".local/share/kilo/") ? path11.join(childEnv.XDG_DATA_HOME ?? path11.join(childEnv.HOME ?? "", ".local/share"), "kilo", name.slice(".local/share/kilo/".length)) : base === "kilo" && name.startsWith(".config/kilo/") ? path11.join(childEnv.XDG_CONFIG_HOME ?? path11.join(childEnv.HOME ?? "", ".config"), "kilo", name.slice(".config/kilo/".length)) : path11.join(childEnv.HOME ?? "", name);
   const files = authFiles.map(resolveFile);
-  if (base === "kilo" && childEnv.KILO_CONFIG_DIR) files.push(...["kilo.json", "kilo.jsonc"].map((name) => path10.join(childEnv.KILO_CONFIG_DIR, name)));
+  if (base === "kilo" && childEnv.KILO_CONFIG_DIR) files.push(...["kilo.json", "kilo.jsonc"].map((name) => path11.join(childEnv.KILO_CONFIG_DIR, name)));
   const authMetadata = files.map(credentialFileMetadata);
   let storeMetadata = null;
   if (base === "vibe" && !["env", "file", "none"].includes(metadata.vibeCredentialSource ?? "unknown")) {
@@ -6778,12 +7636,12 @@ function harnessOpaqueIdentity(h, executable, version2, env = process.env, metad
   const privateCredentialFingerprint = hash3([childEnv.HOME, roots, authMetadata, metadata.vibeCredentialSource ?? null, storeMetadata, base === "vibe" ? childEnv.MISTRAL_API_KEY ?? null : null, ...Object.values(h.environmentRefs ?? {}).map((name) => env[name] ?? "")]);
   const epochScope = `${h.id}:${metadata.purpose ?? "smart"}:${metadata.vibeCredentialSource ?? "unknown"}`;
   const prior = credentialEpochs.get(epochScope);
-  const entry = prior?.fingerprint === privateCredentialFingerprint ? prior : { fingerprint: privateCredentialFingerprint, epoch: randomUUID2() };
+  const entry = prior?.fingerprint === privateCredentialFingerprint ? prior : { fingerprint: privateCredentialFingerprint, epoch: randomUUID4() };
   credentialEpochs.set(epochScope, entry);
   return { bindingVersion: hash3([h, executable, version2, roots]), credentialEpoch: entry.epoch };
 }
-var runtime = globalThis;
-var credentialEpochs = runtime.__vdtHarnessCredentialEpochs ??= /* @__PURE__ */ new Map();
+var runtime2 = globalThis;
+var credentialEpochs = runtime2.__vdtHarnessCredentialEpochs ??= /* @__PURE__ */ new Map();
 var harnessCredentialFiles = {
   copilot: [".config/github-copilot/config.json"],
   opencode: [".local/share/opencode/auth.json", ".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
@@ -6798,24 +7656,24 @@ var harnessCredentialFiles = {
 };
 
 // ../model-bridge/src/subscription-cli/codex/smart-policy.ts
-import { createHash as createHash4 } from "node:crypto";
-import { open as open2, stat as stat2 } from "node:fs/promises";
-import os3 from "node:os";
-import path11 from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { open as open3, stat as stat2 } from "node:fs/promises";
+import os4 from "node:os";
+import path12 from "node:path";
 var SMART_CODEX_POLICY_VERSION = "smart-codex-readonly.v2";
 var SMART_CODEX_DISABLED_FEATURES = Object.freeze(["shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "image_generation", "view_image", "memories", "skill_search", "skill_mcp_dependency_install", "tool_suggest", "workspace_dependencies", "goals", "request_permissions_tool"]);
 var SMART_CODEX_CODE_MODE_CONFIG = Object.freeze([
   'features.code_mode={enabled=false,excluded_tool_namespaces=["functions"]}',
   "features.code_mode_host={enabled=true,disable_in_process_fallback=true}"
 ]);
-var codexSmartHome = (env) => env.CODEX_HOME ?? path11.join(env.HOME ?? os3.homedir(), ".codex");
+var codexSmartHome = (env) => env.CODEX_HOME ?? path12.join(env.HOME ?? os4.homedir(), ".codex");
 var model = (value) => {
   if (!value || value.length > 160 || value.startsWith("-") || /[\x00-\x20]/.test(value)) throw new Error("Codex selected model is invalid.");
   return value;
 };
-var runtime2 = globalThis;
-var admissions = () => runtime2.__vdtSmartCodexAdmissions ??= /* @__PURE__ */ new Map();
-var admissionKey = (env) => createHash4("sha256").update(JSON.stringify([SMART_CODEX_POLICY_VERSION, env.PATH ?? "", codexSmartHome(env)])).digest("hex");
+var runtime3 = globalThis;
+var admissions = () => runtime3.__vdtSmartCodexAdmissions ??= /* @__PURE__ */ new Map();
+var admissionKey = (env) => createHash5("sha256").update(JSON.stringify([SMART_CODEX_POLICY_VERSION, env.PATH ?? "", codexSmartHome(env)])).digest("hex");
 var unconfirmed = () => Object.assign(new Error("Owned Codex metadata probe cleanup remains unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
 async function selectSmartCodexExecutable(env, signal) {
   signal.throwIfAborted();
@@ -6852,7 +7710,7 @@ async function readCodexSmartDefaultModel(env) {
   if (env.VDT_CODEX_SESSION_MODEL?.trim() && env.VDT_CODEX_SESSION_MODEL.trim() !== "auto") return model(env.VDT_CODEX_SESSION_MODEL.trim());
   let file2;
   try {
-    file2 = await open2(path11.join(codexSmartHome(env), "config.toml"), "r");
+    file2 = await open3(path12.join(codexSmartHome(env), "config.toml"), "r");
   } catch (error63) {
     if (error63.code === "ENOENT") return void 0;
     throw new Error("Codex selected-default metadata is unreadable.");
@@ -6878,7 +7736,7 @@ async function readCodexSmartReasoningValues(env, selectedModel) {
   if (!selectedModel) return [];
   let file2;
   try {
-    file2 = await open2(path11.join(codexSmartHome(env), "models_cache.json"), "r");
+    file2 = await open3(path12.join(codexSmartHome(env), "models_cache.json"), "r");
   } catch (error63) {
     if (error63.code === "ENOENT") return [];
     throw error63;
@@ -6899,14 +7757,14 @@ async function readCodexSmartReasoningValues(env, selectedModel) {
 async function codexSmartMetadataIdentity(env, executable, version2) {
   const metadata = async (name) => {
     try {
-      const s = await stat2(path11.join(codexSmartHome(env), name));
+      const s = await stat2(path12.join(codexSmartHome(env), name));
       return [s.dev, s.ino, s.size, s.mtimeMs];
     } catch (error63) {
       if (error63.code === "ENOENT") return null;
       throw new Error("Codex binding metadata is unreadable.");
     }
   };
-  const hash3 = (value) => `sha256:${createHash4("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  const hash3 = (value) => `sha256:${createHash5("sha256").update(JSON.stringify(value)).digest("hex")}`;
   return {
     bindingVersion: hash3(["smart-codex-binding.v2", SMART_CODEX_POLICY_VERSION, executable, version2, await metadata("config.toml")]),
     credentialEpoch: hash3(["codex-host-credential-metadata.v1", await metadata("auth.json")])
@@ -6914,11 +7772,11 @@ async function codexSmartMetadataIdentity(env, executable, version2) {
 }
 
 // ../model-bridge/src/harness/smart-identity.ts
-import { createHash as createHash5 } from "node:crypto";
-import { mkdtemp as mkdtemp5, rm as rm6, writeFile as writeFile4 } from "node:fs/promises";
+import { createHash as createHash6 } from "node:crypto";
+import { mkdtemp as mkdtemp6, rm as rm7, writeFile as writeFile4 } from "node:fs/promises";
 import { tmpdir as tmpdir3 } from "node:os";
-import path12 from "node:path";
-var pinReasoning = (bindingVersion, value) => `sha256:${createHash5("sha256").update(JSON.stringify([bindingVersion, "smart-reasoning.v1", value ?? null])).digest("hex")}`;
+import path13 from "node:path";
+var pinReasoning = (bindingVersion, value) => `sha256:${createHash6("sha256").update(JSON.stringify([bindingVersion, "smart-reasoning.v1", value ?? null])).digest("hex")}`;
 async function resolveSmartHarnessIdentity(backendId, model2, signal, env = process.env, modelReasoning) {
   const h = getHarnessDefinition(backendId, env);
   if (!h?.capabilities.structuredCompletion) throw Object.assign(new Error("Selected harness cannot prepare structured suggestions."), { code: "SUGGESTIONS_UNAVAILABLE" });
@@ -6948,7 +7806,7 @@ async function resolveSmartHarnessIdentity(backendId, model2, signal, env = proc
   const js = /\.[cm]?js$/.test(executable);
   const versionArgs = [...h.custom ? h.args : [], "--version"];
   const environment = harnessEnvironment(h, env);
-  const cwd = await mkdtemp5(path12.join(tmpdir3(), "vdt-harness-metadata-"));
+  const cwd = await mkdtemp6(path13.join(tmpdir3(), "vdt-harness-metadata-"));
   let retained = false, version2, directClaudeSubscriptionVerified = false;
   try {
     const result = await probeOwnedCliVersion(js ? process.execPath : executable, cwd, environment, { signal, requireConfirmedCleanup: true }, js ? [executable, ...versionArgs] : versionArgs, h.transport === "native" ? 8e3 : 4e3);
@@ -6959,12 +7817,12 @@ ${result.stderr}`.trim().split(/\r?\n/)[0];
     const code = e?.code;
     if (code === "CLEANUP_UNCONFIRMED") {
       retained = true;
-      await writeFile4(path12.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed" }), { mode: 384 });
+      await writeFile4(path13.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed" }), { mode: 384 });
     }
     if (code === "METADATA_TIMEOUT" && !signal.aborted) throw e;
     throw Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Harness metadata process cleanup is unconfirmed." : signal.aborted ? "Harness metadata probe cancelled." : "Harness version could not be verified."), { code: code === "CLEANUP_UNCONFIRMED" ? code : signal.aborted ? "CANCELLED" : "SUGGESTIONS_UNAVAILABLE", ...retained ? { retainedDirectory: cwd } : {} });
   } finally {
-    if (!retained) await rm6(cwd, { recursive: true, force: true });
+    if (!retained) await rm7(cwd, { recursive: true, force: true });
   }
   if (!version2 || version2.length > 256) throw Object.assign(new Error("Harness version is unavailable."), { code: "SUGGESTIONS_UNAVAILABLE" });
   let reasoningValues = [];
@@ -7085,19 +7943,35 @@ async function enrichSubscriptionCliDetections(agents, options = {}) {
 }
 
 // ../local-runner/src/server/runtime.ts
-import { createHash as createHash6, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID5 } from "node:crypto";
+
+// ../local-runner/src/server/local-http-admission.ts
+function localHttpFetch(manifest, task, model2, options, selection) {
+  const baseUrl = manifest.localHttp?.baseUrl;
+  if (!baseUrl || manifest.kind !== "local_http" || manifest.harness && manifest.harness.transport !== "native") {
+    throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The requested backend has no reviewed local HTTP transport.");
+  }
+  assertLocalHttpTarget(baseUrl, model2);
+  if (selection !== void 0) {
+    return resolveLocalHttpFetch({ backendId: manifest.id, baseUrl, model: model2, task }, selection, options.resolveOwnedLocalHttpRoute);
+  }
+  if (options.requireVerifiedLocalHttp) {
+    throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "Select a host-verified offline model before starting this task.");
+  }
+  return options.fetch ?? globalThis.fetch;
+}
 
 // ../local-runner/src/server/smart-suggestions.ts
-import { spawn as spawn4 } from "node:child_process";
-import { chmod as chmod5, copyFile as copyFile2, mkdir as mkdir4, mkdtemp as mkdtemp7, realpath as realpath7, rm as rm8, writeFile as writeFile6 } from "node:fs/promises";
-import os5 from "node:os";
-import path14 from "node:path";
+import { spawn as spawn5 } from "node:child_process";
+import { chmod as chmod5, copyFile as copyFile2, mkdir as mkdir4, mkdtemp as mkdtemp8, realpath as realpath9, rm as rm9, writeFile as writeFile6 } from "node:fs/promises";
+import os6 from "node:os";
+import path15 from "node:path";
 
 // ../local-runner/src/server/executor.ts
 import { execFile as execFile6, spawn as nodeSpawn } from "node:child_process";
-import { chmod as chmod4, copyFile, lstat as lstat5, mkdir as mkdir3, mkdtemp as mkdtemp6, readFile as readFile2, realpath as realpath6, rm as rm7, writeFile as writeFile5 } from "node:fs/promises";
-import os4 from "node:os";
-import path13 from "node:path";
+import { chmod as chmod4, copyFile, lstat as lstat6, mkdir as mkdir3, mkdtemp as mkdtemp7, readFile as readFile2, realpath as realpath8, rm as rm8, writeFile as writeFile5 } from "node:fs/promises";
+import os5 from "node:os";
+import path14 from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // ../local-runner/src/server/harness-completion.ts
@@ -7601,18 +8475,18 @@ async function defaultResolveExecutable(manifest, env) {
     throw Object.assign(new Error(selection.cursorLaunchIssue ? windowsCursorLaunchIssueMessage(selection.cursorLaunchIssue) : selection.error ?? "Cursor CLI was not found on PATH."), { code: "BACKEND_NOT_INSTALLED" });
   }
   for (const alias of cli.executableAliases) {
-    if (alias.includes("\0") || path13.basename(alias) !== alias || alias === "." || alias === "..") continue;
-    for (const directory of pathValue.split(path13.delimiter).filter((entry) => path13.isAbsolute(entry))) {
-      const candidate = path13.resolve(directory, alias);
+    if (alias.includes("\0") || path14.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    for (const directory of pathValue.split(path14.delimiter).filter((entry) => path14.isAbsolute(entry))) {
+      const candidate = path14.resolve(directory, alias);
       try {
-        const info = await lstat5(candidate);
+        const info = await lstat6(candidate);
         if (!info.isSymbolicLink() && !info.isFile()) continue;
-        const resolved = await realpath6(candidate);
-        if (!path13.isAbsolute(resolved)) continue;
-        const resolvedInfo = await lstat5(resolved);
+        const resolved = await realpath8(candidate);
+        if (!path14.isAbsolute(resolved)) continue;
+        const resolvedInfo = await lstat6(resolved);
         if (!resolvedInfo.isFile()) continue;
-        const projectRoot = path13.resolve(process.cwd());
-        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path13.sep}`)) continue;
+        const projectRoot = path14.resolve(process.cwd());
+        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path14.sep}`)) continue;
         return resolved;
       } catch {
       }
@@ -7623,11 +8497,11 @@ async function defaultResolveExecutable(manifest, env) {
   });
 }
 async function normalizeResolvedExecutable(executable) {
-  if (!path13.isAbsolute(executable) || executable.includes("\0")) {
+  if (!path14.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
   try {
-    return await realpath6(executable);
+    return await realpath8(executable);
   } catch {
     return executable;
   }
@@ -7636,8 +8510,8 @@ function isJavaScriptExecutable(executable) {
   return /\.(?:mjs|cjs|js)$/i.test(executable);
 }
 function isPathInside(root, candidate) {
-  const relative = path13.relative(path13.resolve(root), path13.resolve(candidate));
-  return relative === "" || !!relative && !relative.startsWith("..") && !path13.isAbsolute(relative);
+  const relative = path14.relative(path14.resolve(root), path14.resolve(candidate));
+  return relative === "" || !!relative && !relative.startsWith("..") && !path14.isAbsolute(relative);
 }
 function shouldLocalizeJavaScriptExecutable(executable, options) {
   return options.resolveExecutable !== void 0 && isPathInside(process.cwd(), executable);
@@ -7647,8 +8521,8 @@ function errorCode(error63) {
 }
 async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   try {
-    const targetPath = path13.join(targetDir, fileName);
-    await copyFile(path13.join(sourceDir, fileName), targetPath);
+    const targetPath = path14.join(targetDir, fileName);
+    await copyFile(path14.join(sourceDir, fileName), targetPath);
     await chmod4(targetPath, 384);
   } catch (error63) {
     if (errorCode(error63) === "ENOENT") return;
@@ -7656,9 +8530,9 @@ async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   }
 }
 async function prepareEphemeralCodexHome(cwd, envSource) {
-  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path13.join(envSource.HOME, ".codex") : void 0);
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path14.join(envSource.HOME, ".codex") : void 0);
   if (!sourceCodexHome) return void 0;
-  const codexHome = path13.join(cwd, "codex-home");
+  const codexHome = path14.join(cwd, "codex-home");
   await mkdir3(codexHome, { recursive: true, mode: 448 });
   await chmod4(codexHome, 448);
   for (const fileName of CODEX_HOME_COPY_FILES) {
@@ -7830,7 +8704,7 @@ var executableProbeCache = /* @__PURE__ */ new Map();
 var executableHelpCache = /* @__PURE__ */ new Map();
 async function executableProbeCacheKey(executable, operation) {
   try {
-    const metadata = await lstat5(executable);
+    const metadata = await lstat6(executable);
     return `${executable}\0${metadata.size}\0${metadata.mtimeMs}\0${operation}`;
   } catch {
     return `${executable}\0unknown\0${operation}`;
@@ -7928,25 +8802,25 @@ async function executeCli(manifest, request, signal, options) {
     if (byteLength5(prompt2) > (readOnlyCompletion ? KPI_SUGGESTION_LIMITS.inputBytes : EXECUTION_LIMITS.maxPromptBytes)) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
-    const tempRoot = options.tempRoot ?? os4.tmpdir();
+    const tempRoot = options.tempRoot ?? os5.tmpdir();
     await mkdir3(tempRoot, { recursive: true });
-    const cwd = await mkdtemp6(path13.join(tempRoot, "vdt-run-"));
+    const cwd = await mkdtemp7(path14.join(tempRoot, "vdt-run-"));
     let processStarted = false;
     try {
       await chmod4(cwd, 448);
-      const requestPath = path13.join(cwd, "request.json");
+      const requestPath = path14.join(cwd, "request.json");
       await writeFile5(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
-      const promptPath = path13.join(cwd, "prompt.txt");
+      const promptPath = path14.join(cwd, "prompt.txt");
       await writeFile5(promptPath, prompt2, { encoding: "utf8", mode: 384, flag: "wx" });
       const schema = cliResponseSchema(request);
-      const schemaPath = path13.join(cwd, "schema.json");
+      const schemaPath = path14.join(cwd, "schema.json");
       await writeFile5(schemaPath, `${JSON.stringify(schema, null, 2)}
 `, {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
       });
-      const outputPath = path13.join(cwd, "last-message.json");
+      const outputPath = path14.join(cwd, "last-message.json");
       const promptText = await readFile2(promptPath, "utf8");
       const staticArgs = manifest.cli?.args ?? [];
       const directClaudeSubscriptionVerified = manifest.id === "claude_subscription" && request.modelReasoning === false ? await verifyDirectClaudeSubscription(executable, cwd, safeEnvironment(envSource), signal) : false;
@@ -7970,7 +8844,7 @@ async function executeCli(manifest, request, signal, options) {
         allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true
       });
       const childEnv = safeEnvironment(envSource);
-      if (manifest.id === "cursor_subscription") childEnv.NODE_COMPILE_CACHE = path13.join(cwd, "node-compile-cache");
+      if (manifest.id === "cursor_subscription") childEnv.NODE_COMPILE_CACHE = path14.join(cwd, "node-compile-cache");
       if (bundledCursor) {
         for (const key2 of ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "SystemRoot"]) {
           if (envSource[key2]) childEnv[key2] = envSource[key2];
@@ -7983,7 +8857,7 @@ async function executeCli(manifest, request, signal, options) {
       } else if (isJavaScriptExecutable(executable)) {
         let scriptPath = executable;
         if (shouldLocalizeJavaScriptExecutable(executable, options)) {
-          scriptPath = path13.join(cwd, path13.basename(executable));
+          scriptPath = path14.join(cwd, path14.basename(executable));
           await copyFile(executable, scriptPath);
           await chmod4(scriptPath, 448);
         }
@@ -8237,23 +9111,23 @@ async function executeCli(manifest, request, signal, options) {
         if (forceKill) clearTimeout(forceKill);
         if (cleanupDeadline) clearTimeout(cleanupDeadline);
         if (cleanupUnconfirmed) {
-          await writeFile5(path13.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 });
+          await writeFile5(path14.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 });
           child.stdout.destroy();
           child.stderr.destroy();
           child.stdin.destroy();
           child.unref();
           throw Object.assign(new Error("Smart CLI cleanup is unconfirmed; the execution lane is quarantined."), { code: "CLEANUP_UNCONFIRMED", retainedDirectory: cwd });
         }
-        await rm7(cwd, { recursive: true, force: true });
+        await rm8(cwd, { recursive: true, force: true });
       }
     } catch (error63) {
       if (!processStarted) {
         if (error63?.code === "CLEANUP_UNCONFIRMED") {
-          await writeFile5(path13.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 }).catch(() => {
+          await writeFile5(path14.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 }).catch(() => {
           });
           throw Object.assign(error63, { retainedDirectory: cwd });
         }
-        await rm7(cwd, { recursive: true, force: true });
+        await rm8(cwd, { recursive: true, force: true });
       }
       throw error63;
     }
@@ -8390,6 +9264,7 @@ async function fetchModelList(url2, signal, options) {
 }
 async function listLocalHttpModels(manifest, signal, options) {
   if (!manifest.localHttp) return [];
+  assertLocalHttpTarget(manifest.localHttp.baseUrl);
   const urls = [
     appendPath(manifest.localHttp.baseUrl, "models"),
     ...manifest.id === "ollama" ? [ollamaTagsUrl(manifest.localHttp.baseUrl)] : []
@@ -8408,6 +9283,9 @@ async function listLocalHttpModels(manifest, signal, options) {
 }
 async function postLocalHttpChat(manifest, messages, signal, options, request, timeoutMs) {
   if (!manifest.localHttp) throw Object.assign(new Error("Backend has no local HTTP manifest."), { code: "INVALID_MANIFEST" });
+  const model2 = request.model ?? manifest.localHttp.defaultModel;
+  const task = request.schemaId === "connection-test-v1" ? "connection_test" : request.taskType;
+  const fetcher = localHttpFetch(manifest, task, model2, options, request.localHttpSelection);
   const authorBudget = ollamaSkillAuthorBudget(manifest, request, messages);
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -8428,9 +9306,10 @@ async function postLocalHttpChat(manifest, messages, signal, options, request, t
     { type: "json_object" }
   ] : [{ type: "json_object" }];
   try {
+    let effectiveReasoning;
+    let nativeContext;
     if (authorBudget) {
-      const model2 = request.model ?? manifest.localHttp.defaultModel;
-      const metadata = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "show"), {
+      const metadata = await fetcher(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "show"), {
         method: "POST",
         redirect: "error",
         signal: controller.signal,
@@ -8440,9 +9319,19 @@ async function postLocalHttpChat(manifest, messages, signal, options, request, t
       const metadataText = await readBoundedResponse(metadata);
       controller.signal.throwIfAborted();
       if (!metadata.ok) throw Object.assign(new Error("Local model metadata request failed."), { code: "LOCAL_HTTP_FAILED" });
-      const declaredContext = ollamaDeclaredContext(JSON.parse(metadataText));
+      nativeContext = JSON.parse(metadataText);
+      const declaredContext = ollamaDeclaredContext(nativeContext);
       if (declaredContext !== void 0 && declaredContext < authorBudget.num_ctx) throw Object.assign(new Error("The selected model cannot fit the bounded Skill Author context and output budget."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
-      response = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "chat"), {
+    }
+    if (request.modelReasoning !== void 0) {
+      const capabilities3 = authorBudget ? parseLocalModelReasoningCapabilities(nativeContext, manifest.id) : await readLocalSmartReasoningCapabilities(manifest, model2, controller.signal, options, request.localHttpSelection, task, request.modelReasoning === FAST_LOCAL_REASONING);
+      const effective = resolveLocalReasoning(capabilities3, request.modelReasoning);
+      if (!effective.supported) throw Object.assign(new Error("The selected local model does not advertise this reasoning setting."), { code: "REASONING_UNSUPPORTED" });
+      effectiveReasoning = effective.value;
+    }
+    if (authorBudget || manifest.id === "ollama" && effectiveReasoning !== void 0) {
+      const format = getStrictResponseJsonSchema(request.schemaId);
+      response = await fetcher(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "chat"), {
         method: "POST",
         redirect: "error",
         signal: controller.signal,
@@ -8450,9 +9339,8 @@ async function postLocalHttpChat(manifest, messages, signal, options, request, t
         body: JSON.stringify({
           model: model2,
           stream: false,
-          format: getStrictResponseJsonSchema("agent-decision-v2"),
-          // Preserve this legacy path's effective provider-default thinking.
-          // Forwarding explicit reasoning is a separate qualification gap.
+          format,
+          ...effectiveReasoning === void 0 ? {} : { think: effectiveReasoning },
           options: { ...authorBudget, temperature: 0 },
           messages
         })
@@ -8468,30 +9356,34 @@ async function postLocalHttpChat(manifest, messages, signal, options, request, t
       }
       if (!isRecord8(native)) throw Object.assign(new Error("Local model returned an invalid native response envelope."), { code: "INVALID_PROVIDER_RESPONSE" });
       if (!response.ok || typeof native.error === "string") {
-        if (typeof native.error === "string" && /context|num_ctx/i.test(native.error) && /exceed|too (?:large|long|small)|insufficient|limit/i.test(native.error)) {
+        if (authorBudget && typeof native.error === "string" && /context|num_ctx/i.test(native.error) && /exceed|too (?:large|long|small)|insufficient|limit/i.test(native.error)) {
           throw Object.assign(new Error("The local model rejected the bounded Skill Author context."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
         }
         throw Object.assign(new Error("Local model endpoint failed."), { code: "LOCAL_HTTP_FAILED" });
       }
-      if (native.done_reason === "length") throw Object.assign(new Error("Skill Author exhausted its bounded generation budget before completing an answer."), { code: "SKILL_AUTHOR_OUTPUT_LIMIT" });
+      if (native.done_reason === "length") throw Object.assign(
+        new Error("The local model exhausted its bounded generation budget."),
+        { code: authorBudget ? "SKILL_AUTHOR_OUTPUT_LIMIT" : "OUTPUT_TOO_LARGE" }
+      );
       const message = isRecord8(native.message) ? native.message : void 0;
       if (message?.function_call != null || native.function_call != null || [message?.tool_calls, native.tool_calls].some((value) => value != null && (!Array.isArray(value) || value.length > 0))) {
-        throw Object.assign(new Error("Read-only Skill Author returned native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
+        throw Object.assign(new Error("The local model returned unexpected native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
       }
       if (native.done !== true || native.done_reason !== "stop" || message?.role !== void 0 && message.role !== "assistant" || typeof message?.content !== "string" || !message.content.trim()) {
-        throw Object.assign(new Error("Local model did not return a completed nonempty Skill Author response."), { code: "INVALID_PROVIDER_RESPONSE" });
+        throw Object.assign(new Error("Local model did not return a completed nonempty response."), { code: "INVALID_PROVIDER_RESPONSE" });
       }
       return message.content;
     }
     for (const [index, responseFormat] of responseFormats.entries()) {
-      response = await (options.fetch ?? fetch)(`${manifest.localHttp.baseUrl}/chat/completions`, {
+      response = await fetcher(appendPath(manifest.localHttp.baseUrl, "chat/completions"), {
         method: "POST",
         redirect: "error",
         signal: controller.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: request.model ?? manifest.localHttp.defaultModel,
+          model: model2,
           temperature: 0,
+          ...typeof effectiveReasoning === "string" ? { reasoning_effort: effectiveReasoning } : {},
           response_format: responseFormat,
           messages
         })
@@ -8548,7 +9440,7 @@ async function executeLocalHttp(manifest, request, signal, options) {
   const content = await postLocalHttpChat(
     manifest,
     [
-      { role: "system", content: `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
+      { role: "system", content: schemaId === "connection-test-v1" ? 'Return exactly {"ok":true}.' : `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
       { role: "user", content: JSON.stringify(request.input) }
     ],
     signal,
@@ -8611,6 +9503,14 @@ async function executeLocalHttp(manifest, request, signal, options) {
 async function executeCompletion(manifest, request, signal, options = {}) {
   if (!isVdtSchemaId(request.schemaId)) throw Object.assign(new Error("Unknown schemaId."), { code: "UNKNOWN_SCHEMA" });
   if (signal.aborted) throw abortError();
+  if (options.requireVerifiedLocalHttp || request.localHttpSelection !== void 0) {
+    if (manifest.id !== request.backendId || manifest.kind !== "local_http" || manifest.harness && manifest.harness.transport !== "native") {
+      throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The requested backend has no reviewed local HTTP transport.");
+    }
+    if (request.localHttpSelection === void 0 || !request.model) {
+      throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "A verified local request must name an exact host-admitted model.");
+    }
+  }
   if (request.taskType === "suggest_incoming_kpis") return executeSmartSuggestion(manifest, request, signal, options);
   if (request.taskType === "suggest_chat_starters" && manifest.kind !== "mock") return executeChatStarters(manifest, request, signal, options);
   if (manifest.harness && manifest.harness.transport !== "native") return executeHarnessCompletion(manifest, request, signal, options);
@@ -8634,6 +9534,9 @@ async function executeCompletion(manifest, request, signal, options = {}) {
   return executeCli(manifest, request, signal, options);
 }
 async function listBackendModels(manifest, signal, options = {}) {
+  if (options.requireVerifiedLocalHttp) {
+    throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "The host has no verified model catalog for this execution context.");
+  }
   if (!manifest.modelSelection) return [];
   if (signal.aborted) throw abortError("Model listing was cancelled.");
   if (manifest.harness && manifest.harness.transport !== "native") return (await probeHarnessModels(manifest.harness, signal, options.env)).map((m) => m.id);
@@ -8773,18 +9676,19 @@ function parseSmartCodexOutput(stdout, reasoningDisabled = false, validate3 = va
   if (!text2 || completed !== 1) throw fail3("INVALID_RESPONSE", "Smart CLI returned no completed structured assistant output.");
   return validate3(JSON.parse(text2));
 }
-async function readLocalSmartReasoningCapabilities(manifest, model2, signal, options = {}) {
+async function readLocalSmartReasoningCapabilities(manifest, model2, signal, options = {}, selection, task = "suggest_incoming_kpis", allowMissing = false) {
   if (!manifest.localHttp || !["ollama", "lm_studio", "vllm"].includes(manifest.id)) throw fail3("SUGGESTIONS_UNAVAILABLE", "The selected host has no reviewed local-model metadata source.");
   if (!model2 || model2.length > 160 || model2.startsWith("-") || /[\x00-\x20]/.test(model2)) throw fail3("INVALID_MODEL", "An explicit bounded model ID is required.");
   const base = manifest.localHttp.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
   const response = await fetchSmart(
-    options.fetch ?? fetch,
+    localHttpFetch(manifest, task, model2, options, selection),
     native ? `${base.replace(/\/v1$/, "")}/api/show` : `${base}/models/${encodeURIComponent(model2)}`,
     native ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: model2 }) } : { method: "GET" },
     signal
   );
   if (!response.ok) {
     if (response.body) await awaitHttpSettlement(response.body.cancel(), AbortSignal.abort());
+    if (allowMissing && [404, 405].includes(response.status)) return void 0;
     throw fail3("REASONING_UNSUPPORTED", "The selected local server did not expose model reasoning capabilities.");
   }
   return parseLocalModelReasoningCapabilities(await readSmartResponse(response, signal), manifest.id);
@@ -8803,18 +9707,17 @@ var starterCompletionContract = {
   outputTokens: CHAT_STARTER_LIMITS.outputTokens,
   validate: validateChatStarterOutput
 };
-async function localCompletion(manifest, model2, prompt, signal, options, modelReasoning, hasSelectedSkill = false, contract = kpiCompletionContract) {
+async function localCompletion(manifest, model2, prompt, signal, options, modelReasoning, hasSelectedSkill = false, contract = kpiCompletionContract, selection) {
   const base = manifest.localHttp.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
+  const task = contract === starterCompletionContract ? "suggest_chat_starters" : "suggest_incoming_kpis";
+  const fetcher = localHttpFetch(manifest, task, model2, options, selection);
   let reasoning = native && contract === starterCompletionContract ? { think: false } : {};
   if (modelReasoning !== void 0) {
-    const capabilities3 = await readLocalSmartReasoningCapabilities(manifest, model2, signal, options);
-    const selected = modelReasoning === false ? capabilities3?.values.find((value) => value === false || ["none", "off", "disabled"].includes(String(value))) : capabilities3?.values.find((value) => value === modelReasoning);
-    if (selected === void 0) throw fail3("REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting. Choose Provider default.");
-    if (native) {
-      if (typeof modelReasoning === "number") throw fail3("REASONING_UNSUPPORTED", "Ollama does not accept a thinking token count.");
-      reasoning = { think: selected };
-    } else {
-      reasoning = selected === false ? {} : { reasoning_effort: selected };
+    const capabilities3 = await readLocalSmartReasoningCapabilities(manifest, model2, signal, options, selection, task, modelReasoning === FAST_LOCAL_REASONING);
+    const effective = resolveLocalReasoning(capabilities3, modelReasoning);
+    if (!effective.supported) throw fail3("REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting. Choose Provider default.");
+    if (effective.value !== void 0 && (native || effective.value !== false)) {
+      reasoning = native ? { think: effective.value } : { reasoning_effort: effective.value };
     }
   }
   const body = native ? {
@@ -8834,7 +9737,7 @@ async function localCompletion(manifest, model2, prompt, signal, options, modelR
   const serialized = JSON.stringify(body);
   if (bytes(serialized) > KPI_SUGGESTION_LIMITS.inputBytes) throw fail3("INPUT_TOO_LARGE", "Final Smart provider envelope exceeds its bounded input allowance.");
   const response = await fetchSmart(
-    options.fetch ?? fetch,
+    fetcher,
     native ? `${base.replace(/\/v1$/, "")}/api/chat` : `${base}/chat/completions`,
     { method: "POST", headers: { "content-type": "application/json" }, body: serialized },
     signal
@@ -8845,7 +9748,7 @@ async function localCompletion(manifest, model2, prompt, signal, options, modelR
     throw fail3("BACKEND_FAILED", `Smart local provider failed with status ${response.status}.`);
   }
   const message = native ? payload.message : payload.choices?.[0]?.message;
-  if (modelReasoning === false && (message?.thinking?.trim() || message?.reasoning_content?.trim())) throw fail3("REASONING_UNSUPPORTED", "The local provider returned reasoning despite the disabled setting.");
+  if ((modelReasoning === false || reasoning.think === false) && (message?.thinking?.trim() || message?.reasoning_content?.trim())) throw fail3("REASONING_UNSUPPORTED", "The local provider returned reasoning despite the disabled setting.");
   if (message?.tool_calls?.length) throw fail3("TOOL_ACTIVITY_REJECTED", "Smart provider returned a tool call.");
   if (payload.done_reason === "length" || payload.choices?.[0]?.finish_reason === "length") throw fail3("OUTPUT_TOO_LARGE", "Smart completion exhausted its token budget.");
   if (native ? payload.done !== true || payload.done_reason !== "stop" : payload.choices?.length !== 1 || payload.choices[0]?.finish_reason !== "stop" || payload.choices[0].message?.function_call || payload.choices[0].message?.refusal) throw fail3("INVALID_RESPONSE", "Smart local provider did not acknowledge a completed tool-free response.");
@@ -8865,30 +9768,30 @@ async function cliCompletion(manifest, model2, prompt, signal, options, modelRea
   const selected = options.resolveExecutable ? await options.resolveExecutable(manifest, source) : (await selectSmartCodexExecutable(source, signal))?.executable;
   signal.throwIfAborted();
   if (!selected) throw fail3("BACKEND_NOT_INSTALLED", "Selected Codex CLI is unavailable.");
-  const executable = await realpath7(selected);
-  if (!path14.isAbsolute(executable) || executable.startsWith(`${path14.resolve(process.cwd())}${path14.sep}`)) throw fail3("UNSAFE_EXECUTABLE", "Smart CLI executable must be host-owned outside the workspace.");
-  const tempRoot = options.tempRoot ?? os5.tmpdir();
+  const executable = await realpath9(selected);
+  if (!path15.isAbsolute(executable) || executable.startsWith(`${path15.resolve(process.cwd())}${path15.sep}`)) throw fail3("UNSAFE_EXECUTABLE", "Smart CLI executable must be host-owned outside the workspace.");
+  const tempRoot = options.tempRoot ?? os6.tmpdir();
   await mkdir4(tempRoot, { recursive: true });
-  const cwd = await mkdtemp7(path14.join(tempRoot, "vdt-smart-"));
+  const cwd = await mkdtemp8(path15.join(tempRoot, "vdt-smart-"));
   await chmod5(cwd, 448);
   let child, retained = false;
   try {
-    const home = path14.join(cwd, "codex-home");
+    const home = path15.join(cwd, "codex-home");
     await mkdir4(home, { mode: 448 });
-    const authRoot = source.CODEX_HOME ?? (source.HOME ? path14.join(source.HOME, ".codex") : void 0);
+    const authRoot = source.CODEX_HOME ?? (source.HOME ? path15.join(source.HOME, ".codex") : void 0);
     if (authRoot) for (const name of ["auth.json", "installation_id", "models_cache.json"]) {
       try {
-        await copyFile2(path14.join(authRoot, name), path14.join(home, name));
-        await chmod5(path14.join(home, name), 384);
+        await copyFile2(path15.join(authRoot, name), path15.join(home, name));
+        await chmod5(path15.join(home, name), 384);
       } catch (e) {
         if (e.code !== "ENOENT") throw e;
       }
     }
-    const schemaPath = path14.join(cwd, "schema.json");
+    const schemaPath = path15.join(cwd, "schema.json");
     await writeFile6(schemaPath, JSON.stringify(contract.schema), { mode: 384, flag: "wx" });
     const starterArgs = [];
     if (starter) {
-      const instructionsPath = path14.join(cwd, "instructions.txt");
+      const instructionsPath = path15.join(cwd, "instructions.txt");
       await writeFile6(instructionsPath, contract.instruction, { mode: 384, flag: "wx" });
       starterArgs.push("-c", `model_instructions_file=${JSON.stringify(instructionsPath)}`);
     }
@@ -8925,7 +9828,7 @@ async function cliCompletion(manifest, model2, prompt, signal, options, modelRea
     ];
     signal.throwIfAborted();
     const js = /\.(?:cjs|mjs|js)$/.test(executable);
-    child = (options.spawn ?? ((file2, argv, config2) => spawn4(file2, [...argv], config2)))(
+    child = (options.spawn ?? ((file2, argv, config2) => spawn5(file2, [...argv], config2)))(
       js ? process.execPath : executable,
       js ? [executable, ...args] : args,
       { cwd, env: { ...probeEnv, HOME: cwd, CODEX_HOME: home }, shell: false, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
@@ -9043,7 +9946,7 @@ async function cliCompletion(manifest, model2, prompt, signal, options, modelRea
       if (cleanupTimer) clearTimeout(cleanupTimer);
     }
   } finally {
-    if (!retained) await rm8(cwd, { recursive: true, force: true });
+    if (!retained) await rm9(cwd, { recursive: true, force: true });
   }
 }
 async function executeSmartSuggestion(manifest, request, caller, options) {
@@ -9068,7 +9971,7 @@ ${JSON.stringify({ input: modelInput, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA }
     if (manifest.kind !== "mock" && (!request.model || request.model.startsWith("-") || /[\x00-\x20]/.test(request.model))) throw fail3("SUGGESTIONS_UNAVAILABLE", "An explicit host-selected model is required for Smart suggestions.");
     let output2;
     if (manifest.kind === "mock") output2 = { status: "empty", rationale: "Deterministic empty suggestion fixture.", limitations: [], groups: [] };
-    else if (manifest.kind === "local_http" && manifest.localHttp) output2 = await localCompletion(manifest, request.model, JSON.stringify(modelInput), controller.signal, options, request.modelReasoning, Boolean(input2.context.selectedSkill));
+    else if (manifest.kind === "local_http" && manifest.localHttp) output2 = await localCompletion(manifest, request.model, JSON.stringify(modelInput), controller.signal, options, request.modelReasoning, Boolean(input2.context.selectedSkill), kpiCompletionContract, request.localHttpSelection);
     else if (manifest.id === "codex_subscription") output2 = await cliCompletion(manifest, request.model, prompt, controller.signal, options, request.modelReasoning);
     else if (manifest.harness?.transport !== "native" && manifest.harness) output2 = (await executeHarnessCompletion(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
     else if (manifest.kind === "subscription_cli") output2 = (await executeCli(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
@@ -9106,7 +10009,8 @@ async function executeChatStarters(manifest, request, caller, options) {
         options,
         void 0,
         false,
-        starterCompletionContract
+        starterCompletionContract,
+        request.localHttpSelection
       );
     } else if (manifest.id === "codex_subscription") {
       output2 = await cliCompletion(manifest, request.model ?? "auto", JSON.stringify(input2), signal, options, void 0, starterCompletionContract);
@@ -9951,10 +10855,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path15) {
-  if (!path15)
+function getElementAtPath(obj, path16) {
+  if (!path16)
     return obj;
-  return path15.reduce((acc, key2) => acc?.[key2], obj);
+  return path16.reduce((acc, key2) => acc?.[key2], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -10294,11 +11198,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path15, issues) {
+function prefixIssues(path16, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path15);
+    iss.path.unshift(path16);
     return iss;
   });
 }
@@ -10760,16 +11664,16 @@ function flattenError(error63, mapper = (issue3) => issue3.message) {
 }
 function formatError(error63, mapper = (issue3) => issue3.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error64, path15 = []) => {
+  const processError = (error64, path16 = []) => {
     for (const issue3 of error64.issues) {
       if (issue3.code === "invalid_union" && issue3.errors.length) {
-        issue3.errors.map((issues) => processError({ issues }, [...path15, ...issue3.path]));
+        issue3.errors.map((issues) => processError({ issues }, [...path16, ...issue3.path]));
       } else if (issue3.code === "invalid_key") {
-        processError({ issues: issue3.issues }, [...path15, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path16, ...issue3.path]);
       } else if (issue3.code === "invalid_element") {
-        processError({ issues: issue3.issues }, [...path15, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path16, ...issue3.path]);
       } else {
-        const fullpath = [...path15, ...issue3.path];
+        const fullpath = [...path16, ...issue3.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue3));
         } else {
@@ -10808,17 +11712,17 @@ function formatError(error63, mapper = (issue3) => issue3.message) {
 }
 function treeifyError(error63, mapper = (issue3) => issue3.message) {
   const result = { errors: [] };
-  const processError = (error64, path15 = []) => {
+  const processError = (error64, path16 = []) => {
     var _a3;
     for (const issue3 of error64.issues) {
       if (issue3.code === "invalid_union" && issue3.errors.length) {
-        issue3.errors.map((issues) => processError({ issues }, [...path15, ...issue3.path]));
+        issue3.errors.map((issues) => processError({ issues }, [...path16, ...issue3.path]));
       } else if (issue3.code === "invalid_key") {
-        processError({ issues: issue3.issues }, [...path15, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path16, ...issue3.path]);
       } else if (issue3.code === "invalid_element") {
-        processError({ issues: issue3.issues }, [...path15, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path16, ...issue3.path]);
       } else {
-        const fullpath = [...path15, ...issue3.path];
+        const fullpath = [...path16, ...issue3.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue3));
           continue;
@@ -10857,8 +11761,8 @@ function treeifyError(error63, mapper = (issue3) => issue3.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path15 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path15) {
+  const path16 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path16) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -14350,7 +15254,7 @@ function bucketFor(state, inst) {
   return bucket;
 }
 var handoff;
-var open3 = [];
+var open4 = [];
 var memo = {
   alloc(_inst, payload, empty) {
     const bucket = handoff;
@@ -14359,7 +15263,7 @@ var memo = {
     handoff = void 0;
     const entry = { value: empty, issues: null };
     bucket.set(payload.value, entry);
-    open3.push(entry);
+    open4.push(entry);
     return empty;
   },
   guard(inst) {
@@ -14430,10 +15334,10 @@ var memo = {
           return payload;
         }
         handoff = bucket;
-        const depth = open3.length;
+        const depth = open4.length;
         const result = base(payload, ctx);
         handoff = void 0;
-        const entry = open3.length > depth ? open3.pop() : void 0;
+        const entry = open4.length > depth ? open4.pop() : void 0;
         if (result instanceof Promise) {
           return result.then((r) => {
             if (entry)
@@ -27996,13 +28900,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path15 = ref.slice(1).split("/").filter(Boolean);
-  if (path15.length === 0) {
+  const path16 = ref.slice(1).split("/").filter(Boolean);
+  if (path16.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path15[0] === defsKey) {
-    const key2 = path15[1] === void 0 ? void 0 : decodeJSONPointerSegment(path15[1]);
+  if (path16[0] === defsKey) {
+    const key2 = path16[1] === void 0 ? void 0 : decodeJSONPointerSegment(path16[1]);
     if (!key2 || !ctx.defs[key2]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -28889,6 +29793,7 @@ var skillAuthorDraftSchema = external_exports.object({
   patterns: external_exports.array(external_exports.string().trim().min(1).max(160)).min(1).max(20),
   instructions: external_exports.string().trim().min(40).max(28e3)
 }).strict();
+var skillScopeSentences = new Intl.Segmenter(void 0, { granularity: "sentence" });
 
 // ../vdt-agent/src/index.ts
 var DOMAIN_TERMS = {
@@ -29020,12 +29925,12 @@ function parseFrontmatter(markdown) {
     body: lines.slice(closeIndex + 1).join("\n").trim()
   };
 }
-function parseSkillMarkdown(path15, markdown) {
+function parseSkillMarkdown(path16, markdown) {
   const parsed = parseFrontmatter(markdown);
-  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path15);
+  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path16);
   return {
     id: frontmatter.id,
-    path: path15,
+    path: path16,
     title: frontmatter.title,
     domain: frontmatter.domain,
     frontmatter,
@@ -29062,8 +29967,8 @@ function loadSkillLibraryFromMemory(sources) {
     throw new Error("Skill library source map must include registry.md.");
   }
   const registry3 = parseRegistryMarkdown(registrySource);
-  const skillPaths = Object.keys(sources).filter((path15) => path15 !== "registry.md" && path15 !== "skills/registry.md");
-  const skills = skillPaths.sort().map((path15) => parseSkillMarkdown(path15, sources[path15]));
+  const skillPaths = Object.keys(sources).filter((path16) => path16 !== "registry.md" && path16 !== "skills/registry.md");
+  const skills = skillPaths.sort().map((path16) => parseSkillMarkdown(path16, sources[path16]));
   assertRegistryCoversSkills(registry3, skills);
   return {
     registry: registry3,
@@ -29078,8 +29983,8 @@ async function loadSkillLibraryFromFs(rootDir) {
   const markdownPaths = await collectMarkdownFiles(rootDir, readdir2, join2);
   const sources = { "registry.md": registrySource };
   await Promise.all(
-    markdownPaths.filter((path15) => !path15.endsWith("registry.md")).map(async (path15) => {
-      sources[relative(rootDir, path15).replaceAll("\\", "/")] = await readFile3(path15, "utf8");
+    markdownPaths.filter((path16) => !path16.endsWith("registry.md")).map(async (path16) => {
+      sources[relative(rootDir, path16).replaceAll("\\", "/")] = await readFile3(path16, "utf8");
     })
   );
   return loadSkillLibraryFromMemory(sources);
@@ -29434,11 +30339,11 @@ function parseStringValue(value) {
   }
   return value.replace(/^["']|["']$/g, "").trim();
 }
-function normalizeSkillFrontmatter(attributes, path15) {
+function normalizeSkillFrontmatter(attributes, path16) {
   const getString = (key2) => {
     const value = attributes[key2];
     if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`Skill ${path15} is missing required string frontmatter: ${key2}.`);
+      throw new Error(`Skill ${path16} is missing required string frontmatter: ${key2}.`);
     }
     return value.trim();
   };
@@ -29449,11 +30354,11 @@ function normalizeSkillFrontmatter(attributes, path15) {
   const getStringArray = (key2) => {
     const value = attributes[key2];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path15} is missing required list frontmatter: ${key2}.`);
+      throw new Error(`Skill ${path16} is missing required list frontmatter: ${key2}.`);
     }
     const values = value.map((item) => item.trim()).filter(Boolean);
     if (values.length === 0) {
-      throw new Error(`Skill ${path15} must define at least one value for frontmatter list: ${key2}.`);
+      throw new Error(`Skill ${path16} must define at least one value for frontmatter list: ${key2}.`);
     }
     return values;
   };
@@ -29461,7 +30366,7 @@ function normalizeSkillFrontmatter(attributes, path15) {
     const value = attributes[key2];
     if (value === void 0) return [];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path15} frontmatter must be a list: ${key2}.`);
+      throw new Error(`Skill ${path16} frontmatter must be a list: ${key2}.`);
     }
     return value.map((item) => item.trim()).filter(Boolean);
   };
@@ -29546,11 +30451,11 @@ async function collectMarkdownFiles(rootDir, readdir2, join2) {
   const entries = await readdir2(rootDir, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      const path15 = join2(rootDir, entry.name);
+      const path16 = join2(rootDir, entry.name);
       if (entry.isDirectory()) {
-        return collectMarkdownFiles(path15, readdir2, join2);
+        return collectMarkdownFiles(path16, readdir2, join2);
       }
-      return entry.isFile() && entry.name.endsWith(".md") ? [path15] : [];
+      return entry.isFile() && entry.name.endsWith(".md") ? [path16] : [];
     })
   );
   return nested.flat().sort();
@@ -29628,13 +30533,13 @@ function buildSelectionReason(skill, classification, matchedTerms) {
   return reasonParts.join("; ") || "registry candidate selected by deterministic scoring";
 }
 function createSkillExcerpt(skill, maxChars) {
-  const sections = ["When To Use", "Decomposition Pattern", "Formula Templates", "Required Inputs", "Warnings And Edge Cases"];
+  const sections = ["When To Use", "Scope Boundary", "Decomposition Pattern", "Formula Templates", "Required Inputs", "Warnings And Edge Cases"];
   const selected = sections.map((section) => extractMarkdownSection(skill.body, section)).filter(Boolean).join("\n\n");
   const excerpt = selected || skill.body;
   return excerpt.length > maxChars ? `${excerpt.slice(0, maxChars - 3).trimEnd()}...` : excerpt;
 }
 function extractMarkdownSection(markdown, title) {
-  const pattern = new RegExp(`(^|\\n)## ${escapeRegExp(title)}\\n([\\s\\S]*?)(?=\\n## |$)`);
+  const pattern = new RegExp(`(^|\\n)## ${escapeRegExp(title)}\\n([\\s\\S]*?)(?=\\n## |$)`, "i");
   return pattern.exec(markdown)?.[0].trim() ?? "";
 }
 function escapeRegExp(value) {
@@ -29857,6 +30762,7 @@ function publicManifest(manifest) {
     taskTypes: manifest.taskTypes,
     schemaIds: manifest.schemaIds,
     modelSelection: manifest.modelSelection,
+    ...manifest.kind === "local_http" && { processingBoundary: "unverified" },
     safety: {
       toolsDisabled: manifest.safety.toolsDisabled,
       requiresOsSandbox: manifest.safety.requiresOsSandbox,
@@ -29993,20 +30899,25 @@ async function listRuntimeModels(backendId, context) {
     clearTimeout(timeout);
   }
 }
-async function testRuntimeBackend(backendId, context) {
+async function testRuntimeBackend(backendId, context, model2, localHttpSelection, modelReasoning) {
   return completeRuntime({
-    requestId: randomUUID3(),
+    requestId: randomUUID5(),
     backendId,
     taskType: "generate_tree",
     schemaId: "connection-test-v1",
     input: { probe: true },
+    ...model2 === void 0 ? {} : { model: model2 },
+    ...modelReasoning === void 0 ? {} : { modelReasoning },
+    ...localHttpSelection === void 0 ? {} : { localHttpSelection },
     timeoutMs: 3e4
   }, context);
 }
-async function checkRuntimeBackendReadiness(backendId, context) {
+async function checkRuntimeBackendReadiness(backendId, context, model2, localHttpSelection, modelReasoning) {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context);
+  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context, model2, localHttpSelection, modelReasoning);
+  if (modelReasoning !== void 0) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "Subscription readiness does not execute with model reasoning.");
+  if (context.config.executor?.requireVerifiedLocalHttp || localHttpSelection !== void 0) throw new LocalRuntimeError(422, "LOCAL_TARGET_REJECTED", "Subscription diagnostics cannot use a verified local model selection.");
   const agentId = subscriptionAgentIdForBackend(backendId);
   if (!agentId) {
     throw new LocalRuntimeError(400, "UNSUPPORTED_BACKEND", "This subscription backend has no reviewed readiness probe.");
@@ -30171,7 +31082,7 @@ async function completeRuntime(request, context, callerSignal) {
       ...hasRepairAttempt(error63) ? { repairAttempted: true, repairSucceeded: false } : {},
       errorCode: normalized.code
     });
-    return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
+    return { statusCode: error63 instanceof LocalHttpRouteError ? error63.statusCode : normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
   } finally {
     callerSignal?.removeEventListener("abort", callerAbort);
     if (smartLane) {
@@ -30434,7 +31345,7 @@ function cancelRuntimeRequest(requestId, context) {
   setRunProgress(run, "cancelled");
   return { statusCode: 202, payload: { ok: true, requestId, status: "cancelling" } };
 }
-async function resolveSmartRuntimeExecution(model2, context, caller, timeoutMs = 5e3, backendId = "codex_subscription", modelReasoning) {
+async function resolveSmartRuntimeExecution(model2, context, caller, timeoutMs = 5e3, backendId = "codex_subscription", modelReasoning, localHttpSelection) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new LocalRuntimeError(400, "INVALID_TIMEOUT", "Invalid metadata deadline.");
   const controller = new AbortController(), abort = () => controller.abort();
   caller.addEventListener("abort", abort, { once: true });
@@ -30449,12 +31360,30 @@ async function resolveSmartRuntimeExecution(model2, context, caller, timeoutMs =
     if (["ollama", "lm_studio", "vllm"].includes(backendId)) {
       const manifest = context.manifests.get(backendId);
       if (!manifest?.localHttp || manifest.kind !== "local_http") throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "The selected host does not expose this local model backend.");
-      const capabilities3 = await readLocalSmartReasoningCapabilities(manifest, model2 ?? "", controller.signal, context.config.executor);
+      const capabilities3 = await readLocalSmartReasoningCapabilities(
+        manifest,
+        model2 ?? "",
+        controller.signal,
+        context.config.executor,
+        localHttpSelection,
+        "suggest_incoming_kpis",
+        modelReasoning === FAST_LOCAL_REASONING
+      );
       const reasoningValues = capabilities3?.values ?? [];
-      if (modelReasoning !== void 0 && !reasoningValues.some((value) => value === modelReasoning || modelReasoning === false && ["none", "off", "disabled"].includes(String(value)))) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting.");
-      const bindingVersion = `sha256:${createHash6("sha256").update(JSON.stringify(["smart-local-metadata.v1", backendId, manifest.localHttp.baseUrl, model2, modelReasoning ?? null])).digest("hex")}`;
-      return { statusCode: 200, payload: { ok: true, identity: { backendId, modelId: model2, requestModel: model2, modelResolution: "exact", bindingVersion, credentialEpoch: "manifest-no-credential.v1", reasoningValues } } };
+      const effective = resolveLocalReasoning(capabilities3, modelReasoning);
+      if (!effective.supported) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting.");
+      const bindingVersion = `sha256:${createHash7("sha256").update(JSON.stringify([
+        "smart-local-metadata.v1",
+        backendId,
+        manifest.localHttp.baseUrl,
+        model2,
+        modelReasoning ?? null,
+        ...effective.value !== modelReasoning ? [effective.value ?? null] : [],
+        ...localHttpSelection ? [localHttpSelection.profileVersion, localHttpSelection.modelRevision] : []
+      ])).digest("hex")}`;
+      return { statusCode: 200, payload: { ok: true, identity: { backendId, modelId: model2, requestModel: model2, modelResolution: "exact", bindingVersion, credentialEpoch: "manifest-no-credential.v1", processingBoundary: localHttpSelection ? "on_device" : "unverified", reasoningValues } } };
     }
+    if (context.config.executor?.requireVerifiedLocalHttp || localHttpSelection !== void 0) throw new LocalRuntimeError(422, "LOCAL_TARGET_REJECTED", "This backend cannot use a verified local model selection.");
     const identity = await resolveSmartHarnessIdentity(backendId, model2, controller.signal, env, modelReasoning);
     controller.signal.throwIfAborted();
     return { statusCode: 200, payload: { ok: true, identity } };
@@ -30552,7 +31481,7 @@ function parseCompletionPayload(value) {
   for (const forbidden of ["command", "args", "providerConfig", "schema", "systemPrompt", "userPrompt", "cwd", "env", "extraArgs"]) {
     if (forbidden in value) throw new LocalRuntimeError(400, "FORBIDDEN_FIELD", `Completion body must not include ${forbidden}.`);
   }
-  const allowed = /* @__PURE__ */ new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"]);
+  const allowed = /* @__PURE__ */ new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs", "localHttpSelection"]);
   for (const key2 of Object.keys(value)) {
     if (!allowed.has(key2)) throw new LocalRuntimeError(400, "UNKNOWN_FIELD", `Unknown completion field: ${key2}.`);
   }
@@ -30576,22 +31505,45 @@ function parseCompletionPayload(value) {
     throw new LocalRuntimeError(400, "INVALID_MODEL", "model must be a bounded string.");
   }
   if (value.modelReasoning !== void 0 && !isHarnessReasoningValue(value.modelReasoning)) throw new LocalRuntimeError(400, "INVALID_REASONING", "modelReasoning must be a bounded provider reasoning value.");
+  const localHttpSelection = readRuntimeLocalHttpSelection(value.localHttpSelection);
   return {
     requestId,
     backendId,
     taskType,
     schemaId,
     input: value.input,
+    ...localHttpSelection && { localHttpSelection },
     ...typeof value.model === "string" ? { model: value.model } : {},
     ...isHarnessReasoningValue(value.modelReasoning) ? { modelReasoning: value.modelReasoning } : {},
     ...typeof timeoutMs === "number" ? { timeoutMs } : {}
   };
+}
+function readRuntimeLocalHttpSelection(value) {
+  if (value === void 0) return void 0;
+  const selection = parseLocalHttpSelection(value);
+  if (!selection) throw new LocalRuntimeError(400, "INVALID_LOCAL_SELECTION", "A local HTTP selection must reference an exact host profile version and model revision.");
+  return selection;
+}
+function parseRuntimeBackendTestSelection(value) {
+  if (value === void 0) return {};
+  if (!isRecord9(value) || Object.keys(value).some((key2) => !["model", "modelReasoning", "localHttpSelection"].includes(key2))) {
+    throw new LocalRuntimeError(400, "UNKNOWN_FIELD", "A diagnostic accepts only the model, reasoning and local HTTP selection.");
+  }
+  const { model: model2, modelReasoning } = value;
+  if (model2 !== void 0 && (typeof model2 !== "string" || !model2 || model2.length > 160 || model2.includes("\0"))) {
+    throw new LocalRuntimeError(400, "INVALID_MODEL", "An explicit bounded model ID is required.");
+  }
+  const localHttpSelection = readRuntimeLocalHttpSelection(value.localHttpSelection);
+  if (modelReasoning !== void 0 && !isHarnessReasoningValue(modelReasoning))
+    throw new LocalRuntimeError(400, "INVALID_REASONING", "modelReasoning must be a bounded provider reasoning value.");
+  return { ...model2 !== void 0 && { model: model2 }, ...modelReasoning !== void 0 && { modelReasoning }, ...localHttpSelection && { localHttpSelection } };
 }
 function publicRun(run) {
   const { controller: _controller, settled: _settled, resolveSettled: _resolve, ...snapshot } = run;
   return snapshot;
 }
 function publicRuntimeError(error63) {
+  if (error63 instanceof LocalHttpRouteError) return { code: error63.code, message: error63.message };
   const code = typeof error63 === "object" && error63 !== null && "code" in error63 ? String(error63.code) : "EXECUTION_FAILED";
   const messages = {
     CANCELLED: "Completion was cancelled.",
@@ -30748,14 +31700,14 @@ var EMPTY_PAYLOAD_METHODS = /* @__PURE__ */ new Set(["list_backends", "get_app_m
 var METHOD_PAYLOAD_KEYS = {
   list_backends: [],
   detect_clis: ["agentId", "excludeCursor"],
-  test_backend: ["backendId"],
+  test_backend: ["backendId", "model", "modelReasoning", "localHttpSelection"],
   list_models: ["backendId"],
-  complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"],
-  smart_execution: ["backendId", "model", "modelReasoning", "timeoutMs"],
+  complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs", "localHttpSelection"],
+  smart_execution: ["backendId", "model", "modelReasoning", "timeoutMs", "localHttpSelection"],
   harness_settings: ["action", "profile", "removeId"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
-  speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
+  speech: ["operation", "modelId", "confirmed", "audioBase64", "jobId", "selection", "sessionId", "preview", "locale", "setupId", "eventId", "text"],
   get_app_mode: []
 };
 function parseSidecarFrame(frame, options = {}) {
@@ -30880,6 +31832,9 @@ function validateRequestPayload(method, payload) {
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
   }
+  if ("localHttpSelection" in payload && !parseLocalHttpSelection(payload.localHttpSelection)) {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "localHttpSelection must reference an exact host profile version and model revision.");
+  }
   if ("modelReasoning" in payload && !isHarnessReasoningValue(payload.modelReasoning)) throw new SidecarProtocolError("INVALID_PAYLOAD", "modelReasoning must be a bounded provider reasoning value.");
   if (method === "smart_execution" && (!(isHarnessBackendId(payload.backendId) || ["ollama", "lm_studio", "vllm"].includes(String(payload.backendId))) || Number(payload.timeoutMs ?? 5e3) > 5e3)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "Smart metadata requires a selected harness backend and at most 5000ms.");
@@ -30976,7 +31931,7 @@ function runLocalRuntimeSidecar(options = {}) {
   const context = createLocalRuntimeContext(runtimeConfig);
   const tracker = new SidecarRequestTracker();
   const decoder = new SidecarFrameDecoder({ requestTracker: tracker, direction: "host-to-sidecar" });
-  const nonce = options.nonce ?? randomUUID4();
+  const nonce = options.nonce ?? randomUUID6();
   let ready = false;
   function write(message) {
     stdout.write(serializeSidecarMessage(message));
@@ -31045,13 +32000,17 @@ async function routeSidecarRequest(message, context) {
     }
     return detectRuntimeSubscriptionClis(context, agentId, excludeCursor);
   }
-  if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
+  if (message.method === "test_backend") {
+    const { backendId: _backendId, ...payload } = message.payload;
+    const { model: model2, localHttpSelection, modelReasoning } = parseRuntimeBackendTestSelection(payload);
+    return checkRuntimeBackendReadiness(requireBackendId(message.payload), context, model2, localHttpSelection, modelReasoning);
+  }
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }
   if (message.method === "smart_execution") {
     const { backendId, model: model2, modelReasoning, timeoutMs = 5e3 } = message.payload;
-    if (typeof backendId !== "string" || Object.keys(message.payload).some((k) => !["backendId", "model", "modelReasoning", "timeoutMs"].includes(k)) || modelReasoning !== void 0 && !isHarnessReasoningValue(modelReasoning) || model2 !== void 0 && typeof model2 !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5e3) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
+    if (typeof backendId !== "string" || Object.keys(message.payload).some((k) => !["backendId", "model", "modelReasoning", "timeoutMs", "localHttpSelection"].includes(k)) || modelReasoning !== void 0 && !isHarnessReasoningValue(modelReasoning) || model2 !== void 0 && typeof model2 !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5e3) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
     let entries = smartAdmissions.get(context);
     if (!entries) {
       entries = /* @__PURE__ */ new Map();
@@ -31061,7 +32020,7 @@ async function routeSidecarRequest(message, context) {
     const controller = new AbortController();
     entries.set(message.requestId, controller);
     try {
-      return await resolveSmartRuntimeExecution(model2, context, controller.signal, Number(timeoutMs), backendId, isHarnessReasoningValue(modelReasoning) ? modelReasoning : void 0);
+      return await resolveSmartRuntimeExecution(model2, context, controller.signal, Number(timeoutMs), backendId, isHarnessReasoningValue(modelReasoning) ? modelReasoning : void 0, readRuntimeLocalHttpSelection(message.payload.localHttpSelection));
     } finally {
       entries.delete(message.requestId);
     }
@@ -31101,7 +32060,7 @@ function requireBackendId(payload) {
   return backendId;
 }
 function normalizeSidecarRuntimeError(error63) {
-  if (error63 instanceof LocalRuntimeError) return { code: error63.code, message: error63.message };
+  if (error63 instanceof LocalRuntimeError || error63 instanceof LocalHttpRouteError) return { code: error63.code, message: error63.message };
   if (error63 instanceof SidecarProtocolError) return { code: error63.code, message: error63.message };
   if (error63 && typeof error63 === "object" && "code" in error63 && error63.code === "CLEANUP_UNCONFIRMED") return { code: "CLEANUP_UNCONFIRMED", message: "Owned Smart execution cleanup could not be confirmed." };
   return { code: "SIDECAR_RUNTIME_ERROR", message: error63 instanceof Error ? error63.message : "Sidecar runtime failed safely." };
@@ -31127,6 +32086,16 @@ function isJsonObject(value) {
 
 // ../local-runner/src/sidecar/index.ts
 if (process.argv[1] && fileURLToPath2(import.meta.url) === process.argv[1]) {
+  const helper = process.env.VDT_APPLE_VOICE_HELPER_PATH;
+  const hash3 = process.env.VDT_APPLE_VOICE_HELPER_SHA256;
+  if (process.platform === "darwin" && process.arch === "arm64" && helper && hash3 && /^[a-f0-9]{64}$/.test(hash3)) {
+    getSpeechRuntime({
+      appleVoice: createAppleVoiceAdapter(async () => {
+        await verifyAppleHelper(helper, hash3);
+        return helper;
+      })
+    });
+  }
   runLocalRuntimeSidecar();
 }
 export {

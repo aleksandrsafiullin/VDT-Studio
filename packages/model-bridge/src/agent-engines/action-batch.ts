@@ -8,7 +8,9 @@ const CONTROL_TOOL_NAMES = new Set([
   "user.ask",
   "approval.request",
   "user.request_approval",
-  "run.request_finish"
+  "run.request_finish",
+  "run.propose_outcome",
+  "skill.select"
 ]);
 
 const FORBIDDEN_TOOL_PREFIXES = Object.freeze([

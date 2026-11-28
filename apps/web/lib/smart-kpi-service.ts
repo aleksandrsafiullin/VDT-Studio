@@ -1,16 +1,19 @@
+import { APPLE_NATIVE_PROVIDER_ID } from "../app/api/agent/runs/apple-native-host";
+import { createAppleNativeSmartProvider } from "../app/api/agent/runs/apple-native-smart";
 import { getHarnessDefinition } from "@vdt-studio/model-bridge/node";
 import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, ProviderHttpError, runSuggestIncomingKpis, isModelReasoningValue, type ModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
 import { providerModelCapabilities, validatedReasoningConfig, type ProviderConnection } from "../app/api/agent/runs/provider-model-capabilities";
 import { KPI_SUGGESTION_LIMITS, validateKpiSuggestionTaskInput, smartAssert, smartRecord, smartString, type KpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
+import { APPLE_SMART_FOREGROUND_TIMEOUT_MS } from "./smart-kpi-metadata";
 import { assertCurrentSmartKpiSkill } from "./smart-kpi-skill-host";
 import { resolveProviderTarget, type ProxyProvider } from "./provider-target-security";
 import { fetchPinnedProvider } from "./pinned-provider-fetch";
-import { createManagedAwareAiProvider } from "../app/api/agent/runs/managed-ai-provider";
+import { assertTaskProviderAdmission, createTaskAiProvider, restrictTaskProvider, type TaskProviderPolicy } from "../app/api/agent/runs/managed-ai-provider";
 import { resolveTrustedStorageWriteMode } from "../app/api/vdt/storage-write-adapter";
 
 /** No defaults or env credentials. Config already comes from the selected UI
  * destination; only model/destination/protocol credentials are admitted. */
-export interface SmartKpiServiceRequest { input: unknown; providerId: string; providerConfig?: Record<string, unknown>; timeoutMs?: number; requestId?: string }
+export interface SmartKpiServiceRequest { input: unknown; providerId: string; providerConfig?: Record<string, unknown>; timeoutMs?: number; requestId?: string; expectedExecution?: unknown }
 export type SmartKpiServiceDependencies = { provider?: (request: SmartKpiServiceRequest, signal: AbortSignal) => Promise<AiProvider> };
 
 type TrackedPreparation = { controller: AbortController; done: Promise<void>; workspaceId: string; executionKey: string; errorCode?: string; completedAt?: number; cleanupReconciled?: true };
@@ -64,17 +67,24 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
   try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", interrupt); }
 }
 
-export async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string, maxEnvelopeBytes = KPI_SUGGESTION_LIMITS.inputBytes): Promise<AiProvider> {
+const smartProviderPolicy: TaskProviderPolicy = { task: "suggested_kpi", completions: ["suggest_incoming_kpis"] };
+
+export async function selectedProvider(
+  request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string,
+  maxEnvelopeBytes = KPI_SUGGESTION_LIMITS.inputBytes, policy = smartProviderPolicy
+): Promise<AiProvider> {
+  if (request.providerId === APPLE_NATIVE_PROVIDER_ID && policy.task === "suggested_kpi") return createAppleNativeSmartProvider(request);
+  const admission = assertTaskProviderAdmission(request, policy);
   const config = request.providerConfig ?? {};
   smartRecord(config, ["baseUrl", "endpoint", "model", "deployment", "apiVersion", "anthropicVersion", "apiKey", "maxTokens", "backendId", "runnerUrl", "pairingToken", "timeoutMs", "modelReasoning"], []);
   smartAssert(config.modelReasoning === undefined || isModelReasoningValue(config.modelReasoning), "INVALID_REASONING", "Invalid selected reasoning value.");
-  const text = (key: string, max = 2048) => { smartString(config[key], max); return config[key] as string; };
+  const text = (key: string, max = 2048) => { smartString(config[key], max); return config[key].trim(); };
   if (request.providerId === "local_runner") {
     const backendId = text("backendId", 160), model = text("model", 160);
     smartAssert(["ollama", "lm_studio", "vllm"].includes(backendId) || getHarnessDefinition(backendId)?.capabilities.structuredCompletion, "SUGGESTIONS_UNAVAILABLE", "This selected adapter has no one-call Smart policy.");
     smartAssert(!config.baseUrl && !config.endpoint && !config.apiKey, "INVALID_PROVIDER", "Local endpoints are manifest-owned.");
     smartAssert(config.pairingToken || resolveTrustedStorageWriteMode(), "SUGGESTIONS_UNAVAILABLE", "Local suggestions require a trusted host or paired runner.");
-    return createManagedAwareAiProvider({ providerId: "local_runner", providerConfig: { ...config, backendId, model, timeoutMs: request.timeoutMs } }, requestUrl);
+    return createTaskAiProvider({ ...request, providerConfig: { ...config, backendId, model, timeoutMs: request.timeoutMs } }, requestUrl, policy);
   }
   const model = text("model", 160), apiKey = text("apiKey", 8192);
   const pinnedFetch = (provider: ProxyProvider): typeof fetch => async (raw, init) => {
@@ -89,12 +99,14 @@ export async function selectedProvider(request: SmartKpiServiceRequest, signal: 
   const timeoutMs = request.timeoutMs ?? 15_000;
   const fetcher = pinnedFetch(request.providerId === "gemini" ? "google" : request.providerId === "anthropic" ? "anthropic" : request.providerId === "azure_openai" ? "azure" : "openai");
   const reasoning = await smartReasoningConfig(request, config.modelReasoning as ModelReasoningValue | undefined, fetcher);
-  if (request.providerId === "openai_compatible") return new OpenAiCompatibleProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning });
-  if (request.providerId === "anthropic") return new AnthropicProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning, ...(config.anthropicVersion ? { anthropicVersion: text("anthropicVersion", 160) } : {}) });
-  if (request.providerId === "gemini") return new GeminiProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning });
-  if (request.providerId === "azure_openai") return new AzureOpenAiProvider({ endpoint: text("endpoint"), deployment: text("deployment", 160), apiKey,
-    apiVersion: text("apiVersion", 160), timeoutMs, fetch: fetcher, ...reasoning });
-  throw Object.assign(new Error("Selected provider is unavailable for Smart suggestions."), { code: "SUGGESTIONS_UNAVAILABLE" });
+  const connection = { model, apiKey, timeoutMs, fetch: fetcher, ...reasoning };
+  let provider: AiProvider;
+  if (request.providerId === "openai_compatible") provider = new OpenAiCompatibleProvider({ ...connection, baseUrl: text("baseUrl") });
+  else if (request.providerId === "anthropic") provider = new AnthropicProvider({ ...connection, baseUrl: text("baseUrl"), ...(config.anthropicVersion ? { anthropicVersion: text("anthropicVersion", 160) } : {}) });
+  else if (request.providerId === "gemini") provider = new GeminiProvider({ ...connection, baseUrl: text("baseUrl") });
+  else if (request.providerId === "azure_openai") provider = new AzureOpenAiProvider({ ...connection, endpoint: text("endpoint"), deployment: text("deployment", 160), apiVersion: text("apiVersion", 160) });
+  else throw Object.assign(new Error("Selected provider is unavailable for this analytical task."), { code: "SUGGESTIONS_UNAVAILABLE" });
+  return restrictTaskProvider(provider, policy, request.expectedExecution === undefined ? undefined : admission.modelId);
 }
 
 export async function smartReasoningConfig(request: SmartKpiServiceRequest, value: ModelReasoningValue | undefined, fetcher: typeof fetch): Promise<Record<string, unknown>> {
@@ -119,11 +131,12 @@ export async function smartReasoningConfig(request: SmartKpiServiceRequest, valu
 }
 
 async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal, requestUrl: string, deps: SmartKpiServiceDependencies = {}): Promise<KpiSuggestionModelOutput> {
-  smartRecord(raw, ["input", "providerId", "providerConfig", "timeoutMs", "requestId"], ["input", "providerId"]); smartString(raw.providerId, 160);
+  smartRecord(raw, ["input", "providerId", "providerConfig", "timeoutMs", "requestId", "expectedExecution"], ["input", "providerId"]); smartString(raw.providerId, 160);
   const input = validateKpiSuggestionTaskInput(raw.input), cli = raw.providerId === "local_runner" && String(raw.providerConfig?.backendId).endsWith("_subscription");
-  const requested = raw.timeoutMs ?? raw.providerConfig?.timeoutMs ?? (cli ? 30_000 : 15_000);
+  const maxDuration = raw.providerId === APPLE_NATIVE_PROVIDER_ID ? APPLE_SMART_FOREGROUND_TIMEOUT_MS : cli ? 30_000 : 15_000;
+  const requested = raw.timeoutMs ?? raw.providerConfig?.timeoutMs ?? maxDuration;
   smartAssert(typeof requested === "number" && Number.isSafeInteger(requested) && requested > 0, "INVALID_TIMEOUT", "Smart timeout must be a positive integer.");
-  const duration = Math.min(requested, cli ? 30_000 : 15_000), controller = new AbortController(); let timedOut = false;
+  const duration = Math.min(requested, maxDuration), controller = new AbortController(); let timedOut = false;
   const abort = () => controller.abort(); caller.addEventListener("abort", abort, { once: true }); if (caller.aborted) abort();
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, duration);
   try {

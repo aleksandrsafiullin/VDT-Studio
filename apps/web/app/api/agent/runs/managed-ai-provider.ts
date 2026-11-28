@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { isModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
+import { isModelReasoningValue, type AiProvider, type AiTaskType } from "@vdt-studio/ai-harness";
 import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
-import { AGENT_DECISION_BATCH_CONTRACT_PROMPT_RULE } from "@vdt-studio/vdt-agent-runtime";
+import { AGENT_DECISION_BATCH_CONTRACT_PROMPT_RULE, executionExpectationSchema } from "@vdt-studio/vdt-agent-runtime";
 import {
+  getModelBackendDefinition,
   getRegisteredJsonSchema,
   getStrictResponseJsonSchema,
   normalizeRegisteredSchemaOutput,
@@ -10,10 +11,15 @@ import {
   validateRegisteredSchemaDetailed
 } from "@vdt-studio/model-bridge";
 import {
+  AiRouteProviderError,
   createAiProvider,
+  readProviderConfig,
   type AiRouteProviderRequest
 } from "@/lib/ai-route-provider";
+import { fetchPinnedProvider } from "@/lib/pinned-provider-fetch";
+import { resolvePublicProviderTarget } from "@/lib/provider-target-security";
 import { resolveTrustedStorageWriteMode } from "../../vdt/storage-write-adapter";
+import { assertAnalyticalAdmission, type AnalyticalTask, type HostExecutionAdmission } from "./execution-binding-admission";
 import { buildOpenAiAgentDecision } from "./openai-agent-decision";
 
 type RuntimeContext = ReturnType<typeof managedRuntime.createLocalRuntimeContext>;
@@ -22,10 +28,149 @@ const managedRuntimeGlobal = globalThis as typeof globalThis & {
   __vdtStudioDevelopmentRuntime?: RuntimeContext;
 };
 
+export interface TaskProviderRequest extends AiRouteProviderRequest {
+  readonly expectedExecution?: unknown;
+}
+
+export interface TaskProviderPolicy {
+  readonly task: AnalyticalTask;
+  readonly completions: readonly AiTaskType[];
+}
+
+class TaskProviderAdmissionError extends AiRouteProviderError {
+  readonly code = "BINDING_CAPABILITY_DENIED";
+}
+
+export function assertTaskProviderAdmission(request: TaskProviderRequest, policy: TaskProviderPolicy): HostExecutionAdmission {
+  // The public configuration selects an existing compatibility adapter. It cannot
+  // register a provider, override a runner manifest or set host policy.
+  const raw = request as TaskProviderRequest & Record<string, unknown>;
+  const config = request.providerConfig ?? {};
+  if (typeof config !== "object" || Array.isArray(config)) throw new TaskProviderAdmissionError("Provider configuration must be an object.");
+  if (raw.executionBindingId !== undefined || raw.executionMode !== undefined || raw.localHttpSelection !== undefined
+    || ["expectedExecution", "executionMode", "executionBindingId", "localHttpSelection", "requireVerifiedLocalHttp"].some(key => key in config)) {
+    throw new TaskProviderAdmissionError("An analytical task requires one selected provider configuration.");
+  }
+
+  const expected = request.expectedExecution === undefined ? undefined : executionExpectationSchema.safeParse(request.expectedExecution);
+  if (expected && !expected.success) throw new TaskProviderAdmissionError("The execution identity assertion is invalid.");
+  if (expected?.data?.mode === "local") {
+    throw new TaskProviderAdmissionError("Verified on-device execution is unavailable for this analytical route.");
+  }
+
+  const api = request.providerId === "openai_compatible" || request.providerId === "anthropic"
+    || request.providerId === "azure_openai" || request.providerId === "gemini";
+  const settings = readProviderConfig(config);
+  let providerId = request.providerId ?? "";
+  const modelId = (providerId === "azure_openai" ? settings.deployment : undefined) ?? settings.model ?? "";
+  let mode: HostExecutionAdmission["mode"] = "legacy";
+
+  if (providerId === "local_runner") {
+    if (["baseUrl", "endpoint", "deployment", "apiKey", "command", "args", "argsText", "providerConfig", "runnerProviderId"].some(key => key in config)) {
+      throw new TaskProviderAdmissionError("Runner destinations and credentials are manifest-owned.");
+    }
+    providerId = typeof config.backendId === "string" ? config.backendId.trim() : "";
+    const context = managedLocalRuntimeContext(providerId, policy.completions);
+    const manifest = context.manifests.get(providerId);
+    if (!manifest || !runtimeSupportsTasks(context, providerId, policy.completions)) {
+      throw new TaskProviderAdmissionError("The selected runtime does not support this analytical task.");
+    }
+    if (manifest.kind === "subscription_cli") {
+      mode = "cli_subscription";
+      if (expected && (typeof config.pairingToken === "string" || !resolveTrustedStorageWriteMode())) {
+        throw new TaskProviderAdmissionError("The selected CLI identity requires a trusted managed runtime.");
+      }
+    }
+  } else if (api) {
+    if (["backendId", "runnerUrl", "pairingToken"].some(key => key in config)) {
+      throw new TaskProviderAdmissionError("An API connection cannot include runner credentials or destination.");
+    }
+    const registryId = providerId === "gemini" ? "gemini_api" : providerId;
+    if (!getModelBackendDefinition(registryId).capabilities.structuredOutput) {
+      throw new TaskProviderAdmissionError("The selected API does not support structured completion.");
+    }
+    if (settings.apiKey?.trim()) {
+      mode = "api_keys";
+      if (expected) {
+        const target = providerId === "azure_openai" ? settings.endpoint ?? settings.baseUrl : settings.baseUrl;
+        if (!target || !URL.canParse(target) || new URL(target).protocol !== "https:") {
+          throw new TaskProviderAdmissionError("An explicit HTTPS destination is required for the asserted API connection.");
+        }
+      }
+    }
+  } else if (providerId !== "mock") {
+    throw new TaskProviderAdmissionError(providerId
+      ? "The selected provider does not support this analytical task."
+      : "Select a configured Local CLI or BYOK provider before running an AI task.");
+  }
+
+  const admission: HostExecutionAdmission = {
+    profileVersion: 1, mode, providerId, modelId, modelRevision: null, runtimeProfileVersion: null,
+    reasoning: isModelReasoningValue(config.modelReasoning) ? config.modelReasoning : null,
+    boundary: mode === "legacy" ? "unverified" : "provider_service",
+    analyticalTasks: [policy.task],
+    speech: { stt: null, tts: null, realtime: null },
+    credential: mode === "api_keys" ? { kind: "session_key", reference: providerId } : mode === "cli_subscription"
+      ? { kind: "subscription", reference: providerId } : { kind: "none" },
+    consent: mode === "legacy" ? "legacy" : "explicit_connection",
+    scope: "bound_run", research: false, delegation: false
+  };
+  try {
+    assertAnalyticalAdmission(admission, policy.task, undefined, expected?.data);
+  } catch (error) {
+    throw new TaskProviderAdmissionError(error instanceof Error ? error.message : "The selected execution identity is incompatible.");
+  }
+  return admission;
+}
+
+export function createTaskAiProvider(request: TaskProviderRequest, requestUrl: string, policy: TaskProviderPolicy): AiProvider {
+  const admission = assertTaskProviderAdmission(request, policy);
+  if (admission.mode === "legacy" && request.providerId !== "local_runner" && request.providerId !== "mock"
+    && (request.expectedExecution !== undefined || !resolveTrustedStorageWriteMode())) {
+    const settings = readProviderConfig(request.providerConfig);
+    if (request.providerId === "openai_compatible" && settings.baseUrl
+      && settings.baseUrl !== (process.env.OPENAI_COMPATIBLE_BASE_URL ?? "https://api.openai.com/v1")) {
+      throw new AiRouteProviderError("A request-supplied OpenAI-compatible base URL must also provide its own API key.");
+    }
+    throw new AiRouteProviderError("An explicit API key is required for this analytical task.");
+  }
+
+  const provider = createManagedAwareAiProvider(request, requestUrl, { fetch: request.expectedExecution !== undefined && admission.mode === "api_keys"
+    ? pinnedTaskFetch : undefined });
+  return restrictTaskProvider(provider, policy, request.expectedExecution === undefined ? undefined : admission.modelId);
+}
+
+export function restrictTaskProvider(provider: AiProvider, policy: TaskProviderPolicy, modelId?: string): AiProvider {
+  return {
+    id: provider.id, name: provider.name, type: provider.type,
+    async completeStructured(params) {
+      if (!policy.completions.includes(params.taskType)
+        || (modelId !== undefined && params.model !== undefined && params.model !== modelId)) {
+        throw new TaskProviderAdmissionError("The completion does not match the admitted analytical task or model.");
+      }
+      return provider.completeStructured(params) as Promise<never>;
+    }
+  };
+}
+
+const pinnedTaskFetch: typeof fetch = async (raw, init) => {
+  const signal = init?.signal ?? new AbortController().signal;
+  signal.throwIfAborted();
+  const target = await resolvePublicProviderTarget(String(raw));
+  try {
+    return await fetchPinnedProvider(target, {
+      method: init?.method ?? "GET", headers: new Headers(init?.headers), body: String(init?.body ?? ""), signal
+    });
+  } catch (error) {
+    signal.throwIfAborted();
+    throw new TypeError("fetch failed", { cause: error });
+  }
+};
+
 export function createManagedAwareAiProvider(
   request: AiRouteProviderRequest,
   requestUrl: string,
-  options: { retainInitialContext?: boolean | undefined } = {}
+  options: { retainInitialContext?: boolean | undefined; fetch?: typeof fetch | undefined } = {}
 ): AiProvider {
   const providerConfig = request.providerConfig ?? {};
   const needsManagedLocalRuntime =
@@ -56,7 +201,7 @@ export function createManagedAwareAiProvider(
     name: "Managed Local Runtime",
     type: "local_runner",
     async completeStructured(params) {
-      const context = managedLocalRuntimeContext(backendId, params.taskType);
+      const context = managedLocalRuntimeContext(backendId, [params.taskType]);
       const selectedModel = params.model ?? model;
       const requestId = randomUUID();
       if (params.signal?.aborted) {
@@ -213,25 +358,25 @@ function parseEncodedJson(value: unknown): unknown {
   try { return JSON.parse(value); } catch { return undefined; }
 }
 
-function managedLocalRuntimeContext(backendId: string, taskType: Parameters<AiProvider["completeStructured"]>[0]["taskType"]): RuntimeContext {
+function managedLocalRuntimeContext(backendId: string, tasks: readonly AiTaskType[]): RuntimeContext {
   const existing = managedRuntimeGlobal.__vdtStudioDevelopmentRuntime;
-  if (existing && runtimeSupportsTask(existing, backendId, taskType)) {
+  if (existing && runtimeSupportsTasks(existing, backendId, tasks)) {
     return existing;
   }
 
   const refreshed = managedRuntime.createLocalRuntimeContext(existing?.config);
+  if (existing) {
+    // Keep active requests, cancellation ownership and Smart lanes on the
+    // existing runtime even when an incoming request needs a registry refresh.
+    existing.manifests = refreshed.manifests;
+    return existing;
+  }
   managedRuntimeGlobal.__vdtStudioDevelopmentRuntime = refreshed;
   return refreshed;
 }
 
-function runtimeSupportsTask(
-  context: RuntimeContext,
-  backendId: string,
-  taskType: Parameters<AiProvider["completeStructured"]>[0]["taskType"]
-): boolean {
+function runtimeSupportsTasks(context: RuntimeContext, backendId: string, tasks: readonly AiTaskType[]): boolean {
   const manifest = context.manifests.get(backendId);
-  return Boolean(
-    manifest?.taskTypes.includes(taskType) &&
-    manifest.schemaIds.includes(schemaIdForTask(taskType))
-  );
+  return Boolean(manifest && manifest.supportLevel !== "beta-blocked" && manifest.supportLevel !== "experimental-disabled"
+    && tasks.every(task => manifest.taskTypes.includes(task) && manifest.schemaIds.includes(schemaIdForTask(task))));
 }

@@ -15,6 +15,7 @@ import {
   getExcelWorkbookCells,
   importProjectJson,
   productionVolumeProject,
+  readDecompositionAssumptions,
   type VdtProject
 } from "../../packages/vdt-core/src/index";
 
@@ -2635,11 +2636,15 @@ test("persists panel width after drag resize", { tag: "@chromium" }, async ({ pa
 test("collapses and expands the setup rail", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Panel collapse runs on desktop viewport.");
 
+  const draft = page.getByTestId("agent-instruction-input");
+  await draft.fill("Keep this unsent draft");
   await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await page.getByTestId("collapse-left-panel").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toHaveCount(0);
+  await expect(draft).toHaveCount(0);
   await page.getByTestId("expand-left-panel").click();
+  await expect(draft).toHaveValue("Keep this unsent draft");
   await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
 });
@@ -3212,6 +3217,71 @@ test("sends Cursor generation through the server-managed session binding", { tag
   await page.getByTestId("agent-send-instruction").click();
   await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("cursor_session_canary");
   await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
+});
+
+test.describe("quantity-rate assumption editor", () => {
+  const project = cloneProject(productionVolumeProject);
+  const root = project.graph.nodes.find(node => node.id === "production_volume")!;
+  const quantity = project.graph.nodes.find(node => node.id === "effective_working_time")!;
+  const rate = project.graph.nodes.find(node => node.id === "average_productivity")!;
+  root.unit = "USD";
+  quantity.name = "Asset count";
+  quantity.unit = "count";
+  quantity.type = "input";
+  delete quantity.formula;
+  rate.name = "Cost per asset";
+  rate.unit = "USD/item";
+  rate.type = "input";
+  delete rate.formula;
+  project.graph.nodes = [root, quantity, rate];
+  project.graph.edges = project.graph.edges.filter(edge => edge.sourceNodeId === root.id);
+  project.scenarios = project.scenarios.map(scenario => ({ ...scenario, overrides: [] }));
+  test.use({ productionModel: project });
+
+  test("binds quantity and rate in order and saves only the confirmed v2 relationship", { tag: "@chromium" },
+    async ({ page, request, productionWorkspace }, testInfo) => {
+      test.skip(testInfo.project.name !== "chromium", "Relationship editor persistence is verified in Chromium.");
+      await selectNodeInInspector(page, root.id);
+      const assumptions = page.getByRole("region", { name: "Decomposition assumptions" });
+      await assumptions.getByRole("button", { name: "Add assumption" }).click();
+      await assumptions.getByLabel("Relationship type").selectOption("quantity_rate");
+      const quantityControl = assumptions.getByLabel("Quantity KPI (count)");
+      const rateControl = assumptions.getByLabel("Rate KPI (per item)");
+      const quantityValue = JSON.stringify([quantity.id, quantity.unit]);
+      const rateValue = JSON.stringify([rate.id, rate.unit]);
+      const statement = "Multiply the number of assets by the cost per asset.";
+      const confirmation = assumptions.getByLabel("I confirm this relationship");
+      const save = assumptions.getByRole("button", { name: "Record assumption" });
+      await quantityControl.selectOption(rateValue);
+      await rateControl.selectOption(quantityValue);
+      await assumptions.getByRole("textbox", { name: "Relationship", exact: true }).fill(statement);
+      await assumptions.getByLabel("When would the conclusion change?").fill("The assets use different unit costs.");
+      await confirmation.check();
+      await save.click();
+      await expect(assumptions.getByRole("alert")).toHaveText("Choose a quantity and a rate that multiply to the output unit without conversion.");
+      await quantityControl.selectOption("");
+      await rateControl.selectOption(rateValue);
+      await quantityControl.selectOption(quantityValue);
+      await expect(confirmation).not.toBeChecked();
+      await save.click();
+      await expect(assumptions.getByRole("alert")).toContainText("Confirm the relationship");
+      await confirmation.check();
+      await save.click();
+      await expect(assumptions.getByText(statement, { exact: true })).toBeVisible();
+
+      await page.getByTestId("back-to-project-workspace").click();
+      await expect(page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`)).toBeVisible();
+      const response = await request.get(`/api/vdt/vdts/${productionWorkspace.vdtId}`);
+      expect(response.ok()).toBeTruthy();
+      const result = await response.json() as { activeProject: VdtProject };
+      const saved = result.activeProject.graph.nodes.find(node => node.id === root.id)!;
+      expect(saved.formula).toBe(root.formula);
+      expect(readDecompositionAssumptions(saved)).toMatchObject([{
+        statement, evidence: { kind: "user_confirmed", quote: statement },
+        relationship: { kind: "quantity_rate", operandNodeIds: [quantity.id, rate.id], operandUnits: ["count", "USD/item"], unit: "USD" }
+      }]);
+      expect(saved.assumptions?.[0]).toContain("Decomposition relationship v2: ");
+    });
 });
 
 test.describe("visual formula editor", () => {

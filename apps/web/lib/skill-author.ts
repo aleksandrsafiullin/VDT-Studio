@@ -4,9 +4,12 @@ import { getStrictResponseJsonSchema, normalizeRegisteredSchemaOutput } from "@v
 import { agentDecisionSchema } from "@vdt-studio/vdt-agent-runtime";
 import type { AiProvider } from "@vdt-studio/ai-harness";
 import { z } from "zod";
+import type { TaskProviderPolicy } from "../app/api/agent/runs/managed-ai-provider";
 import { applySkillChanges, skillAuthorSource, skillTopologyBlocks, type SkillUpdateChange, type SkillUpdateProposal, type SkillUpdateTarget } from "./skill-workflow";
 
 export { skillAuthorSource } from "./skill-workflow";
+
+export const SKILL_AUTHOR_PROVIDER_POLICY: TaskProviderPolicy = { task: "bounded_task", completions: ["agent_decision"] };
 
 export class SkillAuthorInputError extends Error {
   readonly code = "SKILL_CONTEXT_TOO_LARGE";

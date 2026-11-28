@@ -775,6 +775,26 @@ export class SqliteVdtDatabase implements VdtDatabase {
     }, "read");
   }
 
+  visitScopedConversationDecisionMessages(scope: ConversationScope, visit: (message: MessageRecord) => void): void {
+    this.transaction(() => {
+      const conversation = this.findScopedConversation(scope);
+      if (!conversation) return;
+      const rows = this.db.prepare(`
+        SELECT m.id, m.conversation_id, m.role, m.content, m.agent_run_id, m.run_context_json, m.position, m.created_at
+        FROM messages AS m
+        JOIN agent_runs AS r ON r.id = m.agent_run_id
+          AND r.project_id = ? AND r.vdt_id = ? AND r.conversation_id = m.conversation_id
+        WHERE m.conversation_id = ?
+          AND CASE WHEN json_valid(m.run_context_json) THEN
+            (m.role = 'user' AND json_extract(m.run_context_json, '$.kind') IN ('instruction', 'answer'))
+            OR (m.role = 'assistant' AND json_extract(m.run_context_json, '$.kind') = 'question')
+          ELSE 0 END
+        ORDER BY m.position ASC, m.created_at ASC, m.id ASC
+      `).iterate(scope.projectId, scope.vdtId, conversation.id);
+      for (const row of rows) visit(messageFromRow(row as Row));
+    }, "read");
+  }
+
   private findScopedConversation(scope: ConversationScope): ConversationRecord | null {
     const vdt = this.getVdt(scope.vdtId);
     const conversation = this.getConversation(scope.conversationId);

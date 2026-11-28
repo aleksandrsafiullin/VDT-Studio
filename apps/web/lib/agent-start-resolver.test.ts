@@ -95,6 +95,23 @@ describe("agent-start-resolver", () => {
     modelId: "qwen3"
   };
 
+  it("keeps adaptive offers out of normal binding lookup and forwards only an explicitly admitted offer", () => {
+    const offer = {
+      ...localBinding, bindingId: "local_model_ollama_adaptive_once",
+      adaptiveReasoning: { start: false, repair: "low" },
+      admission: { mode: "legacy" as const, profileVersion: 1 as const, providerId: "ollama", modelId: "qwen3", modelRevision: null }
+    };
+    const resolved = resolveExecutionSettings(localSettings);
+    const bindings = bindingsFixture({ bindings: [offer, localBinding] });
+    expect(resolveExecutionBindingId(bindings, localSettings, resolved.providerId, resolved.providerConfig)).toBe(localBinding.bindingId);
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, {
+      ...resolved, explicitBindingId: offer.bindingId
+    })).toThrow("scoped Ollama admission");
+    expect(buildAgentPublicStartRequest(commonRequest, localSettings, bindings, {
+      ...resolved, admittedBinding: offer
+    })).toEqual({ ...commonRequest, executionBindingId: offer.bindingId, expectedExecution: offer.admission });
+  });
+
   it("matches Local models only to an exact server-owned Model Agent backend/model", () => {
     const resolved = resolveExecutionSettings(localSettings);
     const bindings = bindingsFixture({ bindings: [localBinding] });

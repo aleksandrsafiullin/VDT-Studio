@@ -5,12 +5,14 @@ import { createPortal } from "react-dom";
 import { Download, FileText, Loader2, Sparkles, X } from "lucide-react";
 import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { Button } from "@/components/ui/button";
+import { appleIsExpected, appleRecoveryMessage } from "@/lib/apple-first-launch";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { recordSupportError } from "@/lib/support-error-events";
 import { canAnalyzeProjectFile, DATA_FILE_ACCEPT, listProjectFiles, updateProjectFile, uploadProjectFile, type ProjectFileSource } from "@/lib/project-files-client";
 import { useVdtStudioStore } from "@/components/vdt/vdt-store";
+import { editorHandoffView, type EditorHandoffAttempt } from "@/lib/editor-handoff-controller";
 import { IncomingKpiMappingReview } from "./incoming-kpi-mapping-review";
-import { captureFileImportTarget, FILE_IMPORT_REQUEST_EVENT, fileImportContextError, type FileImportTargetContext } from "./import-context";
+import { captureFileImportAnalysisExecution, captureFileImportTarget, FILE_IMPORT_REQUEST_EVENT, fileImportContextError, type FileImportTargetContext } from "./import-context";
 
 type WizardStatus = "idle" | "uploading" | "attaching" | "analyzing" | "saving" | "applying";
 interface DiscoveryResponse {
@@ -23,6 +25,7 @@ interface ImportSession {
   context: FileImportTargetContext;
   targetName: string;
   source: "node_action" | "agent_composer_attachment";
+  handoff?: EditorHandoffAttempt | undefined;
 }
 
 /** One shared modal serves both the composer and every node action. */
@@ -31,7 +34,13 @@ export function DataImportWizard() {
   const vdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
   const project = useVdtStudioStore((state) => state.project);
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const applePreview = useVdtStudioStore((state) => state.appleNativePreview);
+  const appleLaunch = useVdtStudioStore((state) => state.appleFirstLaunch);
+  const canAnalyzeWithAi = applePreview?.settings === executionSettings
+    || appleIsExpected(executionSettings.analyticalSourceChoice, appleLaunch)
+    || resolveExecutionSettings(executionSettings).providerId !== "mock";
   const [session, setSession] = useState<ImportSession>();
+  const sessionRef = useRef(session); sessionRef.current = session;
   const [file, setFile] = useState<File>();
   const [sources, setSources] = useState<ProjectFileSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
@@ -50,7 +59,8 @@ export function DataImportWizard() {
   const previousFocus = useRef<HTMLElement | null>(null);
   const running = status !== "idle";
 
-  function close() {
+  function close(staged = false) {
+    if (!staged) session?.handoff?.cancel();
     operationRef.current += 1;
     requestRef.current?.abort();
     busyRef.current = false;
@@ -62,14 +72,16 @@ export function DataImportWizard() {
   useEffect(() => {
     function open(event: Event) {
       if (busyRef.current) return;
-      const detail = (event as CustomEvent<{ targetNodeId: string; source: ImportSession["source"] }>).detail;
+      const detail = (event as CustomEvent<{ targetNodeId: string; source: ImportSession["source"]; handoff?: EditorHandoffAttempt | undefined }>).detail;
       const state = useVdtStudioStore.getState();
       const context = captureFileImportTarget(state.project, state.workspace, detail.targetNodeId);
-      if (!context) return;
+      if (!context || (detail.handoff && !detail.handoff.matchesOrigin(editorHandoffView(state)))) return;
+      sessionRef.current?.handoff?.cancel();
+      event.preventDefault();
       operationRef.current += 1;
       requestRef.current?.abort();
       previousFocus.current = document.activeElement as HTMLElement | null;
-      setSession({ context, targetName: state.project.graph.nodes.find((node) => node.id === context.targetNodeId)!.name, source: detail.source });
+      setSession({ context, targetName: state.project.graph.nodes.find((node) => node.id === context.targetNodeId)!.name, source: detail.source, handoff: detail.handoff });
       setFile(undefined);
       setSelectedSourceId("");
       setSnapshot(undefined);
@@ -210,18 +222,27 @@ export function DataImportWizard() {
     setSnapshot(undefined);
     try {
       let state = assertCurrent(context, operation);
+      let preview = useAi && state.appleNativePreview?.settings === state.executionSettings ? state.appleNativePreview.binding : undefined;
+      if (useAi && !preview && appleIsExpected(state.executionSettings.analyticalSourceChoice, state.appleFirstLaunch)) {
+        preview = await state.refreshAppleAnalyticalDefault();
+        state = assertCurrent(context, operation);
+        if (!preview || state.appleNativePreview?.binding.bindingId !== preview.bindingId
+          || state.appleNativePreview.settings !== state.executionSettings) throw new Error(appleRecoveryMessage(state.appleFirstLaunch));
+      }
+      const execution = useAi ? captureFileImportAnalysisExecution(state) : undefined;
       let datasetId = selectedSourceId;
       if (file) {
         datasetId = await retainFile(file, context, operation, controller.signal);
-        state = assertCurrent(context, operation);
       } else if (!sources.find((source) => source.datasetId === datasetId)?.vdtIds.includes(context.vdtId)) {
         // Selecting a shared project file grants this tree its own retained association.
         await updateProjectFile(context.projectId, datasetId, { action: "attach", vdtId: context.vdtId }, controller.signal);
-        state = assertCurrent(context, operation);
+        assertCurrent(context, operation);
+        setSources(existing => existing.map(source => source.datasetId === datasetId
+          ? { ...source, vdtIds: [...new Set([...source.vdtIds, context.vdtId])] } : source));
       }
+      state = assertCurrent(context, operation);
+      execution?.assertCurrent(state);
       setStatus("analyzing");
-      const { providerId, providerConfig } = useAi ? resolveExecutionSettings(state.executionSettings) : { providerId: undefined, providerConfig: undefined };
-      if (useAi && providerId === "mock") throw new Error("Select an AI provider in Settings, or choose Analyze file locally.");
       const response = await fetch("/api/data/discovery/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -230,12 +251,13 @@ export function DataImportWizard() {
           projectId: context.projectId, vdtId: context.vdtId, targetNodeId: context.targetNodeId, datasetId,
           entryContext: { source: session.source, cardName: session.targetName, targetNodeId: context.targetNodeId, purpose: "incoming_kpis" },
           project: state.project,
-          ...(providerId === undefined ? {} : { providerId, providerConfig: providerId === "local_runner" && state.runnerPairingToken ? { ...providerConfig, pairingToken: state.runnerPairingToken } : providerConfig })
+          ...execution?.request
         })
       });
       const payload = await readJson<DiscoveryResponse>(response);
+      state = assertCurrent(context, operation);
+      execution?.assertCurrent(state);
       if (!response.ok || !payload.ok || !payload.snapshot) throw new Error(payload.error?.message ?? "Data discovery failed.");
-      assertCurrent(context, operation);
       acceptSnapshot(payload.snapshot, context);
       finishOperation(operation);
     } catch (caught) { finishOperation(operation, caught); }
@@ -273,9 +295,9 @@ export function DataImportWizard() {
       if (!response.ok || !payload.ok || !payload.snapshot || !payload.changeSet) throw new Error(payload.error?.message ?? "Server validation blocked this preview.");
       validateSnapshotTarget(payload.snapshot, context);
       const current = assertCurrent(context, operation);
-      if (!current.stageDataDiscoveryChangeSet(payload.changeSet, context)) throw new Error("The import target changed. Reopen and analyze the file again.");
+      if (!current.stageDataDiscoveryChangeSet(payload.changeSet, context, session.handoff)) throw new Error("The import target changed. Reopen and analyze the file again.");
       current.setUiPreference("leftPanelCollapsed", false);
-      close();
+      close(true);
     } catch (caught) { finishOperation(operation, caught); }
   }
 
@@ -290,7 +312,7 @@ export function DataImportWizard() {
       <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="data-import-title" tabIndex={-1} className="flex max-h-[92dvh] w-full max-w-4xl flex-col rounded-lg border border-line bg-white shadow-xl outline-none" data-testid="data-import-wizard">
         <header className="flex items-start justify-between gap-3 border-b border-line p-4">
           <div><h2 id="data-import-title" className="text-base font-semibold text-ink">Create incoming KPIs from file</h2><p className="mt-1 text-sm text-muted" data-testid="data-import-target">Target: {session.targetName}</p></div>
-          <Button type="button" size="icon" variant="ghost" className="h-8 w-8" icon={<X className="h-4 w-4" />} aria-label="Close file import" onClick={close} />
+          <Button type="button" size="icon" variant="ghost" className="h-8 w-8" icon={<X className="h-4 w-4" />} aria-label="Close file import" onClick={() => close()} />
         </header>
         <div className="overflow-y-auto p-4">
           <p className="text-xs leading-5 text-muted">Choose a project source or upload a file. Review the categories and calculation before creating the hierarchy. The original file stays with this project.</p>
@@ -314,7 +336,7 @@ export function DataImportWizard() {
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" size="sm" variant="primary" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} disabled={analysisDisabled} onClick={() => void analyze(false)} data-testid="data-import-analyze">{status === "uploading" ? "Uploading…" : status === "attaching" ? "Attaching…" : status === "analyzing" ? "Analyzing…" : "Analyze file locally"}</Button>
-            {resolveExecutionSettings(executionSettings).providerId !== "mock" ? <Button type="button" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} disabled={analysisDisabled} onClick={() => void analyze(true)} data-testid="data-import-analyze-ai">Analyze with AI</Button> : null}
+            {canAnalyzeWithAi ? <Button type="button" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} disabled={analysisDisabled} onClick={() => void analyze(true)} data-testid="data-import-analyze-ai">Analyze with AI</Button> : null}
           </div>
           {contextError || error ? <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="data-import-error">{contextError ?? error}</div> : null}
           {snapshot ? <IncomingKpiMappingReview snapshot={snapshot} options={options} running={running} mappingChanged={mappingChanged} onOptionsChange={(next) => { setOptions(next); setMappingChanged(true); }} onCalculate={() => void calculatePreview()} /> : null}

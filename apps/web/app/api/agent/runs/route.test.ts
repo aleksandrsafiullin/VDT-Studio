@@ -15,7 +15,9 @@ import { GET as getEvents } from "./[runId]/events/route";
 import { POST as postMessage } from "./[runId]/messages/route";
 import { POST as cancelRun } from "./[runId]/cancel/route";
 import { agentExecutionBindingRegistry, agentRuntime } from "./runtime";
-import { DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID } from "./execution-bindings";
+import { AgentExecutionBindingRegistry, DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID } from "./execution-bindings";
+import { openAiSessionBindings } from "./byok-bindings";
+import { createLocalModelAgentBinding } from "./local-model-bindings";
 import {
   buildModelProviderTurnPayload,
   currentModelAgentToolCatalogHash,
@@ -52,16 +54,30 @@ function openAiStructuredResponse(output: unknown): Response {
   });
 }
 
-function skillResolutionResponse(init: RequestInit | undefined, skillId?: string): Response | undefined {
+function skillResolutionResponse(init: RequestInit | undefined, skillId?: string, reason = "The skill covers the requested process."): Response | undefined {
   const body = JSON.parse(String(init?.body));
-  const prompt = JSON.parse(body.messages.filter((message: { role: string }) => message.role === "user").at(-1).content);
+  const content: string = body.messages.filter((message: { role: string }) => message.role === "user").at(-1).content;
+  const prompt = JSON.parse(content.split("\n\nThe previous response was invalid:", 1)[0]!);
   const resolution = prompt.hostObservation?.skillResolution;
   if (!resolution || resolution.outcome) return undefined;
   const read = resolution.reads?.find((receipt: { skillId: string }) => receipt.skillId === skillId);
   const call = !resolution.catalogBrowsed ? { toolName: "skill.list", args: {} }
+    : !skillId && typeof resolution.nextOffset === "number"
+      ? { toolName: "skill.list", args: { offset: resolution.nextOffset } }
     : !skillId ? { toolName: "skill.report_gap", args: { reason: "No catalog skill covers the requested process." } }
     : !read ? { toolName: "skill.read", args: { skillId } }
-    : { toolName: "skill.select", args: { skillId, readReceiptId: read.readReceiptId, reason: "The skill covers the requested process." } };
+    : { toolName: "skill.select", args: { skillId, readReceiptId: read.readReceiptId, reason } };
+  if (read && call.toolName === "skill.select") {
+    expect(body.response_format.json_schema.schema.$defs.controlCall.anyOf).toContainEqual(expect.objectContaining({
+      properties: expect.objectContaining({
+        toolName: { const: "skill.select", type: "string" },
+        args: { anyOf: expect.arrayContaining([expect.objectContaining({ properties: expect.objectContaining({
+          readReceiptId: { const: read.readReceiptId, type: "string" },
+          confirmMethod: { anyOf: [{ type: "boolean" }, { type: "null" }] }
+        }) })]) }
+      })
+    }));
+  }
   return openAiStructuredResponse({
     turnId: body.response_format?.json_schema?.schema?.properties?.turnId?.const ?? prompt.exchangeId,
     sessionState: "Resolving the skill before construction.",
@@ -401,7 +417,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         vi.stubGlobal("fetch", async (_url: unknown, init?: RequestInit) => {
           const body = JSON.parse(String(init?.body));
           const turnId = body.response_format.json_schema.schema.properties.turnId.const;
-          const prompt = JSON.parse(body.messages.find((message: { role: string }) => message.role === "user").content);
+          const content: string = body.messages.find((message: { role: string }) => message.role === "user").content;
+          const prompt = JSON.parse(content.split("\n\nThe previous response was invalid:", 1)[0]!);
           firstBrief ??= prompt.originalBrief;
           const resolution = skillResolutionResponse(init, skillId);
           if (resolution) return resolution;
@@ -535,6 +552,10 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     let callIndex = 0;
     const wrongOpening = "This yields 5,500 USD for the month.";
     const wrongFinal = "Итог расчёта — 5 500 USD.";
+    const skillReason = "Метод учитывает выручку после скидок и возвратов.";
+    const skillStatus = expect.objectContaining({
+      kind: "status", text: `Finance revenue and profit decomposition. ${skillReason}`
+    });
     const providerFetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       const turnId = body.response_format.json_schema.schema.properties.turnId.const;
@@ -555,7 +576,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       });
     });
     vi.stubGlobal("fetch", (url: unknown, init?: RequestInit) =>
-      skillResolutionResponse(init, "finance.revenue_profit") ?? providerFetch(url, init));
+      skillResolutionResponse(init, "finance.revenue_profit", skillReason) ?? providerFetch(url, init));
     const bindingId = `direct-openai-verified-calculation-${scenario.replaceAll(" ", "-")}`;
     const dispose = agentExecutionBindingRegistry.register({
       bindingId, enabled: true, modelId: "gpt-5-nano",
@@ -592,7 +613,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         events: expect.arrayContaining([
           expect.objectContaining({ type: "tool_call_completed", message: "run.request_finish: FINISH_VERIFIED." })
         ]),
-        chatMessages: [expect.objectContaining({ role: "user", text: prompt })]
+        chatMessages: [expect.objectContaining({ role: "user", text: prompt }), skillStatus]
       });
       expect(JSON.stringify(beforeFinal)).not.toContain(wrongOpening);
       const requests = providerFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
@@ -687,6 +708,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         finalReport: finalText,
         chatMessages: [
           expect.objectContaining({ role: "user", text: prompt }),
+          skillStatus,
           expect.objectContaining({ kind: "final_report", text: finalText })
         ]
       });
@@ -870,22 +892,20 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       const firstPrompt = JSON.parse(firstProviderBody.messages.find((message) => message.role === "user")!.content) as {
         delta: { type: string; context?: { tools?: unknown[]; brief?: { personalisation?: unknown } } };
       };
-      expect(firstPrompt.delta.type).toBe("initial_context");
-      expect(firstPrompt.delta.context?.brief?.personalisation).toEqual(instructions);
       expect(JSON.stringify(firstPrompt)).not.toContain(retiredProjectRule);
-      expect(firstPrompt.delta.context?.tools?.length).toBeGreaterThan(10);
       if (providerId === "ollama") {
-        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.add_driver"))
-          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
-        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "skill.read"))
-          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
-        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "skill.compile_recipe"))
-          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
+        expect(firstPrompt).toMatchObject({
+          originalBrief: { personalisation: instructions },
+          toolSchemasAvailable: ["skill.list"]
+        });
+        expect(firstPrompt).not.toHaveProperty("delta");
         expect(JSON.stringify(firstProviderBody.format)).toContain('"toolName":{"type":"string","const":"skill.list"}');
         expect(JSON.stringify(firstProviderBody.format)).not.toContain('"toolName":{"type":"string","const":"skill.search"}');
         expect(JSON.stringify(firstProviderBody.format)).not.toContain('"toolName":{"type":"string","const":"vdt.add_driver"}');
-        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.layout"))
-          .toMatchObject({ inputSchemaAvailableVia: "tools.describe" });
+      } else {
+        expect(firstPrompt.delta.type).toBe("initial_context");
+        expect(firstPrompt.delta.context?.brief?.personalisation).toEqual(instructions);
+        expect(firstPrompt.delta.context?.tools?.length).toBeGreaterThan(10);
       }
 
       const answerResponse = await postMessage(jsonRequest(
@@ -917,20 +937,29 @@ describe("agent runs API", { timeout: 30_000 }, () => {
           };
         };
       };
-      expect(secondPrompt.delta).toMatchObject({ type: "human_input" });
-      expect(secondPrompt.delta).not.toHaveProperty("context");
-      expect(secondPrompt.sessionContinuation).toMatchObject({
-        schemaVersion: 1,
-        confirmedTurnCount: 1,
-        semanticState: firstTurn.sessionState,
-        lastConfirmed: {
-          exchangeId: "exchange-1-1",
-          stableCallKey: "turn-1-1"
-        }
-      });
-      expect(secondPrompt.sessionContinuation.contextHash).toMatch(/^sha256:[a-f0-9]{64}$/);
-      expect(secondPrompt.sessionContinuation.lastConfirmed.inputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
-      expect(secondPrompt.sessionContinuation.lastConfirmed.outputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      if (providerId === "ollama") {
+        expect(secondPrompt).toMatchObject({
+          originalBrief: { personalisation: instructions },
+          confirmedKnowledge: { recentUserAnswers: [expect.objectContaining({ answers: { period: "year" } })] },
+          toolSchemasAvailable: ["skill.list"]
+        });
+        expect(secondPrompt).not.toHaveProperty("delta");
+      } else {
+        expect(secondPrompt.delta).toMatchObject({ type: "human_input" });
+        expect(secondPrompt.delta).not.toHaveProperty("context");
+        expect(secondPrompt.sessionContinuation).toMatchObject({
+          schemaVersion: 1,
+          confirmedTurnCount: 1,
+          semanticState: firstTurn.sessionState,
+          lastConfirmed: {
+            exchangeId: "exchange-1-1",
+            stableCallKey: "turn-1-1"
+          }
+        });
+        expect(secondPrompt.sessionContinuation.contextHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(secondPrompt.sessionContinuation.lastConfirmed.inputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(secondPrompt.sessionContinuation.lastConfirmed.outputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      }
       const secondPromptText = JSON.stringify(secondPrompt);
       expect(secondPromptText).toContain("Answer in Russian.");
       expect(secondPromptText).toContain("Explain assumptions.");
@@ -1525,6 +1554,166 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }
   });
 
+  it("rejects a forged mode, model, or revision and web research from an unverified local binding before starting work", async () => {
+    const binding = createLocalModelAgentBinding("ollama", "qwen3:8b", currentModelAgentToolCatalogHash());
+    const dispose = agentExecutionBindingRegistry.register(binding);
+    const providerFetch = vi.fn();
+    vi.stubGlobal("fetch", providerFetch);
+    const start = {
+      mode: "review_project",
+      outcome: "answer",
+      input: { rootKpi: "Output", prompt: "Explain this KPI." },
+      executionBindingId: binding.bindingId
+    };
+    const expectedExecution = { mode: "legacy", profileVersion: 1, providerId: "ollama", modelId: binding.modelId, modelRevision: null };
+    try {
+      const previousIds = agentRunIds();
+      for (const attempt of [
+        { expectedExecution: { ...expectedExecution, mode: "local" } },
+        { expectedExecution: { ...expectedExecution, providerId: "openai_compatible" } },
+        { expectedExecution: { ...expectedExecution, modelId: "different-model" } },
+        { expectedExecution: { ...expectedExecution, modelRevision: `sha256:${"b".repeat(64)}` } },
+        { expectedExecution, options: { researchMode: "on" } }
+      ]) {
+        const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", { ...start, ...attempt }));
+        expect(response.status).toBe(409);
+        expect((await readJson(response)).error?.code).toBe("AGENT_EXECUTION_CAPABILITY_DENIED");
+      }
+      expect(agentRunIds()).toEqual(previousIds);
+      expect(providerFetch).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("consumes a BYOK start offer once and continues its live checkpoint with the pinned provider", async () => {
+    vi.stubEnv("OPENAI_COMPATIBLE_BASE_URL", "https://model.example.test/v1");
+    const offer = openAiSessionBindings(agentExecutionBindingRegistry).admitProvider({
+      providerId: "openai_compatible",
+      providerConfig: { model: "pinned-api-model", apiKey: "synthetic-session-key", baseUrl: "https://model.example.test/v1" }
+    }, currentModelAgentToolCatalogHash());
+    const providerFetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("pinned-api-model");
+      const prompt = JSON.parse(body.messages.filter((message: { role: string }) => message.role === "user").at(-1).content);
+      const question = providerFetch.mock.calls.length === 1 ? "first_scope" : "second_scope";
+      return openAiStructuredResponse({
+        turnId: prompt.exchangeId,
+        sessionState: "Clarify the scope.",
+        assistantMessage: null,
+        action: {
+          type: "question", messageId: `message-${question}`, questionSetId: `questions-${question}`,
+          questions: [{ id: question, question: "Which project scope applies?", reason: "The requested scope is ambiguous.", required: true, expectedAnswerType: "text" }]
+        }
+      });
+    });
+    vi.stubGlobal("fetch", providerFetch);
+    const request = {
+      mode: "review_project",
+      outcome: "answer",
+      input: { rootKpi: "Output", prompt: "Explain this KPI." },
+      executionBindingId: offer.bindingId,
+      expectedExecution: { mode: "api_keys", profileVersion: 1, providerId: offer.backendId, modelId: offer.modelId, modelRevision: null }
+    };
+    const attempts = await Promise.all([startRun(jsonRequest("http://localhost:3000/api/agent/runs", request)),
+      startRun(jsonRequest("http://localhost:3000/api/agent/runs", request))]);
+    const started = attempts.find(response => response.status === 200);
+    expect(attempts.map(response => response.status).sort()).toEqual([200, 409]);
+    const { runId } = await readJson(started!);
+    const routeParams = { params: Promise.resolve({ runId: runId! }) };
+    try {
+      await waitForRunSnapshot(runId!, snapshot => snapshot.pendingQuestions?.[0]?.id === "first_scope");
+      expect(agentExecutionBindingRegistry.has(offer.bindingId)).toBe(false);
+      const mismatched = await postMessage(jsonRequest(`http://localhost:3000/api/agent/runs/${runId}/messages`, {
+        type: "user_answer", answers: { first_scope: "Use another mode." }, expectedExecutionMode: "local"
+      }), routeParams);
+      expect(mismatched.status).toBe(409);
+      expect((await readJson(mismatched)).error?.code).toBe("AGENT_EXECUTION_CAPABILITY_DENIED");
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+      expect(agentRuntime.store.getSnapshot(runId!).pendingQuestions?.[0]?.id).toBe("first_scope");
+      const resumed = await postMessage(jsonRequest(`http://localhost:3000/api/agent/runs/${runId}/messages`, {
+        type: "user_answer", answers: { first_scope: "Use the current model." }, expectedExecutionMode: "api_keys"
+      }), routeParams);
+      expect(resumed.status).toBe(200);
+      await waitForRunSnapshot(runId!, snapshot => snapshot.pendingQuestions?.[0]?.id === "second_scope");
+      expect(providerFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST" }), routeParams);
+      await waitForSupervisorReleased(runId!);
+    }
+  });
+
+  it("uses the owned transport for verified Local and fences a changed revision before checkpoint effects", async () => {
+    const revision = `sha256:${"b".repeat(64)}`;
+    let observedRevision = revision;
+    let turns = 0;
+    const ownedFetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("verified-model:1");
+      const questionReview = JSON.stringify(body.format).includes('"questionDisposition"');
+      if (!questionReview) turns++;
+      const scope = turns === 1 ? "local_scope" : "revised_scope";
+      return Response.json({ done: true, message: { content: JSON.stringify({
+        turnId: `local-turn-${turns}`,
+        sessionState: "Clarify scope.",
+        assistantMessage: null,
+        action: {
+          type: "question", messageId: `message-${scope}`, questionSetId: `questions-${scope}`,
+          questions: [{
+            id: scope, question: "Which scope applies?", reason: "The scope is ambiguous.",
+            required: true, expectedAnswerType: "text"
+          }]
+        },
+        ...(questionReview ? { questionDisposition: "ask_user" } : {})
+      }) } });
+    });
+    const fixture = new AgentExecutionBindingRegistry([], {
+      resolveOwnedLocalHttpRoute: (target, selection) => selection.modelRevision === observedRevision
+        ? { ...target, ...selection, fetch: ownedFetch } : undefined
+    });
+    vi.spyOn(agentExecutionBindingRegistry, "revalidateLocalRoute").mockImplementation(definition => fixture.revalidateLocalRoute(definition));
+    const ambientFetch = vi.fn();
+    vi.stubGlobal("fetch", ambientFetch);
+    const binding = createLocalModelAgentBinding("ollama", "verified-model:1", currentModelAgentToolCatalogHash(), undefined, {
+      providerId: "ollama", modelId: "verified-model:1", profileVersion: "fixture:v1", modelRevision: revision
+    });
+    const dispose = agentExecutionBindingRegistry.register(binding);
+    let runId: string | undefined;
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "review_project", outcome: "answer", input: { rootKpi: "Output", prompt: "Explain output." },
+        executionBindingId: binding.bindingId,
+        expectedExecution: { mode: "local", profileVersion: 1, providerId: "ollama", modelId: binding.modelId, modelRevision: revision }
+      }));
+      expect(response.status).toBe(200);
+      ({ runId } = await readJson(response));
+      await waitForRunSnapshot(runId!, snapshot => snapshot.pendingQuestions?.[0]?.id === "local_scope");
+      const params = { params: Promise.resolve({ runId: runId! }) };
+      const accepted = await postMessage(jsonRequest(`http://localhost:3000/api/agent/runs/${runId}/messages`, {
+        type: "user_answer", answers: { local_scope: "Current project." }, expectedExecutionMode: "local"
+      }), params);
+      expect(accepted.status).toBe(200);
+      await waitForRunSnapshot(runId!, snapshot => snapshot.pendingQuestions?.[0]?.id === "revised_scope");
+      const acceptedCalls = ownedFetch.mock.calls.length;
+      observedRevision = `sha256:${"c".repeat(64)}`;
+      const responseToQuestion = await postMessage(jsonRequest(`http://localhost:3000/api/agent/runs/${runId}/messages`, {
+        type: "user_answer", answers: { revised_scope: "The confirmed selection." }, expectedExecutionMode: "local"
+      }), params);
+      expect(responseToQuestion.status).toBe(409);
+      expect(agentRuntime.store.getSnapshot(runId!).pendingQuestions?.[0]?.id).toBe("revised_scope");
+      expect(ownedFetch).toHaveBeenCalledTimes(acceptedCalls);
+      expect(ambientFetch).not.toHaveBeenCalled();
+    } finally {
+      if (runId) {
+        await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST" }), {
+          params: Promise.resolve({ runId })
+        });
+        await waitForSupervisorReleased(runId);
+      }
+      dispose();
+    }
+  });
+
   it("keeps the legacy per-decision provider route disabled in production without explicit opt-in", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED", "false");
@@ -1904,6 +2093,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       taskTypes: staleManifest.taskTypes.filter((taskType) => taskType !== "agent_decision"),
       schemaIds: staleManifest.schemaIds.filter((schemaId) => schemaId !== "agent-decision-v1")
     }));
+    const staleManifests = staleContext.manifests;
+    const ownedRuns = staleContext.runs;
     runtimeGlobal.__vdtStudioDevelopmentRuntime = staleContext;
 
     const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
@@ -1925,7 +2116,10 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     expect(response.status).toBe(200);
     expect(body.snapshot?.status).toBe("running");
     await waitForManagedRuntimeRun();
-    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime).not.toBe(staleContext);
+    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime).toBe(staleContext);
+    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime?.runs).toBe(ownedRuns);
+    expect(staleContext.manifests).not.toBe(staleManifests);
+    expect(staleManifests.get("mock")?.taskTypes).not.toContain("agent_decision");
     expect(runtimeGlobal.__vdtStudioDevelopmentRuntime?.manifests.get("mock")?.taskTypes).toContain("agent_decision");
     expect(runtimeGlobal.__vdtStudioDevelopmentRuntime?.manifests.get("mock")?.schemaIds).toContain("agent-decision-v1");
   });
@@ -2078,7 +2272,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     const response = await POST(jsonRequest("http://localhost:3000/api/agent/runs", {
       mode: "generate_vdt",
       input: { rootKpi: "Ore hauled" },
-      executionBindingId: bindingId
+      executionBindingId: bindingId,
+      expectedExecution: { mode: "cli_subscription", profileVersion: 1, providerId: `${cliId}_subscription`, modelId: "auto", modelRevision: null }
     }));
     const body = await readJson(response);
 

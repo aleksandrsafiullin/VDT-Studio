@@ -38,7 +38,7 @@ describe("execution mode tabs", () => {
     const html = renderToStaticMarkup(<ExecutionModeSettings />);
     expect(html).toContain('data-testid="execution-mode-panel-local-models"');
     expect(html).not.toContain('data-testid="execution-mode-panel-local-cli"');
-    expect(html).toContain("Local models · On this computer");
+    expect(html).toContain("Local runtime · Offline configuration unverified");
     expect(html).not.toContain("Local AI");
     expect(html.match(/role="tab"/g)).toHaveLength(3);
   });

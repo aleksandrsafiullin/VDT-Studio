@@ -217,11 +217,13 @@ export async function main(argv = process.argv.slice(2)) {
   let result;
   if (options.command === "check") {
     const oracles = await loadOracles();
+    const { checkWorkspaceSuites } = await import("./evaluate-agent-autonomy-workspace.mjs");
+    const workspaceSuites = await checkWorkspaceSuites();
     const ids = publicSuite.cases.map((entry) => entry.id).sort();
     if (JSON.stringify(ids) !== JSON.stringify(oracles.cases.map((entry) => entry.id).sort())) fail("Public/private case coverage differs.");
     for (const entry of publicSuite.cases) for (const asset of entry.assets ?? []) await readFile(resolve(dirname(REQUESTS_PATH), asset));
     result = { ok: true, caseCount: ids.length, evaluationClass: "test_assets_only", liveAgentRuns: 0, autonomyAssessed: false,
-      frozenAt: new Date().toISOString(), manifest: publicSuite.cases.map((entry) => ({ caseId: entry.id, publicInputHash: publicInputHash(entry),
+      frozenAt: new Date().toISOString(), workspaceSuites, manifest: publicSuite.cases.map((entry) => ({ caseId: entry.id, publicInputHash: publicInputHash(entry),
         oracleHash: privateOracleHash(oracles.cases.find((item) => item.id === entry.id)) })) };
   } else if (["request", "grade"].includes(options.command)) {
     const entry = publicSuite.cases.find((item) => item.id === options.case);

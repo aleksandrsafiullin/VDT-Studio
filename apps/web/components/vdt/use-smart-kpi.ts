@@ -1,5 +1,7 @@
 "use client";
 
+import { editorHandoffView, type EditorHandoffAttempt } from "@/lib/editor-handoff-controller";
+
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   buildKpiSuggestionContext, fingerprintKpiProject, kpiCanonicalJson,
@@ -7,16 +9,19 @@ import {
 } from "@vdt-studio/vdt-core";
 import { SmartKpiScheduler, type SmartKpiNodeSnapshot } from "@/lib/smart-kpi-scheduler";
 import { SMART_KPI_FAILURE_REASONS } from "@/lib/smart-kpi-errors";
-import { createSmartKpiPreparedSelection, type SmartKpiPreparedSelection } from "@/lib/smart-kpi-client";
+import type { SmartKpiPreparedSelection } from "@/lib/smart-kpi-client";
+import { resolveCurrentSmartKpiSelection, smartKpiUsesApple } from "@/lib/smart-kpi-transaction";
 import { getSmartKpiLibraryProposal, recordSmartKpiDecision } from "@/lib/smart-kpi-decisions";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
 import { loadSmartKpiSkill } from "@/lib/smart-kpi-skill";
 import { smartKpiTargetIds } from "@/lib/smart-kpi-targets";
 import { useApiKeyStorage } from "./api-key-storage";
+import { appleRecoveryMessage } from "@/lib/apple-first-launch";
+import { resolveSmartKpiSettings } from "@/lib/smart-kpi-settings";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useVdtStudioStore } from "./vdt-store";
 
-export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual"; reveal: boolean; returnFocus?: HTMLButtonElement }
+export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual"; reveal: boolean; returnFocus?: HTMLButtonElement; handoff?: EditorHandoffAttempt | undefined }
 type Admission = { status: "preparing" | "ready" | "unavailable" | "blocked"; selection?: SmartKpiPreparedSelection; reason?: string };
 const initialSnapshot: SmartKpiNodeSnapshot = { targetNodeId: "", state: { status: "idle" }, stale: false, refreshAvailable: false, canApply: false };
 const runtimeActive = (status?: string) => ["queued", "running", "needs_user_input", "waiting_approval", "recovery_required"].includes(status ?? "");
@@ -35,6 +40,10 @@ export function useSmartKpi(chatStartersPending: boolean) {
   const workspace = useVdtStudioStore(state => state.workspace);
   const selectedNodeId = useVdtStudioStore(state => state.selectedNodeId);
   const executionSettings = useVdtStudioStore(state => state.executionSettings);
+  const appleLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const applePreview = useVdtStudioStore(state => state.appleNativePreview?.settings === state.executionSettings
+    ? state.appleNativePreview.binding : undefined);
+  const usesApple = useVdtStudioStore(smartKpiUsesApple);
   const runnerPairingToken = useVdtStudioStore(state => state.runnerPairingToken);
   const personalisation = useVdtStudioStore(state => state.personalisation);
   const skillState = useVdtStudioStore(state => state.smartKpiSkill);
@@ -97,6 +106,12 @@ export function useSmartKpi(chatStartersPending: boolean) {
   const admissionRef = useRef(admission); admissionRef.current = admission;
   const [active, setActive] = useState<SmartKpiActivation | null>(null);
   const activeRef = useRef(active); activeRef.current = active;
+  const applyingHandoff = useRef<EditorHandoffAttempt | undefined>(undefined);
+  const pendingHandoffCommit = useRef<{
+    attempt: EditorHandoffAttempt;
+    operationId: string;
+    targetNodeId: string;
+  } | undefined>(undefined);
   const [feedback, setFeedback] = useState<string>();
   const [currentContext, setCurrentContext] = useState<KpiSuggestionContext>();
   const [contextPending, setContextPending] = useState(false);
@@ -123,6 +138,7 @@ export function useSmartKpi(chatStartersPending: boolean) {
     cancelClose();
     const current = activeRef.current;
     if (!current) return;
+    if (current.handoff !== applyingHandoff.current) current.handoff?.cancel();
     if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current);
     if (restoreFocus) dismissedHover.current = { targetNodeId: current.targetNodeId, rect: current.rail.getBoundingClientRect() };
     if (current) scheduler.current?.releaseDisplay(current.targetNodeId);
@@ -172,12 +188,18 @@ export function useSmartKpi(chatStartersPending: boolean) {
   useEffect(() => { if (mutationBusy) cancelClose(); }, [mutationBusy, cancelClose]);
 
   // Settings metadata admission is separate from model preparation and hover.
-  const credentialStatus = resolveExecutionSettings(executionSettings).providerId === "local_runner" ? "local" : apiKeyStorageStatus;
+  const smartProvider = resolveExecutionSettings(resolveSmartKpiSettings(executionSettings)).providerId;
+  const credentialStatus = usesApple || smartProvider === "local_runner" ? "local" : apiKeyStorageStatus;
   useEffect(() => {
     const controller = new AbortController();
     setAdmission({ status: "preparing" });
     if (chatStartersPending || credentialStatus === "saving" || credentialStatus === "loading") return;
-    const timer = setTimeout(() => { void createSmartKpiPreparedSelection(executionSettings, { signal: controller.signal, ...(runnerPairingToken ? { pairingToken: runnerPairingToken } : {}) })
+    if (usesApple && !applePreview) {
+      if (appleLaunch?.status !== "checking") setAdmission({ status: "unavailable", reason: appleRecoveryMessage(appleLaunch) });
+      return;
+    }
+    const prepareSelection = () => resolveCurrentSmartKpiSelection(useVdtStudioStore.getState, { signal: controller.signal });
+    const timer = setTimeout(() => { void prepareSelection()
       .then(selection => { if (!controller.signal.aborted) setAdmission({ status: "ready", selection }); })
       .catch(error => { if (!controller.signal.aborted) setAdmission({ status: error?.code === "CLEANUP_UNCONFIRMED" ? "blocked" : "unavailable",
         reason: error?.code === "CLEANUP_UNCONFIRMED" ? "The host must confirm previous process cleanup before preparing more suggestions."
@@ -185,7 +207,7 @@ export function useSmartKpi(chatStartersPending: boolean) {
           : error?.code === "CREDENTIAL_IDENTITY_UNVERIFIED" ? "This host cannot verify the CLI credential source. Recheck the CLI sign-in or choose another connection."
           : SMART_KPI_FAILURE_REASONS[error?.code] ?? "Choose a supported execution backend and model in Execution mode to prepare this KPI." }); }); }, 150);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [executionSettings, runnerPairingToken, metadataRetry, credentialStatus, chatStartersPending]);
+  }, [executionSettings, runnerPairingToken, metadataRetry, credentialStatus, chatStartersPending, usesApple, applePreview, appleLaunch]);
 
   useEffect(() => {
     const instance = new SmartKpiScheduler({
@@ -295,7 +317,7 @@ export function useSmartKpi(chatStartersPending: boolean) {
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
   }, [active, close]);
 
-  const activate = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch" | "manual" = "pointer", returnFocus?: HTMLButtonElement) => {
+  const activate = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch" | "manual" = "pointer", returnFocus?: HTMLButtonElement, handoff?: EditorHandoffAttempt) => {
     if (source !== "manual" && !smartKpiTargetIds(useVdtStudioStore.getState().project).has(targetNodeId)) return;
     if (source === "focus" && restoringFocus.current || source === "pointer" && dismissedHover.current?.targetNodeId === targetNodeId) return;
     // Moving the camera can carry another rail under the pointer. An open
@@ -306,11 +328,14 @@ export function useSmartKpi(chatStartersPending: boolean) {
     cancelClose(); if (source === "pointer") railInside.current = true;
     const old = activeRef.current;
     if (old?.targetNodeId === targetNodeId && old.rail === rail && source !== "manual" && (!returnFocus || old.mode === "smart")) {
-      if (source !== "pointer" && (!old.reveal || returnFocus)) { const next = { ...old, reveal: true, ...(returnFocus ? { returnFocus } : {}) }; activeRef.current = next; setActive(next); }
+      if (source !== "pointer" && (!old.reveal || returnFocus)) { if (handoff) old.handoff?.cancel(); const next = { ...old, reveal: true, ...(returnFocus ? { returnFocus } : {}), ...(handoff ? { handoff } : {}) }; activeRef.current = next; setActive(next); }
       return;
     }
-    if (old) scheduler.current?.releaseDisplay(old.targetNodeId);
-    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart", reveal: source !== "pointer", ...(returnFocus ? { returnFocus } : {}) };
+    if (old) {
+      scheduler.current?.releaseDisplay(old.targetNodeId);
+      if (old.handoff !== applyingHandoff.current) old.handoff?.cancel();
+    }
+    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart", reveal: source !== "pointer", ...(returnFocus ? { returnFocus } : {}), ...(handoff ? { handoff } : {}) };
     activeRef.current = next; setActive(next); setFeedback(undefined);
     const instance = scheduler.current;
     if (instance?.getSnapshot(targetNodeId).proposal) instance.freezeDisplay(targetNodeId); else instance?.releaseDisplay(targetNodeId);
@@ -319,8 +344,8 @@ export function useSmartKpi(chatStartersPending: boolean) {
     });
   }, [cancelClose]);
   const activateManual = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement) => activate(targetNodeId, rail, trigger, "manual"), [activate]);
-  const openReview = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, returnFocus: HTMLButtonElement) => {
-    activate(targetNodeId, rail, trigger, "touch", returnFocus);
+  const openReview = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, returnFocus: HTMLButtonElement, handoff?: EditorHandoffAttempt) => {
+    activate(targetNodeId, rail, trigger, "touch", returnFocus, handoff);
   }, [activate]);
   const leaveRail = useCallback(() => { railInside.current = false; scheduleClose(); }, [scheduleClose]);
   const enterPanel = useCallback(() => { panelInside.current = true; cancelClose(); }, [cancelClose]);
@@ -345,7 +370,27 @@ export function useSmartKpi(chatStartersPending: boolean) {
     if (!current || input.draft.targetNodeId !== current.targetNodeId || state.smartKpiBlockedReason || resolveSmartKpiScope(state).blockedReason) return;
     if (current.mode === "smart" && !smartKpiTargetIds(state.project).has(current.targetNodeId)) return;
     const owner = ownerRef.current;
-    const result = await state.applySmartKpiSuggestion(input);
+    const before = editorHandoffView(state);
+    const handoff = current.handoff;
+    if (handoff && !handoff.matchesOrigin(before)) {
+      handoff.cancel();
+      setFeedback("The draft changed. Reopen Suggested KPIs from the current VDT.");
+      return;
+    }
+    applyingHandoff.current = handoff;
+    let result;
+    try {
+      result = await (handoff ? state.applySmartKpiSuggestion(input, handoff) : state.applySmartKpiSuggestion(input));
+    } finally {
+      applyingHandoff.current = undefined;
+    }
+    const after = useVdtStudioStore.getState();
+    if (result.ok) {
+      pendingHandoffCommit.current = undefined;
+      handoff?.complete(before, editorHandoffView(after), { kind: "smart", nodeId: result.targetNodeId, durability: result.durability });
+    } else if (handoff && after.smartKpiOperation?.kind === "add" && after.smartKpiOperation.context?.targetNodeId === current.targetNodeId) {
+      pendingHandoffCommit.current = { attempt: handoff, operationId: after.smartKpiOperation.id, targetNodeId: current.targetNodeId };
+    } else if (activeRef.current?.handoff !== handoff) handoff?.cancel();
     if (result.code === "STALE_EXECUTION" && ownerRef.current === owner) retryMetadata();
     if (result.code === "STALE_SKILL" && ownerRef.current === owner) refreshSkill();
     if (activeRef.current?.targetNodeId === current.targetNodeId && ownerRef.current === owner) setFeedback(result.ok ? result.addedNodeIds.length
@@ -366,14 +411,24 @@ export function useSmartKpi(chatStartersPending: boolean) {
   const reconcile = useCallback(async () => {
     if (replayingRef.current) return;
     const owner = ownerRef.current, target = activeRef.current?.targetNodeId;
+    const state = useVdtStudioStore.getState();
+    const before = editorHandoffView(state);
+    const pending = pendingHandoffCommit.current;
+    const handoff = pending && state.smartKpiOperation?.id === pending.operationId ? pending.attempt : undefined;
+    applyingHandoff.current = handoff;
     replayingRef.current = true; setReplaying(true); setFeedback(undefined);
     try {
-      const ok = await useVdtStudioStore.getState().reconcilePendingSmartKpiCommit();
-      const mutation = useVdtStudioStore.getState().smartKpiMutation;
+      const ok = await state.reconcilePendingSmartKpiCommit();
+      const next = useVdtStudioStore.getState();
+      const mutation = next.smartKpiMutation;
+      if (ok && pending && handoff && mutation.targetNodeId === pending.targetNodeId) {
+        handoff.complete(before, editorHandoffView(next), { kind: "smart", nodeId: pending.targetNodeId, durability: "stored" });
+        pendingHandoffCommit.current = undefined;
+      }
       if (!ok && target && ownerRef.current === owner && activeRef.current?.targetNodeId === target && mutation.targetNodeId === target)
         setFeedback(mutation.message ?? "The save could not be reconciled. Review its status and retry.");
     }
-    finally { replayingRef.current = false; setReplaying(false); }
+    finally { applyingHandoff.current = undefined; replayingRef.current = false; setReplaying(false); }
   }, []);
   const snapshot = active ? scheduler.current?.getSnapshot(active.targetNodeId) ?? initialSnapshot : initialSnapshot;
   const latestContext = currentContext && currentContext.targetNodeId === active?.targetNodeId && currentContext.workspaceId === scope.workspaceId

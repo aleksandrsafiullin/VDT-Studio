@@ -16,7 +16,8 @@ it("signals Supervisor snapshot changes and forwards legacy events directly", ()
   vi.stubGlobal("EventSource", function TestEventSource() { return source; });
   const onSupervisorUpdate = vi.fn();
   const onEvent = vi.fn();
-  const unsubscribe = createAgentClient().subscribe("run", { onEvent, onSupervisorUpdate });
+  const onCanonicalEvent = vi.fn();
+  const unsubscribe = createAgentClient().subscribe("run", { onEvent, onCanonicalEvent, onSupervisorUpdate });
   const send = (data: object) => source.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify(data) }));
   const legacy = { type: "assistant_message", title: "Agent message", message: "Existing chat response" };
   send(legacy);
@@ -43,6 +44,7 @@ it("signals Supervisor snapshot changes and forwards legacy events directly", ()
   for (const event of visibleUpdates) send({ schemaVersion: 2, ...event });
   expect(onSupervisorUpdate).toHaveBeenCalledTimes(visibleUpdates.length);
   expect(onEvent).toHaveBeenCalledTimes(1);
+  expect(onCanonicalEvent).toHaveBeenCalledTimes(visibleUpdates.length + 2);
   unsubscribe();
   expect(source.close).toHaveBeenCalledOnce();
 });

@@ -473,6 +473,42 @@ describe("agent build benchmark metrics", () => {
     })).toThrow(/runtime executionSummary/);
   });
 
+  it("records unverified Ollama baseline metrics without granting benchmark qualification", async () => {
+    const fixture = await loadBenchmarkFixture();
+    const snapshot = {
+      ...successfulSnapshot(),
+      executionSummary: {
+        ...externalExecutionSummary(),
+        executionProfile: "model_agent",
+        engineAdapterId: "local-http-structured-turn-v1",
+        backendId: "ollama",
+        modelId: "qwen3.5:4b-q4_K_M",
+        protocolVersion: "structured-turn-v1",
+        cliVersion: null,
+        toolIsolation: "permission_only",
+        qualificationStatus: "unverified",
+        capabilityEvidenceHash: null
+      }
+    };
+    const input = {
+      snapshot,
+      fixture,
+      execution: {
+        profile: "model_agent",
+        adapter: "local-http-structured-turn-v1",
+        backend: "ollama",
+        model: "qwen3.5:4b-q4_K_M",
+        version: "structured-turn-v1"
+      },
+      sample: { temperature: "warm", ordinal: 1 }
+    };
+    expect(() => createBenchmarkRecordFromSnapshot(input)).toThrow(/qualified server-binding/);
+    const record = createBenchmarkRecordFromSnapshot({ ...input, transportMode: "local_compatibility_baseline" });
+    expect(record.provenance.executionIdentitySource).toBe("local_compatibility_binding");
+    expect(record.execution.qualificationStatus).toBe("unverified");
+    expect(benchmarkRunPasses(record)).toBe(false);
+  });
+
   it("rejects an unrelated 73-node graph even when labels, edge count, and depth match", async () => {
     const fixture = await loadBenchmarkFixture();
     const snapshot: any = successfulSnapshot();

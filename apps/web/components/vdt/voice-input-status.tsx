@@ -16,12 +16,13 @@ interface VoiceInputStatusProps {
   error?: string | undefined;
   audio: MicrophoneLevels;
   recognizing: boolean;
+  openAi?: boolean;
   onStop: () => void;
   onCancel: () => void;
   onDismiss: () => void;
 }
 
-export function VoiceInputStatus({ state, error, audio, recognizing, onStop, onCancel, onDismiss }: VoiceInputStatusProps) {
+export function VoiceInputStatus({ state, error, audio, recognizing, openAi, onStop, onCancel, onDismiss }: VoiceInputStatusProps) {
   const [processingMs, setProcessingMs] = useState(0);
   useEffect(() => {
     setProcessingMs(0);
@@ -44,12 +45,12 @@ export function VoiceInputStatus({ state, error, audio, recognizing, onStop, onC
   const finishing = state === "finishing";
   const label = listening ? "Listening" : finishing ? "Transcribing audio…" : "Opening microphone…";
   const hint = finishing
-    ? "Recording stopped. Finishing the last phrase locally."
+    ? openAi ? "OpenAI is transcribing the recording. Review the draft before sending." : "Recording stopped. Finishing the last phrase locally."
     : state === "starting"
       ? "Allow microphone access to begin."
       : !audio.hasSpeech && audio.elapsedMs >= 3000
         ? "No speech detected yet. Check your microphone."
-        : recognizing ? "Recognizing speech locally…" : "Words appear below as phrases are recognized.";
+        : openAi ? "Finish recording to transcribe it with OpenAI." : recognizing ? "Recognizing speech locally…" : "Words appear below as phrases are recognized.";
 
   return <section className={styles.voiceFeedback} data-testid="voice-input-status" data-voice-state={state} aria-label="Voice dictation">
     <div className={styles.voiceHeading}>

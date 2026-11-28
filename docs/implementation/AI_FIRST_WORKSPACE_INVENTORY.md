@@ -54,6 +54,41 @@ Store method names below refer to `vdt-store.ts`. For the tests named in the tab
 
 Manual canvas drag and auto-distribution can write presentation coordinates, while panning, zooming, panel size and selection are view gestures. Chat `vdt.layout` lays out the current draft; it is marked as a mutation and revision-fenced. Browser/model/provider configuration, runner pairing, API credentials, settings and voice input are device/user controls. They are outside analytical parity. Check `vdt-studio.spec.ts` for editor controls and `tool-gateway.test.ts` for catalog, replay and revision fences.
 
+## R05 action status by editor operation
+
+Executable actions use the admitted Gateway operation and its existing scope or approval policy. Draft and saved effects retain the boundaries in the tables above. Pending actions require the named user step. Unavailable actions have no admitted chat operation in the active scope.
+
+| # | Inventory operation | R05 status |
+| ---: | --- | --- |
+| 1 | Create, copy or open an example VDT | Executable for a new run's draft. Pending for saved copy or example selection in the project workspace. |
+| 2 | Read the selected KPI, graph, sources, warnings and values | Executable in the admitted VDT. |
+| 3 | Add or decompose drivers | Executable through the Gateway mutation workflow. |
+| 4 | Set formulas, change links or reparent | Executable through the Gateway mutation workflow. |
+| 5 | Edit or delete a KPI | Executable within the existing proposal and approval scope. |
+| 6 | Set, clear or trace a baseline input | Executable through the authorized input tools. |
+| 7 | Edit or inspect back-calculation | Executable through the existing back-calculation tools. |
+| 8 | Review, apply, retry or undo Suggested KPIs | Pending. A user opens the target, chooses the suggestion and applies it. Undo remains its own editor action. |
+| 9 | Upload, download or archive a project file | Pending for file choice. Registered-source reads are executable. Archive and arbitrary file access remain unavailable through chat tools. |
+| 10 | Discover, map and apply source data | Pending for file choice, mapping review and final draft Apply. Writes from already registered evidence remain executable where scoped. |
+| 11 | Record assumptions or explain a relationship | Executable with the current confirmation and source checks. |
+| 12 | Finish a structural or numerical task | Executable when the corresponding verifier accepts. Manual Save remains separate. |
+| 13 | Create, rename or clone a scenario | Executable. Editor tab selection remains a user action. |
+| 14 | Set, clear or lock an override and comment | Executable for scoped override/comment commands. The editor owns its explicit per-KPI lock control. |
+| 15 | Set main or delete a scenario | Executable with existing destructive approval. |
+| 16 | Compare a scenario and inspect sensitivity | Executable as a scoped read or probe. |
+| 17 | List, create, rename and compare versions | Executable against the scoped VDT. |
+| 18 | Restore or undo a version | Pending approval for restore. The editor owns its Undo. |
+| 19 | Download Excel | Executable from the verified saved revision and scenario. The browser opens the issued link on user action. |
+| 20 | JSON or Markdown exchange | Pending format or local file choice. The portable export callback records browser download initiation. JSON import still uses review and creates a new revision through its existing controls. |
+| 21 | Open or manage projects | Pending for scoped workspace navigation. Create, rename and other workspace administration remain user controls. |
+| 22 | Open or manage a VDT record | Pending for user selection. Rename, status and delete remain user controls. |
+| 23 | Save, resolve a conflict or recover a saved copy | Pending on explicit editor save or recovery. Admitted agent proposals retain their own revision receipts. |
+| 24 | Delete a project and history | Unavailable to chat. The editor owns confirmation. |
+| 25 | List or create a stored comparison | Pending in the project workspace. The user selects both saved revisions. |
+| 26 | Start, continue, reopen or cancel chat and switch models | Executable through the existing chat commands. Switching the model is a user choice for a new run. |
+
+A handoff card is issued for the originating chat run, project, VDT and saved revision. Opening a review remains pending. Smart Apply reports its existing draft or stored result. File review reports draft Apply only after the matching staged change set applies. A portable export reports browser download initiation. Opening the project workspace records arrival in that project. The stored Smart Apply card can also recover after reload through the exact existing Smart idempotency replay. Its originating artifact, target and saved base must match the confirmed commit. The reopened editor also checks the current saved head and active draft before displaying completion. Opening a review, a draft-only Smart Apply, workspace arrival and download initiation do not supply a durable stored Smart receipt. They do not create a save receipt or authorize Apply, Undo, OS file choice, import confirmation, workspace mutations or follow-up model execution. A handoff-only answer reports the pending user step at finish. Mixed work keeps its own operation receipts.
+
 ## Reproduction on the baseline
 
 | Case | Default graph check | Additional check or calculation | Drift from target |

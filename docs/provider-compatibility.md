@@ -28,6 +28,16 @@ with Default reasoning. Reasoning and the structured reply share that cap.
 The request uses the selected model and leaves its reasoning effort to the
 provider. Other Default connection probes retain their 1,024-token cap.
 
+OpenAI Direct has a default-off voice preview on local builds. An
+active saved direct run can authorize a fixed sample, one-shot
+dictation with local output, or readback of the current verified
+question or pending approval with local recognition. The API organization
+associated with the key governs usage, permissions and billing. Eligible
+ChatGPT Pro users can claim API credits from ChatGPT Billing and link one
+organization. VDT's Codex CLI option separately checks an experimental
+installed protocol. Account-specific Codex speech access and live API
+voice remain unqualified. [Voice Input setup](VOICE_INPUT.md#set-up-openai-voice-with-eligible-chatgpt-pro-api-credits)
+
 ## Original GPT-5 effort discovery (2026-11-11)
 
 Original released GPT-5/mini/nano IDs retain documented Minimal/Low/Medium/High

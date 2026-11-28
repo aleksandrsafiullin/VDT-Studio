@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppleFirstLaunchBootstrap } from "@/components/vdt/apple-first-launch-bootstrap";
 import { ApiKeyStorage } from "@/components/vdt/api-key-storage";
 import { CliConnection } from "@/components/vdt/cli-connection";
 import { ProviderConnection } from "@/components/vdt/provider-connection";
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body><ApiKeyStorage /><CliConnection /><ProviderConnection />{children}</body>
+      <body><ApiKeyStorage /><CliConnection /><AppleFirstLaunchBootstrap /><ProviderConnection />{children}</body>
     </html>
   );
 }

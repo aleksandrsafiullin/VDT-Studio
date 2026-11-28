@@ -1,5 +1,30 @@
 # Desktop Local Execution
 
+## Apple AI preview helper resources
+
+An explicitly built Apple silicon preview includes a Foundation Models helper
+and a Speech and AVFAudio helper under `Contents/Helpers`. The package signs
+each helper and seals a versioned manifest containing its post-signature
+digest. The Rust packaged hosts clear inherited helper configuration, verify
+the bundled resources and pass only trusted paths and hashes to their private
+Node processes. The owner rechecks the file identity before launch. Other
+builds continue with their existing provider routes. The helpers do not open
+listeners. [Transport contract](../implementation/APPLE_FOUNDATION_MODELS_TRANSPORT_2026-11-25.md)
+
+The sealed preview manifest keeps the analytical first-install switch off.
+When a qualified desktop build enables the separate switch, an untouched
+profile can choose Apple after the host admits the system model for the
+current language. Upgrades retain earlier provider records. Explicit
+selections are stored separately from this default, and the admitted Apple
+binding is kept only in memory. Restoring an unchanged credential preserves
+any pending availability check. Restart, foreground and chat admission
+recheck local readiness. An unavailable selected Apple route needs explicit
+recovery and carries no credentials for another backend. Closing the rollout
+switch blocks the automatic selection until the user chooses a supported
+model. An explicit Apple preview remains available where the host enables it.
+Running sessions stay bound to their original execution. The native API gives
+the model identity and OS build but exposes no private model weight revision.
+
 The completion sidecar imports the narrow `model-bridge/local-runtime` entrypoint;
 Supervisor checkpoint engines remain in `model-bridge/node`. Filesystem skill
 storage has a separate `storage/skills` entrypoint. These boundaries prevent
@@ -184,3 +209,10 @@ Desktop resource preparation and verification share a deterministic skill-librar
 The private runtime protocol is documented in `docs/architecture/runtime-protocol.md` and implemented in `packages/local-runner/src/sidecar/protocol.ts`.
 
 The repository includes verified POSIX and Windows sidecar launchers at `apps/desktop/src-tauri/sidecars/vdt-local-runtime` and `apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd` plus a bundled Node runtime at `apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs`; the Tauri config declares all of them as bundle resources alongside the integrity manifest. The sidecar backend list includes both manifest fields and desktop status fields (`backendId`, `mode`, `status`) so the Rust host can parse the same payload it verifies in Node tests. The current hosts auto-start on app setup, time out failed startup handshakes, clean up the child process on shutdown, and fail closed after repeated sidecar crashes. Remaining release work is replacing the Node runtime bundle with a self-contained packaged sidecar binary, native build verification, production restart/backoff hardening, signed installer configuration and end-to-end desktop runtime validation.
+
+
+## macOS Shortcuts qualification
+
+The opt-in composer adapter exchanges opaque scope tokens with its owning packaged macOS WebView. The private command requires the explicit qualification build feature and the authenticated `main` window on the packaged loopback origin. Consent is scoped to the visible window and begins off. Presentations can focus existing controls. Scope, capture and review identity are checked again in the composer.
+
+The explicit macOS package option links the Swift implementation and stages App Intents metadata before signing. A full qualification package, its signed installation, and observed Shortcuts discovery remain qualification gates. [App Intents integration and qualification](../../apps/desktop/native-checks/app-intents/README.md)

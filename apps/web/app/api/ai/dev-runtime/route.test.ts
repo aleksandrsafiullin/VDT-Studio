@@ -68,6 +68,33 @@ describe("development local runtime API route", { timeout: 30_000 }, () => {
     expect(body.error).toBe("Unsupported operation: (missing)");
   });
 
+  it("rejects forged local diagnostic references and outer execution assertions before any provider call", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
+      createLocalRuntimeContext({ auditSink() {}, executor: { fetch } });
+    const diagnostic = { operation: "test", backendId: "ollama", model: "qwen3:8b" };
+    const strict = await POST(request({ ...diagnostic, localHttpSelection: { profileVersion: "forged", modelRevision: `sha256:${"a".repeat(64)}` } }));
+    expect(strict.status).toBe(422);
+    expect(await readJson(strict)).toMatchObject({ error: { code: "LOCAL_ROUTE_UNVERIFIED" } });
+    const confused = await POST(request({ ...diagnostic, expectedExecution: { mode: "local" } }));
+    expect(confused.status).toBe(422);
+    expect(await readJson(confused)).toMatchObject({ error: { code: "BINDING_CAPABILITY_DENIED" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the exact local diagnostic model with explicit Off when Fast can disable thinking", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    const fetch = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith("/api/show")
+      ? Response.json({ thinking: { values: [true, false] } })
+      : Response.json({ done: true, done_reason: "stop", message: { content: '{"ok":true}' } }));
+    (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
+      createLocalRuntimeContext({ auditSink() {}, executor: { fetch } });
+    const response = await POST(request({ operation: "test", backendId: "ollama", model: "selected", modelReasoning: "vdt-fast" }));
+    expect(response.status).toBe(200);
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ model: "selected", think: false });
+  });
+
   it("tests a subscription backend through the managed runtime without pairing", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-dev-runtime-"));
     try {

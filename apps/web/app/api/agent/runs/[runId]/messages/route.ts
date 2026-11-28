@@ -1,5 +1,6 @@
+import { z } from "zod";
 import { presentConversation } from "../../conversation-context";
-import { agentUserMessageSchema, prepareRetryExecution } from "@vdt-studio/vdt-agent-runtime";
+import { agentUserMessageSchema, executionModeSchema, prepareRetryExecution } from "@vdt-studio/vdt-agent-runtime";
 import {
   AGENT_DECISION_TIMEOUT_FLOOR_MS,
   AGENT_DECISION_TIMEOUT_MAX_MS
@@ -19,6 +20,8 @@ import {
   isPersistedSupervisorRun
 } from "../../supervisor-runtime";
 
+const messageExecutionSchema = z.object({ expectedExecutionMode: executionModeSchema.optional() });
+
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
   if (!agentRuntime.store.has(runId)) {
@@ -32,6 +35,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     return jsonError("Request body must be valid JSON.");
   }
 
+  const execution = messageExecutionSchema.safeParse(raw);
+  if (!execution.success) return jsonError("Invalid execution mode for this agent message.");
+  const { expectedExecutionMode } = execution.data;
   const parsed = agentUserMessageSchema.safeParse(raw);
   if (!parsed.success) {
     return jsonError(parsed.error.issues[0]?.message ?? "Invalid agent message.");
@@ -43,7 +49,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
 
   if (await isPersistedSupervisorRun(runId)) {
     try {
-      const snapshot = await handleStructuredModelAgentMessage(runId, parsed.data);
+      const snapshot = await handleStructuredModelAgentMessage(runId, parsed.data, expectedExecutionMode);
       return Response.json({ ok: true, snapshot: presentConversation(snapshot) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
@@ -57,6 +63,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     }
   }
 
+  if ((parsed.data.type === "user_answer" && parsed.data.expectedQuestion)
+    || (parsed.data.type === "approval" && parsed.data.expectedProposal)) {
+    return jsonError("This run cannot verify the live interaction checkpoint.", 409, "AGENT_INTERACTION_STALE");
+  }
+  if (expectedExecutionMode && expectedExecutionMode !== "legacy") {
+    return jsonError("This compatibility run cannot continue under the selected execution mode. Start a new run.", 409, "AGENT_EXECUTION_CAPABILITY_DENIED");
+  }
   try {
     const state = agentRuntime.store.getState(runId);
     const preparedRequest = prepareRetryExecution(state, parsed.data, {

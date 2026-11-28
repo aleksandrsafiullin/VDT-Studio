@@ -156,8 +156,14 @@ export class SmartKpiScheduler {
       if (generation !== this.generation) {
         this.generation = generation; this.contexts.clear(); this.queue.clear(); this.attempted.clear(); this.spent = 0;
         this.cancelActive();
-        for (const [id, snapshot] of this.snapshots) this.snapshots.set(id, this.staleSnapshot(snapshot));
-        for (const [id, snapshot] of this.frozen) this.frozen.set(id, this.staleSnapshot(snapshot));
+        for (const snapshots of [this.snapshots, this.frozen]) {
+          for (const [id, snapshot] of snapshots) {
+            // A placeholder can outlive cold admission, but it has no checked list to refresh.
+            if (snapshot.proposal || snapshot.state.status === "preparing" || snapshot.stale)
+              snapshots.set(id, this.staleSnapshot(snapshot));
+            else snapshots.delete(id);
+          }
+        }
         this.emit();
       }
       this.schedule();
@@ -272,6 +278,11 @@ export class SmartKpiScheduler {
       if (negative) { this.publish(target, key, { status: negative.status, reason: negative.reason, ...(negative.limitations ? { limitations: negative.limitations } : {}) }); return this.getSnapshot(target); }
     } else this.cache.clearNegative(scope);
     if (!scope.execution) { this.publish(target, key, { status: "unavailable", reason: "Choose an available execution backend to prepare this KPI." }); return this.getSnapshot(target); }
+    if (!options.explicit && scope.execution.backendId === "apple_foundation_models") {
+      // Keep library and cache hits above. Native inference waits for Prepare
+      // so canvas warmup and hover cannot claim the analytical process owner.
+      return this.getSnapshot(target);
+    }
     const quarantine = laneFor(context.workspaceId).quarantines.get(smartKpiExecutionKey(scope.execution));
     if (quarantine) { this.publish(target, key, { status: "blocked", reason: quarantine }); return this.getSnapshot(target); }
     if (!options.explicit && this.attempted.has(key)) {

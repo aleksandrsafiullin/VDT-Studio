@@ -8,6 +8,8 @@ import {
 const allowedToolNames = [
   "approval.request",
   "run.request_finish",
+  "run.propose_outcome",
+  "skill.select",
   "user.ask",
   "user.request_approval",
   "vdt.add_driver",
@@ -108,7 +110,7 @@ describe("parseCheckpointActionBatch", () => {
     }
   );
 
-  it.each(["user.ask", "approval.request", "user.request_approval", "run.request_finish"])(
+  it.each(["user.ask", "approval.request", "user.request_approval", "run.request_finish", "run.propose_outcome", "skill.select"])(
     "requires control tool %s to be the only call",
     (toolName) => {
       expect(() => parseCheckpointActionBatch({

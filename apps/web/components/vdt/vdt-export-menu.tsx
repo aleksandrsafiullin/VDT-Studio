@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { Download } from "lucide-react";
 import { exportProjectJson, exportProjectMarkdown, type VdtProject } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { editorHandoffView, type EditorHandoffAttempt } from "@/lib/editor-handoff-controller";
+import { useVdtStudioStore } from "./vdt-store";
 import { downloadBinaryFile, getVdtDownloadFilename } from "@/lib/download";
 
 const formats = [
@@ -12,11 +14,16 @@ const formats = [
 ] as const;
 const disclosureId = "vdt-export-formats";
 
-export function openVdtExportMenu(): void {
+let openedHandoff: EditorHandoffAttempt | undefined;
+
+export function openVdtExportMenu(handoff?: EditorHandoffAttempt): boolean {
   const disclosure = document.getElementById(disclosureId);
-  if (!(disclosure instanceof HTMLDetailsElement)) return;
+  if (!(disclosure instanceof HTMLDetailsElement)) return false;
+  openedHandoff?.cancel();
+  openedHandoff = handoff;
   disclosure.open = true;
   disclosure.querySelector("summary")?.focus();
+  return true;
 }
 
 export function VdtExportMenu({ project }: { project: VdtProject }) {
@@ -25,17 +32,27 @@ export function VdtExportMenu({ project }: { project: VdtProject }) {
   const [error, setError] = useState<string>();
 
   function close() {
+    openedHandoff?.cancel();
+    openedHandoff = undefined;
     if (disclosure.current) disclosure.current.open = false;
     trigger.current?.focus();
   }
 
   function download(format: (typeof formats)[number]) {
     try {
+      const before = editorHandoffView(useVdtStudioStore.getState());
+      if (openedHandoff && (!openedHandoff.matchesOrigin(before) || useVdtStudioStore.getState().project !== project)) {
+        openedHandoff.cancel();
+        openedHandoff = undefined;
+        setError("The draft changed. Reopen the export from the current VDT.");
+        return;
+      }
       downloadBinaryFile(
         getVdtDownloadFilename(project.name, format.extension),
         new TextEncoder().encode(format.serialize(project)),
         `${format.type};charset=utf-8`
       );
+      openedHandoff?.complete(before, editorHandoffView(useVdtStudioStore.getState()), { kind: "portable_download", format: format.extension });
       setError(undefined);
       close();
     } catch {
@@ -44,7 +61,12 @@ export function VdtExportMenu({ project }: { project: VdtProject }) {
   }
 
   return (
-    <details id={disclosureId} ref={disclosure} className="relative" onKeyDown={(event) => {
+    <details id={disclosureId} ref={disclosure} className="relative" onToggle={(event) => {
+      if (!event.currentTarget.open) {
+        openedHandoff?.cancel();
+        openedHandoff = undefined;
+      }
+    }} onKeyDown={(event) => {
       if (event.key === "Escape" && disclosure.current?.open) {
         event.stopPropagation();
         close();

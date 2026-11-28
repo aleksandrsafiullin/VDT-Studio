@@ -1,7 +1,16 @@
 mod sidecar_host;
 
+#[cfg(all(target_os = "macos", not(debug_assertions), feature = "app-intents-qualification"))]
+mod app_intents;
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod apple_helpers;
+
 #[cfg(all(target_os = "macos", not(debug_assertions)))]
 mod packaged_web;
+
+#[cfg(all(target_os = "macos", any(not(debug_assertions), test)))]
+mod packaged_speech;
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 #[path = "packaged_web_windows.rs"]
@@ -10,12 +19,12 @@ mod packaged_web;
 #[cfg(windows)]
 mod windows_process;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sidecar_host::{DesktopRuntime, RuntimeBackendStatus};
 use tauri::{Manager, State};
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DesktopCompletionRequest {
     request_id: String,
     #[serde(rename = "providerId")]
@@ -28,6 +37,8 @@ struct DesktopCompletionRequest {
     #[serde(default, deserialize_with = "deserialize_optional_reasoning")]
     model_reasoning: Option<serde_json::Value>,
     timeout_ms: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_local_http_selection")]
+    local_http_selection: Option<LocalHttpSelection>,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +50,47 @@ struct DesktopSmartExecutionRequest {
     #[serde(default, deserialize_with = "deserialize_optional_reasoning")]
     model_reasoning: Option<serde_json::Value>,
     timeout_ms: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_local_http_selection")]
+    local_http_selection: Option<LocalHttpSelection>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DesktopBackendTestRequest {
+    backend_id: String,
+    model: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_reasoning")]
+    model_reasoning: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_local_http_selection")]
+    local_http_selection: Option<LocalHttpSelection>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LocalHttpSelection {
+    profile_version: String,
+    model_revision: String,
+}
+
+fn validate_local_http_selection(selection: Option<&LocalHttpSelection>, model: Option<&str>) -> Result<(), String> {
+    let Some(selection) = selection else { return Ok(()); };
+    let profile = selection.profile_version.as_bytes();
+    let revision = selection.model_revision.strip_prefix("sha256:").unwrap_or("");
+    if profile.is_empty() || profile.len() > 160 || !profile[0].is_ascii_alphanumeric()
+        || !profile.iter().all(|c| c.is_ascii_alphanumeric() || matches!(*c, b':' | b'.' | b'_' | b'-'))
+        || revision.len() != 64 || !revision.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err("INVALID_LOCAL_SELECTION: A verified local model requires an exact host profile version and SHA-256 revision.".into());
+    }
+    if model.map_or(true, |model| model.is_empty() || model.len() > 160 || model.contains('\0')) {
+        return Err("INVALID_MODEL: A verified local request must name its exact model.".into());
+    }
+    Ok(())
+}
+
+fn deserialize_local_http_selection<'de, D>(deserializer: D) -> Result<Option<LocalHttpSelection>, D::Error>
+where D: serde::Deserializer<'de> {
+    Ok(Some(LocalHttpSelection::deserialize(deserializer)?))
 }
 
 fn is_model_reasoning_value(value: &serde_json::Value) -> bool {
@@ -99,12 +151,14 @@ async fn ai_smart_execution(request: DesktopSmartExecutionRequest, app: tauri::A
     if !is_smart_metadata_backend(&request.backend_id) || request.timeout_ms.map_or(false, |ms| ms == 0 || ms > 5000) {
         return Err("INVALID_SMART_METADATA: selected harness metadata requires a deadline of at most 5000ms.".into());
     }
+    validate_local_http_selection(request.local_http_selection.as_ref(), request.model.as_deref())?;
     app.state::<DesktopRuntime>().reserve_smart_request(&request.request_id).map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut payload = serde_json::json!({ "requestId": request.request_id, "backendId": request.backend_id });
         if let Some(model) = request.model { payload["model"] = serde_json::Value::String(model); }
         if let Some(reasoning) = request.model_reasoning { payload["modelReasoning"] = reasoning; }
         if let Some(timeout_ms) = request.timeout_ms { payload["timeoutMs"] = serde_json::Value::Number(timeout_ms.into()); }
+        if let Some(selection) = request.local_http_selection { payload["localHttpSelection"] = serde_json::json!(selection); }
         app.state::<DesktopRuntime>().smart_execution(payload).map_err(|error| error.to_string())
     }).await.map_err(|error| error.to_string())?
 }
@@ -129,11 +183,21 @@ async fn ai_detect_subscription_clis(agent_id: Option<String>, exclude_cursor: O
 }
 
 #[tauri::command]
-async fn ai_test_backend(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &backend_id, None)?;
+async fn ai_test_backend(request: tauri::ipc::Request<'_>, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let tauri::ipc::InvokeBody::Json(body) = request.body() else {
+        return Err("INVALID_BACKEND_TEST: Expected a JSON diagnostic request.".into());
+    };
+    let request = DesktopBackendTestRequest::deserialize(body)
+        .map_err(|_| "INVALID_BACKEND_TEST: Invalid diagnostic request.".to_string())?;
+    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &request.backend_id, None)?;
+    validate_local_http_selection(request.local_http_selection.as_ref(), request.model.as_deref())?;
+    let mut payload = serde_json::json!({ "backendId": request.backend_id });
+    if let Some(model) = request.model { payload["model"] = serde_json::json!(model); }
+    if let Some(reasoning) = request.model_reasoning { payload["modelReasoning"] = reasoning; }
+    if let Some(selection) = request.local_http_selection { payload["localHttpSelection"] = serde_json::json!(selection); }
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<DesktopRuntime>()
-            .test_backend(&backend_id)
+            .test_backend(payload)
             .map_err(|error| error.to_string())
     }).await.map_err(|error| error.to_string())?
 }
@@ -157,6 +221,7 @@ async fn ai_complete(
         return Err("INVALID_REASONING: modelReasoning must be a bounded provider value.".into());
     }
     check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &request.backend_id, Some(&request.task_type))?;
+    validate_local_http_selection(request.local_http_selection.as_ref(), request.model.as_deref())?;
     let smart = request.task_type == "suggest_incoming_kpis";
     if smart {
         app.state::<DesktopRuntime>().reserve_smart_request(&request.request_id).map_err(|error| error.to_string())?;
@@ -176,6 +241,9 @@ async fn ai_complete(
     }
     if let Some(timeout_ms) = request.timeout_ms {
         payload["timeoutMs"] = serde_json::Value::Number(timeout_ms.into());
+    }
+    if let Some(selection) = request.local_http_selection {
+        payload["localHttpSelection"] = serde_json::json!(selection);
     }
     tauri::async_runtime::spawn_blocking(move || {
         let runtime = app.state::<DesktopRuntime>();
@@ -209,7 +277,12 @@ async fn open_provider_auth(backend_id: String, app: tauri::AppHandle) -> Result
 #[tauri::command]
 async fn speech_request(request: serde_json::Value, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<DesktopRuntime>().speech(request).map_err(|error| error.to_string())
+        let runtime = app.state::<DesktopRuntime>();
+        #[cfg(all(target_os = "macos", not(debug_assertions)))]
+        if let Some(speech) = app.try_state::<packaged_speech::PackagedSpeech>() {
+            return speech.invoke(request, |request| runtime.speech(request).map_err(|error| error.to_string()));
+        }
+        runtime.speech(request).map_err(|error| error.to_string())
     }).await.map_err(|error| error.to_string())?
 }
 
@@ -249,12 +322,16 @@ pub fn run() {
             ai_get_run,
             open_provider_auth,
             speech_request,
-            get_app_mode
+            get_app_mode,
+            #[cfg(all(target_os = "macos", not(debug_assertions), feature = "app-intents-qualification"))]
+            app_intents::app_intents_exchange
         ])
         .build(tauri::generate_context!())
         .expect("error while building VDT Studio Desktop")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                #[cfg(all(target_os = "macos", not(debug_assertions), feature = "app-intents-qualification"))]
+                app_intents::invalidate_window();
                 #[cfg(all(any(target_os = "macos", target_os = "windows"), not(debug_assertions)))]
                 if let Some(web) = app.try_state::<packaged_web::PackagedWeb>() {
                     web.stop();
@@ -317,6 +394,45 @@ mod harness_tests {
             let mut completion = smart_completion(); completion["modelReasoning"] = value;
             assert!(serde_json::from_value::<DesktopSmartExecutionRequest>(metadata).is_err());
             assert!(serde_json::from_value::<DesktopCompletionRequest>(completion).is_err());
+        }
+    }
+    #[test]
+    fn native_requests_preserve_a_local_pin_and_reject_forged_authority() {
+        let pin = serde_json::json!({ "profileVersion": "ollama-offline.1", "modelRevision": format!("sha256:{}", "a".repeat(64)) });
+        let mut metadata = smart_metadata();
+        let mut completion = smart_completion();
+        for request in [&mut metadata, &mut completion] {
+            request["backendId"] = serde_json::json!("ollama");
+            request["localHttpSelection"] = pin.clone();
+        }
+        assert_eq!(serde_json::json!(serde_json::from_value::<DesktopSmartExecutionRequest>(metadata.clone()).unwrap().local_http_selection), pin);
+        assert_eq!(serde_json::json!(serde_json::from_value::<DesktopCompletionRequest>(completion.clone()).unwrap().local_http_selection), pin);
+        let selected = serde_json::from_value::<super::LocalHttpSelection>(pin.clone()).unwrap();
+        assert!(super::validate_local_http_selection(Some(&selected), Some("selected")).is_ok());
+        assert!(super::validate_local_http_selection(Some(&selected), None).is_err());
+        let mut malformed = pin;
+        malformed["modelRevision"] = serde_json::json!("latest");
+        let malformed = serde_json::from_value::<super::LocalHttpSelection>(malformed).unwrap();
+        assert!(super::validate_local_http_selection(Some(&malformed), Some("selected")).is_err());
+        metadata["localHttpSelection"]["offline"] = serde_json::json!(true);
+        completion["localHttpSelection"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<DesktopSmartExecutionRequest>(metadata).is_err());
+        assert!(serde_json::from_value::<DesktopCompletionRequest>(completion).is_err());
+        let mut completion = smart_completion();
+        completion["endpoint"] = serde_json::json!("https://elsewhere.example");
+        assert!(serde_json::from_value::<DesktopCompletionRequest>(completion).is_err());
+    }
+    #[test]
+    fn native_diagnostics_accept_legacy_shape_but_reject_unknown_or_null_authority() {
+        let legacy = serde_json::json!({ "backendId": "ollama" });
+        assert!(serde_json::from_value::<super::DesktopBackendTestRequest>(legacy).unwrap().local_http_selection.is_none());
+        let off = serde_json::json!({ "backendId": "ollama", "model": "selected", "modelReasoning": false });
+        assert_eq!(serde_json::from_value::<super::DesktopBackendTestRequest>(off).unwrap().model_reasoning, Some(serde_json::Value::Bool(false)));
+        for invalid in [
+            serde_json::json!({ "backendId": "ollama", "localHttpSelection": null }),
+            serde_json::json!({ "backendId": "ollama", "executionMode": "local" }),
+        ] {
+            assert!(serde_json::from_value::<super::DesktopBackendTestRequest>(invalid).is_err());
         }
     }
     #[test]

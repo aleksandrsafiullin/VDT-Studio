@@ -521,6 +521,8 @@ export interface VdtDatabase {
   listConversations(projectId: string): ConversationRecord[];
   listMessages(conversationId: string): MessageRecord[];
   listScopedConversationMessages(scope: ConversationScope, limit?: number): MessageRecord[];
+  /** Read ordered decision evidence under one scoped read transaction. The visitor must not write. */
+  visitScopedConversationDecisionMessages(scope: ConversationScope, visit: (message: MessageRecord) => void): void;
   createAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">, conversation?: AgentConversationProjection): AgentRunRecord;
   updateAgentRun(
     runId: string,

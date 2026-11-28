@@ -7,11 +7,15 @@ import { resolveExecutionSettings } from "./execution-mode-resolver";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { createAiExecutionClient, resolveDesktopSmartExecution, type AiExecutionClient } from "./ai-execution-client";
 import type { ExecutionSettings } from "./execution-mode-catalog";
+import { FAST_LOCAL_REASONING, resolveLocalReasoning } from "@vdt-studio/model-bridge/reasoning";
 import type { SmartHarnessHostIdentity } from "./smart-kpi-host-identity";
 import type { SmartKpiSchedulerOptions } from "./smart-kpi-scheduler";
 import { resolveSmartKpiSettings } from "./smart-kpi-settings";
+import { taskExecutionAssertion } from "./task-execution-expectation";
 import { SMART_KPI_FAILURE_REASONS } from "./smart-kpi-errors";
-import { SMART_METADATA_RESPONSE_GRACE_MS, SMART_RUNNER_METADATA_TIMEOUT_MS, SMART_WEB_METADATA_TIMEOUT_MS, SMART_WEB_ROUTE_GRACE_MS } from "./smart-kpi-metadata";
+import type { PublicAgentExecutionBindingSummary } from "./agent-client";
+import { prepareAppleNativeAgentBinding } from "./apple-native-client";
+import { APPLE_SMART_FOREGROUND_TIMEOUT_MS, SMART_METADATA_RESPONSE_GRACE_MS, SMART_RUNNER_METADATA_TIMEOUT_MS, SMART_WEB_METADATA_TIMEOUT_MS, SMART_WEB_ROUTE_GRACE_MS } from "./smart-kpi-metadata";
 
 const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Preparation transport cleanup is unconfirmed."
   : code === "STALE_SKILL" ? "The selected modelling skill changed. Refresh Suggested KPI to use the current Context selection."
@@ -40,7 +44,7 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
   const resolved = resolveExecutionSettings(smartSettings), config = { ...resolved.providerConfig }, fetcher = options.fetch ?? globalThis.fetch;
   const local = resolved.providerId === "local_runner", backendId = local ? String(config.backendId ?? "") : resolved.providerId;
   const cli = backendId.endsWith("_subscription"), mode = options.appMode ?? resolveVdtAppMode();
-  if (resolved.providerId === "mock" || local && !cli && !["ollama", "lm_studio", "vllm"].includes(backendId)) throw error("SUGGESTIONS_UNAVAILABLE");
+  if (resolved.providerId === "mock" || resolved.providerId === "apple_foundation_models" || local && !cli && !["ollama", "lm_studio", "vllm"].includes(backendId)) throw error("SUGGESTIONS_UNAVAILABLE");
   const requestedTimeout = (settings.timeoutSec ?? (cli ? 30 : 15)) * 1000;
   if (!Number.isSafeInteger(requestedTimeout) || requestedTimeout <= 0) throw error("INVALID_TIMEOUT");
   const timeoutMs = Math.min(requestedTimeout, cli ? 30_000 : 15_000);
@@ -50,8 +54,8 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
     const runner = new URL(String(config.runnerUrl));
     if (!["http:", "https:"].includes(runner.protocol) || runner.username || runner.password || runner.search || runner.hash || !["localhost", "127.0.0.1", "[::1]"].includes(runner.hostname) || runner.pathname !== "/") throw error("SUGGESTIONS_UNAVAILABLE");
     if (options.pairingToken) config.pairingToken = options.pairingToken;
-    if (cli) {
-      let binding = options.cliBinding;
+    if (cli || config.modelReasoning === FAST_LOCAL_REASONING) {
+      let binding = cli ? options.cliBinding : undefined;
       if (!binding) {
         if (mode === "desktop" && !options.pairingToken) {
           binding = await resolveDesktopSmartExecution({ backendId, timeoutMs: Math.min(timeoutMs, 5000), ...(config.model ? { model: String(config.model) } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning as boolean | string | number } : {}) }, options.signal ? { signal: options.signal } : {});
@@ -85,9 +89,15 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
       }
       if (!binding || binding.backendId !== backendId || !binding.modelId || !binding.requestModel || !binding.bindingVersion || !binding.credentialEpoch
         || !["exact", "host_default_alias"].includes(binding.modelResolution)
+        || !cli && (binding.modelId !== config.model || binding.requestModel !== config.model || binding.modelResolution !== "exact")
         || smartSettings.cliModelSelection?.source === "custom" && binding.requestModel !== smartSettings.cliModelSelection.customModel) throw error("STALE_EXECUTION");
       config.model = binding.requestModel; resolution = binding.modelResolution;
-      identity = { mode: "cli", backendId, modelId: binding.modelId, bindingVersion: await kpiContentHash([binding.bindingVersion, "smart-reasoning.v1", config.modelReasoning ?? null]), credentialEpoch: binding.credentialEpoch };
+      if (!cli) {
+        const effective = resolveLocalReasoning({ values: binding.reasoningValues ?? [] }, FAST_LOCAL_REASONING).value;
+        if (effective === undefined) delete config.modelReasoning;
+        else config.modelReasoning = effective;
+      }
+      identity = { mode: cli ? "cli" : "local_model", backendId, modelId: binding.modelId, bindingVersion: await kpiContentHash([binding.bindingVersion, "smart-reasoning.v1", config.modelReasoning ?? null]), credentialEpoch: binding.credentialEpoch };
     } else {
       if (!config.model || typeof config.model !== "string") throw error("SUGGESTIONS_UNAVAILABLE");
       identity = { mode: "local_model", backendId, modelId: config.model,
@@ -124,8 +134,55 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
   } };
 }
 
+/** Apple is selected independently by the caller. This uses the same
+ * authenticated host and cancellation receipts as other HTTP preparations. */
+export async function createAppleNativeSmartSelection(
+  selected: PublicAgentExecutionBindingSummary,
+  isCurrentSelection: (settings: ExecutionSettings) => boolean,
+  options: Pick<SmartKpiClientOptions, "fetch" | "now"> = {}
+): Promise<SmartKpiPreparedSelection> {
+  const { appleIdentity, admission } = selected;
+  if (!appleIdentity || admission?.mode !== "local" || admission.providerId !== "apple_foundation_models"
+    || selected.backendId !== admission.providerId || selected.modelId !== admission.modelId) throw error("STALE_EXECUTION");
+  const fetcher = options.fetch ?? globalThis.fetch;
+  const execution = Object.freeze({
+    mode: "local_model" as const, backendId: admission.providerId, modelId: admission.modelId,
+    // The host binding covers the exact model, revision, profile, locale and tool catalog.
+    bindingVersion: await kpiContentHash(["apple-native-v2", selected.bindingId]),
+    credentialEpoch: "apple-no-credential.v1"
+  });
+  const key = kpiCanonicalJson(execution);
+  const expectedExecution = {
+    mode: admission.mode, profileVersion: admission.profileVersion, providerId: admission.providerId,
+    modelId: admission.modelId, modelRevision: admission.modelRevision
+  };
+  return {
+    execution, modelResolution: "exact",
+    async revalidate(settings) {
+      if (!isCurrentSelection(settings)) return false;
+      try {
+        const current = await prepareAppleNativeAgentBinding(appleIdentity.locale, AbortSignal.timeout(10_000), fetcher);
+        return current.bindingId === selected.bindingId && isCurrentSelection(settings);
+      } catch { return false; }
+    },
+    async prepare({ context, execution: expected, signal }) {
+      if (kpiCanonicalJson(expected) !== key) throw error("STALE_EXECUTION");
+      const output = await prepareSmartThroughHttp(fetcher, {
+        input: buildKpiSuggestionTaskInput(context), providerId: selected.backendId,
+        providerConfig: { bindingId: selected.bindingId }, timeoutMs: APPLE_SMART_FOREGROUND_TIMEOUT_MS, expectedExecution
+      }, signal, 500);
+      const validated = validateKpiSuggestionModelOutput(output);
+      if (validated.status === "empty") return { status: "empty", reason: validated.rationale, limitations: validated.limitations };
+      return materializeKpiSuggestion(validated, context, {
+        requestId: crypto.randomUUID(), proposalId: crypto.randomUUID(), now: new Date((options.now ?? Date.now)()).toISOString(), execution
+      });
+    }
+  };
+}
+
 export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Record<string, unknown>, caller: AbortSignal, responseGraceMs = 0): Promise<unknown> {
   caller.throwIfAborted(); const requestId = crypto.randomUUID(), controller = new AbortController();
+  const assertion = body.expectedExecution === undefined ? taskExecutionAssertion(body.providerId, body.providerConfig) : {};
   const duration = Number(body.timeoutMs) + responseGraceMs, endGrace = 2_500;
   let terminal = false, timedOut = false, cancellation: Promise<void> | undefined;
   const reconcile = async () => {
@@ -150,7 +207,7 @@ export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Recor
   const timer = setTimeout(() => { timedOut = true; cancel(); }, duration);
   const hard = setTimeout(() => controller.abort(), duration + endGrace + 1_250);
   try {
-    const response = await awaitProviderSettlement(fetcher("/api/ai/suggestions", { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, requestId }), signal: controller.signal }), controller.signal);
+    const response = await awaitProviderSettlement(fetcher("/api/ai/suggestions", { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, ...assertion, requestId }), signal: controller.signal }), controller.signal);
     const payload = JSON.parse(await readBoundedText(response, 64 * 1024, "Smart preparation", controller.signal, true));
     if (payload.error?.code === "CLEANUP_UNCONFIRMED") throw error("CLEANUP_UNCONFIRMED");
     terminal = true; if (cancellation) await cancellation;

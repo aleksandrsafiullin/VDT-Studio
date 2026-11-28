@@ -6,6 +6,36 @@ import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { StructuralOutcome } from "./structural-outcome";
 import { WebSearchControl, researchModeTooltip } from "./web-search-control";
+import type { VdtStudioState } from "./vdt-store";
+
+const dialogueFixture = vi.hoisted(() => ({ phase: undefined as "idle" | "listening" | undefined, savedKey: false }));
+vi.mock("./api-key-storage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api-key-storage")>();
+  const store = actual.useApiKeyStorage;
+  return { ...actual, useApiKeyStorage: Object.assign(
+    (select: (state: ReturnType<typeof store.getState>) => unknown) =>
+      dialogueFixture.savedKey ? select({ ...store.getState(), status: "saved" }) : store(select), store) };
+});
+vi.mock("./vdt-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./vdt-store")>();
+  const useStore = actual.useVdtStudioStore;
+  return { ...actual, useVdtStudioStore: Object.assign((select: (state: VdtStudioState) => unknown) =>
+    dialogueFixture.phase ? select(useStore.getState()) : useStore(select), useStore) };
+});
+vi.mock("./use-voice-dialogue", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./use-voice-dialogue")>();
+  return { ...actual, useVoiceDialogue: (...args: Parameters<typeof actual.useVoiceDialogue>) => {
+    const dialogue = actual.useVoiceDialogue(...args);
+    return dialogueFixture.phase ? { ...dialogue, enabled: true, phase: dialogueFixture.phase, active: dialogueFixture.phase !== "idle" } : dialogue;
+  } };
+});
+vi.mock("./speech-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./speech-store")>();
+  return { ...actual, useSpeechSettings: () => {
+    const settings = actual.useSpeechSettings();
+    return dialogueFixture.phase ? { ...settings, ready: true } : settings;
+  } };
+});
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -31,6 +61,8 @@ const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("SetupRail agent composer", () => {
   beforeEach(() => {
+    dialogueFixture.phase = undefined;
+    dialogueFixture.savedKey = false;
     localStorageMock.clear();
     useVdtStudioStore.setState(useVdtStudioStore.getInitialState(), true);
     useVdtStudioStore.setState({
@@ -59,6 +91,99 @@ describe("SetupRail agent composer", () => {
     expect(html).not.toContain('data-testid="agent-chat-empty"');
     expect(html).not.toContain('data-testid="agent-chat-starters"');
     expect(html).toContain('data-testid="agent-instruction-input"');
+  });
+
+  it("offers paid readback only for an eligible saved run and leaves it off until explicit consent", () => {
+    dialogueFixture.phase = "idle";
+    dialogueFixture.savedKey = true;
+    const head = { projectId: "project", vdtId: "tree", activeRevisionId: "revision", commitGeneration: 1, pendingRevisionId: null };
+    const runId = "run-readback";
+    const run = {
+      runId, status: "running", events: [], chatMessages: [], selectedSkills: [], request: { workspace: head, executionBindingId: "binding" },
+      workspaceRevision: { head }, executionSummary: { executionMode: "api_keys", backendId: "openai_compatible", modelId: "gpt-test" }
+    } as unknown as NonNullable<VdtStudioState["agentRun"]>;
+    const time = "2026-11-26T00:00:00.000Z";
+    useVdtStudioStore.setState(state => ({
+      activeAgentRunId: runId, agentRun: run,
+      workspace: { ...state.workspace, ...({
+        activeProjectId: head.projectId, activeVdtId: head.vdtId,
+        draftRevisionBase: { projectId: head.projectId, vdtId: head.vdtId, expectedHead: head },
+        projectSummaries: [{ project: { id: head.projectId }, vdts: [{ vdt: { id: head.vdtId }, head }] }]
+      } as unknown as Pick<VdtStudioState["workspace"], "activeProjectId" | "activeVdtId" | "draftRevisionBase" | "projectSummaries">) },
+      generateActivity: { runId, requestId: runId, status: "running", phase: "waiting_provider", phaseStartedAt: time, startedAt: time,
+        updatedAt: time, providerId: "openai_compatible", providerLabel: "OpenAI", appMode: "development_web", canCancel: true,
+        cancelRequested: false, runtimeAgentRun: run }
+    }));
+    const disclosure = "OpenAI spoken questions and approvals";
+    vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "development_web");
+    vi.stubEnv("NEXT_PUBLIC_VDT_OPENAI_SPEECH_BYOK_ENABLED", "");
+    try {
+      expect(renderToStaticMarkup(<SetupRail />)).not.toContain(disclosure);
+      vi.stubEnv("NEXT_PUBLIC_VDT_OPENAI_SPEECH_BYOK_ENABLED", "true");
+      const markup = renderToStaticMarkup(<SetupRail />);
+      expect(markup).toContain(disclosure);
+      expect(markup).toContain("Enable for this run · API usage");
+      expect(markup).toContain("Recognition stays on this computer.");
+      expect(markup).not.toContain("Turn off OpenAI spoken updates");
+      useVdtStudioStore.setState({ activeAgentRunId: "different-run" });
+      expect(renderToStaticMarkup(<SetupRail />)).not.toContain(disclosure);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("places one Speak or Finish action inside the active question and keeps its manual answer and one run cancel", () => {
+    const time = "2026-11-25T12:00:00.000Z";
+    const workspace = { projectId: "workspace", vdtId: "tree" };
+    const question = { id: "basis", question: "How do the stages operate?", reason: "Choose the correct capacity rule.",
+      required: true, answerKind: "text" as const };
+    const runs = new AgentRunStore();
+    const { runId } = runs.createRun({ providerId: "openai", mode: "continue_project", input: {}, workspace });
+    runs.updateRun(runId, { status: "needs_user_input", pendingQuestions: [question] });
+    runs.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [{ ...question, question: "Earlier version?" }] });
+    runs.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [question] });
+    runs.appendEvent(runId, { type: "clarifying_questions", title: "Clarifying questions", message: question.question, questions: [question],
+      metadata: { questionSetId: "current-set" } });
+    const runtimeAgentRun = runs.getSnapshot(runId);
+    useVdtStudioStore.setState(state => ({ workspace: { ...state.workspace, activeProjectId: workspace.projectId, activeVdtId: workspace.vdtId },
+      generateActivity: { runId, requestId: runId, status: "needs_user_input", phase: "waiting_provider", phaseStartedAt: time, startedAt: time,
+        updatedAt: time, providerId: "openai_compatible", providerLabel: "OpenAI", appMode: "development_web", canCancel: true,
+        cancelRequested: false, agentChatMessages: runtimeAgentRun.chatMessages, runtimeAgentRun } }));
+
+    dialogueFixture.phase = "idle";
+    const markup = renderToStaticMarkup(<SetupRail />);
+    const cards = [...markup.matchAll(/<form[^>]*data-testid="generate-questions"[^>]*>(.*?)<\/form>/g)].map(match => match[1]);
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain("Earlier version?");
+    expect(cards[0]).not.toContain('data-testid="agent-question-voice"');
+    expect(cards[1]).toContain("How do the stages operate?");
+    expect(cards[1]).toContain(">Speak your answer</button>");
+    expect(cards[1]).toContain('data-testid="agent-answer-field-basis-answer"');
+    expect(cards[1]).toContain(">Send answer</button>");
+    expect(cards[1]).not.toMatch(/autofocus/i);
+    expect(markup.match(/data-testid="agent-dialogue-primary"/g)).toHaveLength(1);
+    expect(markup.match(/data-testid="cancel-generate"/g)).toHaveLength(1);
+    expect(markup).not.toContain('data-testid="agent-voice-input"');
+    expect(markup).not.toContain(">Cancel response</button>");
+
+    dialogueFixture.phase = "listening";
+    const listening = renderToStaticMarkup(<SetupRail />);
+    expect(listening).toContain(">Finish answer</button>");
+    expect(listening).toContain("Listening.");
+    expect(listening).not.toContain(">Speak your answer</button>");
+  });
+
+  it("keeps a single active-run Stop control separate from the non-question Speak button", () => {
+    const time = "2026-11-25T12:00:00.000Z";
+    dialogueFixture.phase = "idle";
+    useVdtStudioStore.setState({ generateActivity: { runId: "run", requestId: "run", status: "running", phase: "waiting_provider",
+      phaseStartedAt: time, startedAt: time, updatedAt: time, providerId: "openai_compatible", providerLabel: "OpenAI", appMode: "development_web",
+      canCancel: true, cancelRequested: false } });
+    const html = renderToStaticMarkup(<SetupRail />);
+    expect(html.match(/data-testid="agent-stop-response"/g)).toHaveLength(1);
+    expect(html.match(/data-testid="agent-dialogue-primary"/g)).toHaveLength(1);
+    expect(html).toContain(">Speak</button>");
+    expect(html).not.toContain('data-testid="cancel-generate"');
   });
 
   it("offers each chat outcome with Automatic selected by default", () => {

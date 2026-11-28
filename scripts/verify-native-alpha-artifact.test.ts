@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
-  const root = await mkdtemp(path.join(tmpdir(), "vdt-native-artifact-")); roots.push(root);
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "vdt-native-artifact-"))); roots.push(root);
   const application = path.join(root, platform === "darwin" ? "VDT Studio.app" : "application");
   const resources = platform === "darwin" ? path.join(application, "Contents/Resources") : application;
   const architecture = platform === "darwin" ? "arm64" : "x64";
@@ -94,6 +94,38 @@ describe("native alpha artifact verification", () => {
     expect(verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command })).toMatchObject({ artifactIntegrity: "passed", distributionTrust: "passed", installedApplicationQualification: "unverified", liveProviderQualification: "unverified", releaseReady: false });
     expect(f.command).toHaveBeenCalledWith("xcrun", ["stapler", "validate", path.join(f.root, f.installer)]);
     expect(f.command.mock.calls.some(([name]) => name === "spctl")).toBe(true);
+  });
+  it("rejects App Intents qualification metadata and staged App Intents in ordinary alpha verification", async () => {
+    const f = await fixture();
+    const verify = () => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command });
+    await writeFile(f.metadataPath, JSON.stringify({ ...f.metadata, qualification: "app-intents-validation-only" }));
+    expect(verify).toThrow(/App Intents qualification artifacts/);
+    await writeFile(f.metadataPath, JSON.stringify(f.metadata));
+    await mkdir(path.join(f.resources, "Metadata.appintents"));
+    expect(verify).toThrow(/App Intents metadata requires separate qualification/);
+    expect(f.command).not.toHaveBeenCalled();
+  });
+  it("checks the signed Apple preview helper bytes and their signing team", async () => {
+    const f = await fixture();
+    const helpers = path.join(f.resources, "../Helpers");
+    const model = path.join(helpers, "vdt-apple-foundation-models");
+    const voice = path.join(helpers, "vdt-apple-voice");
+    await writeFile(model, "model fixture", { mode: 0o755 });
+    await writeFile(voice, "voice fixture", { mode: 0o755 });
+    const verify = () => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command });
+    expect(verify).toThrow(/requires a resource manifest/);
+    const manifestPath = path.join(f.resources, "vdt-apple-helpers.json");
+    const manifest = { version: 1, foundationModels: sha("model fixture"), voice: sha("voice fixture") };
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, analyticalDefault: true }));
+    expect(verify).toThrow(/automatic Apple default requires release qualification/);
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, analyticalDefault: false }));
+    expect(verify()).toMatchObject({ artifactIntegrity: "passed", installedApplicationQualification: "unverified" });
+    expect(f.command).toHaveBeenCalledWith("codesign", ["--display", "--verbose=4", model]);
+    expect(f.command).toHaveBeenCalledWith("codesign", ["--display", "--verbose=4", voice]);
+    f.command.mockClear();
+    await writeFile(voice, "changed voice");
+    expect(verify).toThrow(/helper does not match its manifest/);
+    expect(f.command).not.toHaveBeenCalled();
   });
   it("checks Windows Authenticode independently of the metadata signed flag", async () => {
     const f = await fixture("win32");

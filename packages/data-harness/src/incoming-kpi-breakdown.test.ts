@@ -64,6 +64,48 @@ describe("complete incoming KPI file breakdown", () => {
     expect(validateDiscoveryApply(confirmed)).toContainEqual(expect.objectContaining({ status: "error", message: expect.stringMatching(/Duplicate event IDs.*DT-02/) }));
   });
 
+  it.each([
+    { mode: "column", column: "event_id", unit: "minutes" },
+    { mode: "timestamps", startColumn: "event_id", endColumn: "End", format: "iso" },
+    { mode: "timestamps", startColumn: "Start", endColumn: "event_id", format: "iso" }
+  ] as const)("blocks a confirmed reuse of the event ID before computing $mode", async duration => {
+    const input = inputFor("event_id,Reason,Minutes,Start,End\n10,Repair,60,2026-11-01T00:00:00Z,2026-11-01T01:00:00Z", { duration });
+    const blocked = await runRawDataDiscovery(input);
+    expect(blocked.incomingKpi).toMatchObject({
+      options: { duration, eventIdColumn: "event_id" },
+      blockingReasons: [expect.stringMatching(/event ID column identifies rows/)],
+      coverage: { includedRows: 0, complete: false },
+      hierarchy: []
+    });
+    expect(blocked.incomingKpi?.calculation).toBeUndefined();
+    expect(blocked.changeSetPreview).toMatchObject({ additions: [], updates: [] });
+    expect(validateDiscoveryApply(blocked)).toContainEqual(expect.objectContaining({ status: "error", message: expect.stringMatching(/event ID column identifies rows/) }));
+
+    const corrected = await reanalyzeDiscoveryWithUserEdits(input, blocked, {
+      incomingKpiOptions: { duration: { mode: "column", column: "Minutes", unit: "minutes" }, confirmed: true }
+    });
+    expect(corrected.incomingKpi?.coverage).toMatchObject({ includedRows: 1, complete: true });
+    expect(corrected.changeSetPreview?.additions).toEqual([expect.objectContaining({ baselineValue: 1 })]);
+  });
+
+  it("honors the user's explicit no-ID and nonstandard identity choices", async () => {
+    const csv = "Event ID,Record,Reason,Minutes\n60,120,Repair,240";
+    const noIdentity = await runRawDataDiscovery(inputFor(csv, {
+      eventIdColumn: null, duration: { mode: "column", column: "Event ID", unit: "minutes" }
+    }));
+    expect(noIdentity.incomingKpi?.options.eventIdColumn).toBeNull();
+    expect(noIdentity.incomingKpi?.coverage.complete).toBe(true);
+    expect(noIdentity.changeSetPreview?.additions).toEqual([expect.objectContaining({ baselineValue: 1 })]);
+
+    const explicitIdentity = await runRawDataDiscovery(inputFor(csv, {
+      eventIdColumn: "Record", duration: { mode: "column", column: "Record", unit: "minutes" }
+    }));
+    expect(explicitIdentity.incomingKpi?.blockingReasons)
+      .toContainEqual(expect.stringMatching(/event ID column identifies rows/));
+    expect(explicitIdentity.incomingKpi?.calculation).toBeUndefined();
+    expect(explicitIdentity.changeSetPreview).toMatchObject({ additions: [], updates: [] });
+  });
+
   it("reports conflicting and missing IDs in the confirmed source column", async () => {
     const input = inputFor("Record,Reason,Minutes\nX1,Repair,60\nX1,Waiting,30\n,Repair,30", { eventIdColumn: "Record" });
     const snapshot = await runRawDataDiscovery(input);

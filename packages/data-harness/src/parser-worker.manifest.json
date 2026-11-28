@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "entrypoint": "parser-worker.cjs",
-  "sha256": "928aa4aa9ae14d8c8531ee20bb187f0e4d899192c73b106c4045d3c4e32f5b56",
-  "byteLength": 879321,
+  "sha256": "5b11afa246c8d8dd729ea9db853e9f65e7d270ed3e1c5ea6cf94f053ed41cc81",
+  "byteLength": 880305,
   "sources": {
     "packages/data-harness/src/parser-worker-entry.ts": "cbdc8a6e589eb9e0859e7309720d3ad217954cedb0b4c1f94f4a36779f24cacb",
-    "packages/data-harness/src/parser.ts": "36aa4a39a0fefa6c3a131ee63dd479ea360e069eaf8714f940953085c94597fa",
+    "packages/data-harness/src/parser.ts": "3479d4b0943b8574cd6d241db19d19256e2768d5cbbf4772ca1a6d7392bab875",
     "packages/data-harness/src/parser-primitives.ts": "be699860619ace8accfec6cc030fb5ab804e2ea1e245731ea76e9bf36073b727",
     "packages/data-harness/src/parser-limits.ts": "13346d51bea7d4dd43b797c76e1f2776e4f1415b4dfd393d3476b2cd82290039",
     "packages/data-harness/src/workbook-preflight.ts": "04742070662ca27b4270dc6ee164c8e02dec03735139da20970cd2c20137133f"

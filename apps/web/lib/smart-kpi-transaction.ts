@@ -4,11 +4,16 @@ import type { SmartKpiMixedOperation } from "./smart-kpi-incoming-contract";
 import { createStoredVdt, fetchStoredVdtRevisionState, revisionCasFromHead, runtimeCasFromState, saveStoredVdtRevision,
   VdtStorageRequestError, workspaceDraftBase, type ProjectRuntimeCasV1, type SaveStoredVdtRevisionInput, type StoredProjectSummary, type VdtRevisionCasV1 } from "./vdt-storage-client";
 import { persistedExecutionSettings } from "./execution-mode-catalog";
-import { createSmartKpiPreparedSelection } from "./smart-kpi-client";
+import { appleIsExpected } from "./apple-first-launch";
+import { resolveExecutionSettings } from "./execution-mode-resolver";
+import { createAppleNativeSmartSelection, createSmartKpiPreparedSelection, type SmartKpiPreparedSelection } from "./smart-kpi-client";
 import { recordAcceptedSmartKpiChildren } from "./smart-kpi-decisions";
 import { resolveSmartKpiScope } from "./smart-kpi-scope";
+import { resolveSmartKpiSettings, smartKpiHasIndependentModel } from "./smart-kpi-settings";
 import { loadSmartKpiSkill } from "./smart-kpi-skill";
 import { smartKpiJournalPersisted, studioStatePersistenceProblem } from "./smart-kpi-journal";
+import { editorHandoffView, readSavedSmartHandoff, type EditorHandoffAttempt, type SavedSmartHandoff } from "./editor-handoff-controller";
+import type { EditorHandoff } from "./editor-handoff";
 import type { VdtStudioState, UiPreferences } from "@/components/vdt/vdt-store";
 
 export interface SmartKpiMutationView {
@@ -28,12 +33,14 @@ export interface SmartKpiOperationV1 {
   execution?: KpiSuggestionExecutionIdentity;
   authority?: Authority | undefined; candidate?: VdtProject; input?: SaveStoredVdtRevisionInput; addedNodeIds: string[];
   checkpointVersionId?: string;
+  editorHandoff?: SavedSmartHandoff;
 }
 export type SmartKpiOperation = SmartKpiOperationV1 | SmartKpiMixedOperation;
 export interface SmartKpiUndo {
   operationId: string; workspaceId: string; vdtId: string | null; projectId: string;
   before: VdtProject; appliedJson: string; projectRevision: number; authority?: Authority;
   previousNodeId: string; previousScenarioId: string; checkpointVersionId: string;
+  savedEditorHandoff?: SavedSmartHandoff;
 }
 export interface SmartKpiRebase { workspaceId: string; vdtId: string | null }
 type Get = () => VdtStudioState;
@@ -41,6 +48,46 @@ type Set = (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Parti
 const same = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : kpiCanonicalJson(a) === kpiCanonicalJson(b);
 const configuration = (state: VdtStudioState) => kpiCanonicalJson(persistedExecutionSettings(state.executionSettings));
 const failure = (reason: string, code?: string) => Object.assign(new Error(reason), code ? { code } : {});
+const executionChanged = () => failure("The selected model/backend/credential changed. Refresh suggestions.", "STALE_EXECUTION");
+const appleBackend = "apple_foundation_models";
+
+type SmartExecutionState = Pick<VdtStudioState, "executionSettings" | "appleNativePreview" | "appleFirstLaunch" | "runnerPairingToken">;
+const currentAppleBinding = (state: SmartExecutionState) => state.appleNativePreview?.settings === state.executionSettings
+  ? state.appleNativePreview.binding : undefined;
+
+export function smartKpiUsesApple(state: SmartExecutionState): boolean {
+  const { executionSettings: settings, appleFirstLaunch } = state;
+  return settings.analyticalSourceChoice !== "manual" && !smartKpiHasIndependentModel(settings)
+    && (Boolean(currentAppleBinding(state)) || appleIsExpected(settings.analyticalSourceChoice, appleFirstLaunch));
+}
+
+/** Shared by Preview and Apply. Readiness belongs to the current Smart
+ * selection, including its independently configured model when applicable. */
+export async function resolveCurrentSmartKpiSelection(get: () => SmartExecutionState, options: {
+  signal?: AbortSignal;
+  expected?: KpiSuggestionExecutionIdentity;
+} = {}): Promise<SmartKpiPreparedSelection & { isCurrent(): boolean }> {
+  const start = get(), settings = start.executionSettings, pairingToken = start.runnerPairingToken;
+  const apple = smartKpiUsesApple(start), binding = apple ? currentAppleBinding(start) : undefined;
+  if (options.expected) {
+    const provider = apple ? undefined : resolveExecutionSettings(resolveSmartKpiSettings(settings));
+    const backendId = !provider ? appleBackend : provider.providerId === "local_runner" ? String(provider.providerConfig?.backendId ?? "") : provider.providerId;
+    if (options.expected.backendId !== backendId) throw executionChanged();
+  }
+
+  const isCurrent = () => {
+    const current = get();
+    return current.executionSettings === settings && current.runnerPairingToken === pairingToken
+      && smartKpiUsesApple(current) === apple && (!apple || currentAppleBinding(current)?.bindingId === binding?.bindingId);
+  };
+  options.signal?.throwIfAborted();
+  if (apple && !binding) throw failure("Apple on-device Suggested KPI needs the current verified model connection.", options.expected ? "STALE_EXECUTION" : "SUGGESTIONS_UNAVAILABLE");
+  const selection = binding ? await createAppleNativeSmartSelection(binding, current => current === settings && isCurrent())
+    : await createSmartKpiPreparedSelection(settings, { ...(pairingToken ? { pairingToken } : {}), ...(options.signal ? { signal: options.signal } : {}) });
+  options.signal?.throwIfAborted();
+  if (!isCurrent() || options.expected && !same(selection.execution, options.expected)) throw executionChanged();
+  return { ...selection, isCurrent };
+}
 const preparationIssue = (input: IncomingKpiBatchInput) => {
   if (!input.proposal) return;
   try { validateKpiSuggestionDecomposition(input.proposal, input.context); }
@@ -200,6 +247,34 @@ export function canUndoSmartKpi(state: VdtStudioState): boolean {
   try { return same(authority(state), undo.authority); } catch { return false; }
 }
 
+/** This is a display projection of a confirmed exact save. It grants no write authority. */
+export function matchingSavedSmartHandoff(state: VdtStudioState, runId: string, artifactId: string, handoff: EditorHandoff) {
+  const undo = state.smartKpiUndo;
+  const receipt = readSavedSmartHandoff(undo?.savedEditorHandoff);
+  const cachedHead = state.workspace.projectSummaries.find(summary => summary.project.id === receipt?.projectId)
+    ?.vdts.find(entry => entry.vdt.id === receipt?.vdtId)?.head;
+  if (!receipt || !undo?.authority?.head.activeRevisionId || cachedHead?.pendingRevisionId !== null || handoff.action !== "suggested_kpis"
+    || receipt.runId !== runId || receipt.artifactId !== artifactId || receipt.projectId !== handoff.projectId
+    || receipt.vdtId !== handoff.vdtId || receipt.targetNodeId !== handoff.nodeId
+    || (handoff.revisionId !== undefined && receipt.baseRevisionId !== handoff.revisionId)
+    || undo.workspaceId !== receipt.projectId || undo.vdtId !== receipt.vdtId
+    || receipt.baseRevisionId === undo.authority.head.activeRevisionId
+    || state.workspace.pendingRevisionCommit || state.workspace.pendingVdtCreate || !canUndoSmartKpi(state)) return;
+  return undo;
+}
+
+export async function savedSmartHandoffHeadIsCurrent(undo: SmartKpiUndo, isStillCurrent: () => boolean): Promise<boolean> {
+  if (!undo.vdtId || !undo.authority || !isStillCurrent()) return false;
+  try {
+    const current = await fetchStoredVdtRevisionState(undo.vdtId);
+    return isStillCurrent() && current.head.pendingRevisionId === null && current.vdt.id === undo.vdtId && current.vdt.projectId === undo.workspaceId
+      && current.head.vdtId === undo.vdtId && current.head.projectId === undo.workspaceId
+      && current.runtimeState.projectId === undo.workspaceId
+      && same(revisionCasFromHead(current.head), undo.authority.head)
+      && same(runtimeCasFromState(current.runtimeState), undo.authority.runtime);
+  } catch { return false; }
+}
+
 /** Replaying an ambiguous ordinary write is required before capturing Smart's
  * head. It reuses its immutable input, even when its owner is no longer open. */
 async function reconcileOrdinary(get: Get, set: Set) {
@@ -250,16 +325,6 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
     running.add(operation.id);
     try {
       const saved = operation.vdtId ? await saveStoredVdtRevision(operation.vdtId, operation.input!) : undefined;
-      // An idempotent replay can acknowledge an older committed operation after
-      // another writer advanced the head. Never publish that candidate as head.
-      const latest = saved && operation.vdtId ? await fetchStoredVdtRevisionState(operation.vdtId).catch(() => undefined) : undefined;
-      const currentHeadConfirmed = !saved || Boolean(latest && latest.vdt.projectId === operation.workspaceId && latest.vdt.id === operation.vdtId
-        && same(revisionCasFromHead(latest.head), revisionCasFromHead(saved.head)) && same(runtimeCasFromState(latest.runtimeState), runtimeCasFromState(saved.runtimeState)));
-      let executionCurrent = true;
-      if (operation.execution) {
-        try { executionCurrent = same((await createSmartKpiPreparedSelection(get().executionSettings, get().runnerPairingToken ? { pairingToken: get().runnerPairingToken! } : {})).execution, operation.execution); }
-        catch { executionCurrent = false; }
-      }
       // Prepare only explicit accepted child roles before publishing new nodes,
       // so their first prewarm can use the Library without a model round trip.
       const selection = operation.schemaVersion === "smart_kpi_operation.v2"
@@ -271,16 +336,40 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
           selection, ...(operation.schemaVersion === "smart_kpi_operation.v2" ? { aliases: operation.resolved.aliases } : {}), operationId: operation.id, scope: { workspaceId: operation.workspaceId, vdtId: operation.vdtId,
             period: operation.context.period, ...(operation.context.personalisation ? { personalisation: operation.context.personalisation } : {}), ...(operation.context.business.goal ? { goal: operation.context.business.goal } : {}) } }).catch(() => {});
       }
+      let prepared: Awaited<ReturnType<typeof resolveCurrentSmartKpiSelection>> | undefined;
+      if (operation.execution) {
+        try {
+          prepared = await resolveCurrentSmartKpiSelection(get, { expected: operation.execution });
+          if (operation.execution.backendId === appleBackend && !await prepared.revalidate(get().executionSettings)) prepared = undefined;
+        } catch { prepared = undefined; }
+      }
+      // A reconciled commit may already be superseded. Read the authority after
+      // other asynchronous work and only publish while the execution is current.
+      const latest = saved && operation.vdtId ? await fetchStoredVdtRevisionState(operation.vdtId).catch(() => undefined) : undefined;
+      const currentHeadConfirmed = !saved || Boolean(latest && latest.vdt.projectId === operation.workspaceId && latest.vdt.id === operation.vdtId
+        && same(revisionCasFromHead(latest.head), revisionCasFromHead(saved.head)) && same(runtimeCasFromState(latest.runtimeState), runtimeCasFromState(saved.runtimeState)));
       let published = false;
       set(current => {
         if (current.smartKpiOperation?.id !== operation.id) return saved ? { workspace: { ...current.workspace, projectSummaries: mergeSummary(current.workspace.projectSummaries, saved.summary) } } : {};
-        published = currentHeadConfirmed && executionCurrent && ownsBase(current, operation) && !smartKpiBlockedReason(current, true)
+        published = currentHeadConfirmed && (!operation.execution || prepared?.isCurrent() === true) && ownsBase(current, operation) && !smartKpiBlockedReason(current, true)
           && (saved ? authorityMatches(current, operation.authority) : true);
         const nextAuthority = saved ? { head: revisionCasFromHead(saved.head), runtime: runtimeCasFromState(saved.runtimeState) } : undefined;
+        const handoff = readSavedSmartHandoff(operation.editorHandoff);
+        const savedEditorHandoff = handoff && saved && operation.input && operation.kind === "add"
+          && handoff.projectId === operation.workspaceId && handoff.vdtId === operation.vdtId
+          && handoff.targetNodeId === operation.context?.targetNodeId
+          && handoff.baseRevisionId === operation.input.expectedHead.activeRevisionId
+          && operation.input.idempotencyKey === `smart-add:${operation.vdtId}:${operation.id}`
+          && saved.vdt.id === handoff.vdtId && saved.vdt.projectId === handoff.projectId
+          && saved.head.vdtId === handoff.vdtId && saved.head.projectId === handoff.projectId
+          && saved.runtimeState.projectId === handoff.projectId
+          && saved.revision.id === saved.head.activeRevisionId && saved.revision.vdtId === handoff.vdtId
+          && saved.revision.parentRevisionId === handoff.baseRevisionId ? handoff : undefined;
         const undo: SmartKpiUndo | undefined = published && operation.kind === "add" ? { operationId: operation.id, workspaceId: operation.workspaceId, vdtId: operation.vdtId,
           projectId: operation.projectId, before: operation.before, appliedJson: kpiCanonicalJson(operation.candidate), projectRevision: current.projectRevision + 1,
           ...(nextAuthority ? { authority: nextAuthority } : {}), previousNodeId: operation.previousNodeId, previousScenarioId: operation.previousScenarioId,
-          checkpointVersionId: operation.checkpointVersionId! } : undefined;
+          checkpointVersionId: operation.checkpointVersionId!,
+          ...(savedEditorHandoff ? { savedEditorHandoff } : {}) } : undefined;
         return { ...(published ? { project: operation.candidate!, projectRevision: current.projectRevision + 1,
             selectedNodeId: operation.kind === "add" ? operation.context!.targetNodeId : operation.previousNodeId,
             activeScenarioId: operation.previousScenarioId, selectedEdgeId: undefined,
@@ -330,14 +419,20 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       // Pure local compiler: no execution admission, provider, journal or graph writes.
       return previewIncomingKpiBatch(state.project, input);
     },
-    applySmartKpiSuggestion: async (input: IncomingKpiBatchInput): Promise<SmartKpiApplyResult> => {
+    applySmartKpiSuggestion: async (input: IncomingKpiBatchInput, handoff?: EditorHandoffAttempt): Promise<SmartKpiApplyResult> => {
       const state = get(), scope = resolveSmartKpiScope(state), reason = smartKpiBlockedReason(state);
       if (reason) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason };
       const issue = preparationIssue(input);
       if (issue) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason: issue.message, code: issue.code };
       const inspected = inspectIncomingKpiDraft(input, state.project);
       if (!inspected.readyForCompile) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason: inspected.issues[0]!.message };
-      let operation: SmartKpiOperation = { schemaVersion: "smart_kpi_operation.v2", id: `smart_${crypto.randomUUID().replaceAll("-", "_")}`, kind: "add", phase: "preparing",
+      const handoffView = editorHandoffView(state);
+      if (handoff && !handoff.matchesSmartTarget(handoffView, input.context.targetNodeId)) {
+        return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft",
+          reason: "This Suggested KPI control no longer matches the draft and target." };
+      }
+      const editorHandoff = handoff?.savedSmartHandoff(handoffView, input.context.targetNodeId);
+      let operation: SmartKpiOperation = { ...(editorHandoff ? { editorHandoff } : {}), schemaVersion: "smart_kpi_operation.v2", id: `smart_${crypto.randomUUID().replaceAll("-", "_")}`, kind: "add", phase: "preparing",
         workspaceId: scope.workspaceId, vdtId: scope.vdtId, projectId: state.project.id, projectRevision: state.projectRevision,
         before: cloneProject(state.project), beforeJson: kpiCanonicalJson(state.project), settings: configuration(state),
         previousNodeId: state.selectedNodeId, previousScenarioId: state.activeScenarioId, addedNodeIds: [],
@@ -352,16 +447,17 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
         await reconcileOrdinary(get, set);
         if (!ownsBase(get(), operation)) throw failure("The ordinary pending write changed this scope. Refresh suggestions.");
         const current = get(), currentScope = resolveSmartKpiScope(current);
-        if (operation.lineage.kind === "model" && operation.context.selectedSkill && operation.vdtId) {
-          const skill = await loadSmartKpiSkill(operation.workspaceId, operation.vdtId, operation.context.root.name);
-          if (!same(skill, operation.context.selectedSkill)) throw failure("The selected modelling skill changed. Refresh suggestions.", "STALE_SKILL");
+        const { context: proposedContext, workspaceId, vdtId } = operation;
+        const recheckSkill = operation.lineage.kind === "model" && proposedContext.selectedSkill && vdtId ? async () => {
+          const skill = await loadSmartKpiSkill(workspaceId, vdtId, proposedContext.root.name);
+          if (!same(skill, proposedContext.selectedSkill)) throw failure("The selected modelling skill changed. Refresh suggestions.", "STALE_SKILL");
           if (!ownsBase(get(), operation)) throw failure("The KPI context changed while checking its skill. Refresh suggestions.");
-        }
+        } : undefined;
+        if (recheckSkill) await recheckSkill();
         operation.authority = authority(current);
         let selected;
         if (operation.lineage.kind === "model") {
-          selected = await createSmartKpiPreparedSelection(current.executionSettings, current.runnerPairingToken ? { pairingToken: current.runnerPairingToken } : {});
-          if (!same(selected.execution, operation.lineage.execution)) throw failure("The selected model/backend/credential changed. Refresh suggestions.", "STALE_EXECUTION");
+          selected = await resolveCurrentSmartKpiSelection(get, { expected: operation.lineage.execution });
           operation.execution = selected.execution;
         }
         const context = await buildKpiSuggestionContext(operation.before, { ...currentScope, targetNodeId: operation.context.targetNodeId });
@@ -370,8 +466,12 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
           ...(operation.proposal ? { proposal: operation.proposal } : {}), draft: operation.draft }, { operationId: operation.id, now: new Date().toISOString() });
         const checkpointed = createVersionSnapshot(operation.before, { name: "Before incoming KPIs", taskType: "suggest_incoming_kpis" });
         const candidate = layout({ ...compiled.preview, versions: checkpointed.versions }, current.ui);
-        if (selected && !(await selected.revalidate(get().executionSettings))) throw failure("The selected execution changed while validating incoming KPIs.", "STALE_EXECUTION");
-        if (!ownsBase(get(), operation) || smartKpiBlockedReason(get(), true) || !same(authority(get()), operation.authority)) throw failure("The graph or storage authority changed while validating incoming KPIs.");
+        if (selected && (!selected.isCurrent() || !await selected.revalidate(get().executionSettings))) throw executionChanged();
+        if (recheckSkill) await recheckSkill();
+        if (selected && !selected.isCurrent()) throw executionChanged();
+        const ready = get();
+        if (ready.smartKpiOperation?.id !== operation.id || !ownsBase(ready, operation) || smartKpiBlockedReason(ready, true)
+          || !same(authority(ready), operation.authority)) throw failure("The graph or storage authority changed while validating incoming KPIs.");
         operation = { ...operation, phase: "committing", candidate, addedNodeIds: compiled.newNodeIds, checkpointVersionId: checkpointed.versions.at(-1)!.id,
           resolved: { aliases: compiled.aliases, formula: compiled.formula, values: compiled.values },
           ...(operation.vdtId ? { input: { idempotencyKey: `smart-add:${operation.vdtId}:${operation.id}`, expectedHead: operation.authority!.head,

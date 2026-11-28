@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {plannedAdditionErrors,type VdtBuilderSession} from "@vdt-studio/vdt-core";
 import { persistFailureFields } from "./persist-failure-log";
+import { assertRunSkillSelectionCurrent } from "./tools/run-skill-library";
 import { schemaIssueSummary } from "./schema-issue-summary";
 import type { AgentRunStore } from "./run-store";
 import type {
@@ -28,6 +29,8 @@ export interface AgentToolContext {
   requirePlanOperands?: boolean | undefined;
   /** Trusted legacy decision policy for a run that must construct a tree. */
   requireDerivedRoot?: boolean | undefined;
+  /** Trusted host fence for Skill selection after asynchronous catalog access. */
+  assertSkillSelectionScope?: (() => void) | undefined;
   /** Identity of the admitted Gateway operation, assigned from the durable reservation. */
   invocation?: { operationId: string; reservedAt: string } | undefined;
   signal: AbortSignal;
@@ -156,6 +159,7 @@ export class ToolRegistry {
       if (tool.mutatesProject && skillResolution && !skillResolution.outcome) {
         throw new AgentToolError("SKILL_RESOLUTION_REQUIRED", "Resolve the skill first: browse, read and select a matching skill, or report a gap after browsing.");
       }
+      if (tool.mutatesProject && skillResolution) assertRunSkillSelectionCurrent(context);
       if (tool.requiresDraftProject && !context.builder?.getProject().graph.nodes.length) {
         throw new AgentToolError("NO_DRAFT_PROJECT", "This tool requires an existing draft. Create the draft and use the root ID returned by the tool.");
       }

@@ -1,3 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { ADAPTIVE_BINDING_PREFIX, isAdaptiveReasoningOffer, validAdaptiveReasoningPolicy, type AdaptiveReasoningPolicy, type AdaptiveStartScope } from "./adaptive-reasoning";
+import { APPLE_NATIVE_PROVIDER_ID } from "./apple-native-host";
+import type { AppleModelCapability } from "@vdt-studio/local-runner/apple-foundation-models";
+import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
+import { resolveLocalHttpFetch, type LocalHttpSelection, type ResolveOwnedLocalHttpRoute } from "@vdt-studio/model-bridge";
+import { assertAnalyticalAdmission, hostExecutionAdmission, type ExecutionExpectation, type HostExecutionAdmission } from "./execution-binding-admission";
 import {
   assessExternalAgentCapability,
   agentCapabilityProfileSchema,
@@ -34,6 +41,9 @@ export interface DefaultModelAgentBindingOptions {
 }
 
 export interface AgentExecutionBindingSummary {
+  readonly adaptiveReasoning?: AdaptiveReasoningPolicy | undefined;
+  readonly admission: HostExecutionAdmission;
+  readonly appleIdentity?: { readonly osBuild: string; readonly locale: string } | undefined;
   readonly modelReasoning?: import("@vdt-studio/ai-harness").ModelReasoningValue | undefined;
   readonly bindingId: string;
   readonly executionProfile: AgentCapabilityProfile["executionProfile"];
@@ -56,7 +66,9 @@ interface ModelAgentExecutionBindingDefinitionBase {
  * CLI runner are deliberately excluded from this adapter: they belong to the
  * external profile or to the explicit legacy compatibility route. */
 export interface StructuredModelAgentEngineAdapterDefinition {
-    readonly providerId: "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "mock" | "ollama" | "lm_studio" | "vllm";
+    readonly providerId: "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "mock" | "ollama" | "lm_studio" | "vllm" | typeof APPLE_NATIVE_PROVIDER_ID;
+    readonly adaptiveReasoning?: AdaptiveReasoningPolicy | undefined;
+    readonly appleCapability?: AppleModelCapability | undefined;
     readonly providerConfig?: Readonly<Record<string, unknown>> | undefined;
     readonly maxTokens?: number | undefined;
     readonly temperature?: number | undefined;
@@ -67,9 +79,15 @@ export interface LegacyModelAgentCompatibilityAdapterDefinition {
   readonly providerConfig?: Readonly<Record<string, unknown>> | undefined;
 }
 
+export interface LocalExecutionProof extends LocalHttpSelection {
+  readonly providerId: "ollama" | "lm_studio" | "vllm";
+  readonly modelId: string;
+}
+
 export interface ModelAgentExecutionBindingDefinition
   extends ModelAgentExecutionBindingDefinitionBase {
   readonly modelEngineAdapter?: StructuredModelAgentEngineAdapterDefinition | undefined;
+  readonly localProof?: LocalExecutionProof | undefined;
   /** Temporary bridge into the existing micro-CLI/provider runtime. This is
    * server-owned and is never accepted from the start request. */
   readonly legacyCompatibilityAdapter?: LegacyModelAgentCompatibilityAdapterDefinition | undefined;
@@ -105,6 +123,7 @@ export type AgentExecutionBindingDefinition =
 export type AgentExecutionBindingErrorCode =
   | "BINDING_ALREADY_REGISTERED"
   | "BINDING_INVALID"
+  | "BINDING_CAPABILITY_DENIED"
   | "BINDING_NOT_FOUND"
   | "BINDING_DISABLED"
   | "MODEL_BINDING_CLI_COMPATIBILITY_FORBIDDEN"
@@ -132,6 +151,7 @@ export interface AgentExecutionBindingRegistryOptions {
   /** Explicit trusted-local development canary. This exposes an unverified
    * binding without changing its qualification or isolation claims. */
   allowUnverifiedExternalCanary?: boolean | undefined;
+  resolveOwnedLocalHttpRoute?: ResolveOwnedLocalHttpRoute | undefined;
 }
 
 /**
@@ -140,17 +160,24 @@ export interface AgentExecutionBindingRegistryOptions {
  * resolves its binding, and unknown/disabled/stale entries never fall back to
  * a legacy provider or another backend.
  */
+const ADAPTIVE_OFFER_CAP = 32;
+const ADAPTIVE_OFFER_TTL_MS = 120_000;
+type AdaptiveOffer = { binding: StructuredModelAgentExecutionBindingDefinition; scope: AdaptiveStartScope; expiresAt: number };
+
 export class AgentExecutionBindingRegistry {
+  private readonly adaptiveOffers = new Map<string, AdaptiveOffer>();
   private readonly definitions = new Map<string, AgentExecutionBindingDefinition>();
   private readonly seenBindingIds = new Set<string>();
   private readonly externalProfilesEnabled: boolean;
   private readonly externalEngineWired: boolean;
   private readonly allowUnverifiedExternalCanary: boolean;
+  private readonly resolveOwnedLocalHttpRoute: ResolveOwnedLocalHttpRoute | undefined;
 
   constructor(
     definitions: readonly AgentExecutionBindingDefinition[] = [],
     options: AgentExecutionBindingRegistryOptions = {}
   ) {
+    this.resolveOwnedLocalHttpRoute = options.resolveOwnedLocalHttpRoute;
     this.externalProfilesEnabled = options.externalProfilesEnabled === true;
     this.externalEngineWired = options.externalEngineWired === true;
     this.allowUnverifiedExternalCanary = options.allowUnverifiedExternalCanary === true;
@@ -159,6 +186,11 @@ export class AgentExecutionBindingRegistry {
 
   register(definition: AgentExecutionBindingDefinition): () => void {
     const normalized = normalizeDefinition(definition);
+    if (isAdaptiveReasoningOffer(normalized.bindingId)
+      || (isStructuredModelExecutionBinding(normalized) && normalized.modelEngineAdapter.adaptiveReasoning)) {
+      throw new AgentExecutionBindingError("BINDING_INVALID", "Adaptive reasoning is available only through a scoped start offer.");
+    }
+    this.revalidateLocalRoute(normalized);
     if ("currentQualification" in normalized && !this.externalEngineWired) {
       throw new AgentExecutionBindingError(
         "EXTERNAL_ENGINE_NOT_WIRED",
@@ -178,6 +210,37 @@ export class AgentExecutionBindingRegistry {
         this.definitions.delete(normalized.bindingId);
       }
     };
+  }
+
+  offerAdaptiveStart(definition: StructuredModelAgentExecutionBindingDefinition, scope: AdaptiveStartScope,
+    now = Date.now()
+  ): AgentExecutionBindingSummary {
+    for (const [id, offer] of this.adaptiveOffers) if (offer.expiresAt <= now) this.adaptiveOffers.delete(id);
+    if (this.adaptiveOffers.size >= ADAPTIVE_OFFER_CAP || !definition.modelEngineAdapter.adaptiveReasoning) {
+      throw new AgentExecutionBindingError("BINDING_CAPABILITY_DENIED", "Adaptive reasoning offers are unavailable. Refresh the connection and retry.");
+    }
+    const binding = normalizeDefinition({ ...definition, bindingId: `${ADAPTIVE_BINDING_PREFIX}${randomUUID()}` });
+    if (!isStructuredModelExecutionBinding(binding)) {
+      throw new AgentExecutionBindingError("BINDING_INVALID", "Adaptive reasoning requires a structured local model.");
+    }
+    this.revalidateLocalRoute(binding);
+    this.adaptiveOffers.set(binding.bindingId, { binding, scope: { ...scope }, expiresAt: now + ADAPTIVE_OFFER_TTL_MS });
+    return toSummary(binding);
+  }
+
+  resolveAdaptiveStart(bindingId: string, scope: { projectId: string; vdtId?: string | undefined } | undefined,
+    expectation: ExecutionExpectation | undefined, consume = false, now = Date.now()
+  ): StructuredModelAgentExecutionBindingDefinition {
+    const offer = this.adaptiveOffers.get(bindingId);
+    if (offer && offer.expiresAt <= now) this.adaptiveOffers.delete(bindingId);
+    if (!offer || offer.expiresAt <= now || !expectation || offer.scope.projectId !== scope?.projectId
+      || offer.scope.vdtId !== scope?.vdtId) {
+      throw new AgentExecutionBindingError("BINDING_CAPABILITY_DENIED", "Reconnect adaptive reasoning for this exact VDT and model before starting.");
+    }
+    assertAnalyticalAdmission(hostExecutionAdmission(offer.binding), "agent_run", undefined, expectation);
+    this.revalidateLocalRoute(offer.binding);
+    if (consume) this.adaptiveOffers.delete(bindingId);
+    return structuredClone(offer.binding);
   }
 
   has(bindingId: string): boolean {
@@ -215,7 +278,25 @@ export class AgentExecutionBindingRegistry {
         );
       }
     }
+    this.revalidateLocalRoute(definition);
     return cloneDefinition(definition);
+  }
+
+  revalidateLocalRoute(definition: AgentExecutionBindingDefinition) {
+    if (!("localProof" in definition) || !definition.localProof) return undefined;
+    const { providerId, modelId, profileVersion, modelRevision } = definition.localProof;
+    const baseUrl = createLocalRuntimeContext().manifests.get(providerId)?.localHttp?.baseUrl;
+    const resolve = this.resolveOwnedLocalHttpRoute;
+    const selection = { profileVersion, modelRevision };
+    if (baseUrl && resolve) {
+      try {
+        resolveLocalHttpFetch({ backendId: providerId, baseUrl, model: modelId, task: "agent_decision" }, selection, resolve);
+        return { selection, resolve };
+      } catch {
+        // Resolver diagnostics may contain private runtime details.
+      }
+    }
+    throw new AgentExecutionBindingError("BINDING_CAPABILITY_DENIED", "The host cannot verify the selected local model revision and offline runtime.");
   }
 
   summaries(): AgentExecutionBindingSummary[] {
@@ -358,6 +439,12 @@ function normalizeDefinition(
       "A model execution binding cannot select two engine adapters."
     );
   }
+  if (definition.localProof && (!isStructuredModelExecutionBinding(definition)
+    || !["ollama", "lm_studio", "vllm"].includes(definition.localProof.providerId)
+    || definition.localProof.providerId !== definition.modelEngineAdapter.providerId
+    || definition.localProof.modelId !== definition.modelId)) {
+    throw new AgentExecutionBindingError("BINDING_INVALID", "Local proof must identify the exact local structured model.");
+  }
   if (isLegacyModelExecutionBinding(definition)) {
     const providerId = definition.legacyCompatibilityAdapter.providerId.trim();
     if (!providerId || providerId.length > 120) {
@@ -407,6 +494,20 @@ function normalizeDefinition(
         "BINDING_INVALID",
         "Stateless structured HTTP bindings cannot advertise crash resume until their semantic session state is durably checkpointed."
       );
+    }
+    const apple = definition.modelEngineAdapter.appleCapability;
+    if (definition.modelEngineAdapter.providerId === APPLE_NATIVE_PROVIDER_ID
+      ? !apple || apple.identity.model !== definition.modelId || apple.identity.modelRevision !== null
+        || apple.identity.profile !== "vdt-native-guided-v1" || !apple.tokenBudgetVerified
+        || apple.contextSize !== 8192 || definition.modelReasoning !== undefined
+        || definition.modelEngineAdapter.providerConfig !== undefined
+      : apple !== undefined) {
+      throw new AgentExecutionBindingError("BINDING_INVALID", "Apple model bindings require the qualified native capability and no provider overrides.");
+    }
+    const adaptive = definition.modelEngineAdapter.adaptiveReasoning;
+    if (adaptive !== undefined && (definition.modelEngineAdapter.providerId !== "ollama"
+      || !validAdaptiveReasoningPolicy(adaptive) || definition.modelReasoning !== adaptive.start)) {
+      throw new AgentExecutionBindingError("BINDING_INVALID", "Adaptive reasoning requires a verified Ollama start and repair setting.");
     }
     const { maxTokens, temperature, providerConfig } = definition.modelEngineAdapter;
     if (definition.modelReasoning !== undefined) {
@@ -591,8 +692,13 @@ function cloneDefinition(
 }
 
 function toSummary(definition: AgentExecutionBindingDefinition): AgentExecutionBindingSummary {
+  const adapter = isStructuredModelExecutionBinding(definition) ? definition.modelEngineAdapter : undefined;
+  const apple = adapter?.appleCapability;
   return {
+    ...(adapter?.adaptiveReasoning ? { adaptiveReasoning: { ...adapter.adaptiveReasoning } } : {}),
+    ...(apple ? { appleIdentity: { osBuild: apple.identity.osBuild, locale: apple.locale } } : {}),
     bindingId: definition.bindingId,
+    admission: hostExecutionAdmission(definition),
     executionProfile: definition.capability.executionProfile,
     engineId: definition.capability.engineId,
     engineAdapterId: definition.capability.engineAdapterId,

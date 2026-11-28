@@ -6,9 +6,12 @@ import { useRef, useState, type ComponentProps } from "react";
 import { markDeliberateHomeNavigation, navigateAfterWorkspaceSave } from "./workspace-navigation";
 import { useVdtStudioStore } from "./vdt-store";
 
-export function WorkspaceNavigationLink({ href, onSavedNavigate, isCurrent = () => true, ...props }: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & {
+export function WorkspaceNavigationLink({ href, onSavedNavigate, beforeNavigate, onNavigationDispatched, onNavigationFailed, isCurrent = () => true, ...props }: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & {
   href: string;
   onSavedNavigate?: (() => void) | undefined;
+  beforeNavigate?: (() => boolean) | undefined;
+  onNavigationDispatched?: (() => void) | undefined;
+  onNavigationFailed?: (() => void) | undefined;
   isCurrent?: () => boolean;
 }) {
   const router = useRouter();
@@ -39,20 +42,24 @@ export function WorkspaceNavigationLink({ href, onSavedNavigate, isCurrent = () 
   return <>
     <Link {...props} href={href} aria-busy={busy} aria-disabled={busy} onNavigate={(event) => {
       event.preventDefault();
-      if (saving.current || !isCurrent()) return;
+      if (saving.current || !isCurrent() || (beforeNavigate && !beforeNavigate())) return;
       saving.current = true;
       setBusy(true);
       setError(undefined);
       void navigateAfterWorkspaceSave(href, useVdtStudioStore.getState(), (destination) => {
-        if (!isCurrent()) return;
+        if (!isCurrent()) { onNavigationFailed?.(); return; }
         if (destination === "/") markDeliberateHomeNavigation(useVdtStudioStore.getState());
+        onNavigationDispatched?.();
         if (onSavedNavigate) onSavedNavigate();
         else router.push(destination);
       })
         .then((navigated) => {
-          if (!navigated) setError(useVdtStudioStore.getState().workspace.error ?? "Could not save your changes. Stay in this VDT and retry.");
+          if (!navigated) { onNavigationFailed?.(); setError(useVdtStudioStore.getState().workspace.error ?? "Could not save your changes. Stay in this VDT and retry."); }
         })
-        .catch(() => setError("Could not save your changes. Stay in this VDT and retry."))
+        .catch(() => {
+          onNavigationFailed?.();
+          setError("Could not save your changes. Stay in this VDT and retry.");
+        })
         .finally(() => { saving.current = false; setBusy(false); });
     }} />
     {error ? <div role="alert" data-testid="workspace-navigation-error" className="fixed bottom-5 left-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg">

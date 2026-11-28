@@ -5,6 +5,7 @@ import type {
   VdtAgentPublicStartRequest
 } from "@/lib/agent-client";
 import type { ExecutionSettings } from "@/lib/execution-mode-catalog";
+import { isAdaptiveReasoningOffer, validAdaptiveReasoningPolicy } from "@/app/api/agent/runs/adaptive-reasoning";
 import { resolveExecutionCategory } from "@/lib/execution-category";
 
 export const NO_EXECUTION_BINDING_MESSAGE =
@@ -32,7 +33,7 @@ export function formatNoLocalModelExecutionBindingMessage(backendId?: string): s
 
 type CommonAgentStartRequest = Omit<
   VdtAgentPublicStartRequest,
-  "executionBindingId" | "providerId" | "providerConfig"
+  "executionBindingId" | "expectedExecution" | "providerId" | "providerConfig"
 >;
 
 export function resolveExecutionBindingId(
@@ -50,7 +51,8 @@ export function resolveExecutionBindingId(
     return (
       bindings.bindings.find(
         (binding) =>
-          binding.executionProfile === (category === "cli_subscriptions" ? "external_cli_agent" : "model_agent")
+          !isAdaptiveReasoningOffer(binding.bindingId) && binding.adaptiveReasoning === undefined
+          && binding.executionProfile === (category === "cli_subscriptions" ? "external_cli_agent" : "model_agent")
           && binding.backendId === backendId
           && (!modelId || binding.modelId === modelId)
           && (category !== "cli_subscriptions" || binding.reasoningEffort === executionSettings.cliModelSelection?.reasoningEffort)
@@ -61,11 +63,27 @@ export function resolveExecutionBindingId(
 
   const modelBindings = bindings.bindings.filter(
     (binding): binding is PublicAgentExecutionBindingSummary =>
-      binding.executionProfile === "model_agent"
+      !isAdaptiveReasoningOffer(binding.bindingId) && binding.adaptiveReasoning === undefined
+      && binding.executionProfile === "model_agent"
   );
   const modelId = typeof providerConfig?.model === "string" ? providerConfig.model.trim() : "";
   const backendMatch = modelBindings.find((binding) => binding.backendId === providerId && (!modelId || binding.modelId === modelId) && binding.modelReasoning === providerConfig?.modelReasoning);
   return backendMatch?.bindingId ?? null;
+}
+
+export function resolveVerifiedLocalModelBinding(
+  bindings: AgentExecutionBindingSelection,
+  settings: ExecutionSettings,
+  config: Record<string, unknown> | undefined
+): PublicAgentExecutionBindingSummary | undefined {
+  if (resolveExecutionCategory(settings) !== "local_models") return undefined;
+  return bindings.bindings.find(binding =>
+    !isAdaptiveReasoningOffer(binding.bindingId) && binding.adaptiveReasoning === undefined
+    && binding.admission?.mode === "local"
+    && binding.backendId === config?.backendId
+    && binding.modelId === config?.model
+    && binding.modelReasoning === config?.modelReasoning
+  );
 }
 
 export function buildAgentPublicStartRequest(
@@ -74,26 +92,44 @@ export function buildAgentPublicStartRequest(
   bindings: AgentExecutionBindingSelection,
   options: {
     explicitBindingId?: string | undefined;
+    admittedBinding?: PublicAgentExecutionBindingSummary | undefined;
     providerId: string;
     providerConfig?: Record<string, unknown> | undefined;
   }
 ): VdtAgentPublicStartRequest {
-  const explicitBindingId = options.explicitBindingId?.trim();
-  if (explicitBindingId) {
-    return { ...commonRequest, executionBindingId: explicitBindingId };
-  }
-
-  const bindingId = resolveExecutionBindingId(
+  const explicitBindingId = options.admittedBinding?.bindingId ?? options.explicitBindingId?.trim();
+  const bindingId = explicitBindingId || resolveExecutionBindingId(
     bindings,
     executionSettings,
     options.providerId,
     options.providerConfig
   );
+  const category = resolveExecutionCategory(executionSettings);
   if (bindingId) {
-    return { ...commonRequest, executionBindingId: bindingId };
+    const binding = options.admittedBinding ?? bindings.bindings.find((entry) => entry.bindingId === bindingId);
+    const admission = binding?.admission;
+    if (isAdaptiveReasoningOffer(bindingId)
+      && (!options.admittedBinding || !validAdaptiveReasoningPolicy(binding?.adaptiveReasoning) || admission?.mode !== "legacy")) {
+      throw new Error("Refresh the scoped Ollama admission before starting an adaptive run.");
+    }
+    if (!admission) return { ...commonRequest, executionBindingId: bindingId };
+
+    const { mode, profileVersion, providerId, modelId, modelRevision } = admission;
+    const modeMatches = category === "local_models" ? mode === "local" || mode === "legacy"
+      : category === "cli_subscriptions" ? mode === "cli_subscription"
+        : mode === "api_keys" || (mode === "legacy" && providerId === "mock");
+    const explicitApple = Boolean((options.admittedBinding || options.explicitBindingId)
+      && binding.appleIdentity && providerId === "apple_foundation_models" && mode === "local");
+    if ((!modeMatches && !explicitApple) || providerId !== binding.backendId || modelId !== binding.modelId) {
+      throw new Error("The selected execution mode and model no longer match the host binding. Refresh the connection.");
+    }
+    return {
+      ...commonRequest,
+      executionBindingId: bindingId,
+      expectedExecution: { mode, profileVersion, providerId, modelId, modelRevision }
+    };
   }
 
-  const category = resolveExecutionCategory(executionSettings);
   if (category !== "byok") {
     const backendId = typeof options.providerConfig?.backendId === "string"
       ? options.providerConfig.backendId.trim()

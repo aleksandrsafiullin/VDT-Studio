@@ -87,6 +87,31 @@ export function requireTarget(project: VdtProject, targetNodeId: unknown): strin
   return id;
 }
 
+/** Apple reads its business scope from the same remembered saved KPI before
+ * both mapping and review. Other draft properties still follow the existing
+ * preview and revision checks. */
+export function assertAppleSavedKpiScope(owner: DataOwner, project: VdtProject, targetNodeId: string) {
+  const current = readActiveProject(owner);
+  const saved = current.graph.nodes.find(node => node.id === targetNodeId);
+  const submitted = project.graph.nodes.find(node => node.id === targetNodeId);
+  if (!saved || !submitted || saved.name !== submitted.name || saved.unit !== submitted.unit
+    || (saved.description ?? "") !== (submitted.description ?? "")) {
+    throw new DataApiError("The saved KPI scope changed or is unavailable. Save and reopen the selected KPI before analyzing again.", 409, "APPLE_DATA_TARGET_SCOPE_CHANGED");
+  }
+}
+
+export function hasRetainedAppleKpiScope(snapshot: DataDiscoveryRunSnapshot): boolean {
+  const context = snapshot.entryContext;
+  return Boolean(context && "appleSavedScope" in context && context.appleSavedScope === true);
+}
+
+export function assertRetainedAppleKpiScope(snapshot: DataDiscoveryRunSnapshot, owner: DataOwner | undefined, project: VdtProject) {
+  if (!hasRetainedAppleKpiScope(snapshot)) return;
+  const targetNodeId = snapshot.entryContext?.targetNodeId;
+  if (!owner || !targetNodeId) throw new DataApiError("The saved KPI scope is unavailable. Analyze the retained source again.", 409, "APPLE_DATA_TARGET_SCOPE_CHANGED");
+  assertAppleSavedKpiScope(owner, project, targetNodeId);
+}
+
 export async function reviewProject(
   snapshot: DataDiscoveryRunSnapshot,
   owner: DataOwner | undefined,
@@ -99,6 +124,7 @@ export async function reviewProject(
     ? owner && !snapshot.incomingKpi ? readActiveProject(owner) : initial
     : readProject(value, owner);
   const targetNodeId = snapshot.entryContext?.targetNodeId ?? initial.rootNodeId;
+  assertRetainedAppleKpiScope(snapshot, owner, initial);
   requireTarget(current, targetNodeId);
   if (targetBasis(initial, targetNodeId) !== targetBasis(current, targetNodeId)) {
     throw new DataApiError("The selected KPI or its incoming structure changed after analysis. Analyze the retained source again.", 409, "DATA_TARGET_CHANGED");

@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Caption desk acceptance accounting",
+    "description": "Weekly count of captions that pass human review across distinct live and correction queues.",
+    "content": "Count a caption when the desk accepts it. For each independent queue subtract its rejected captions from captions checked. Sum accepted captions across nonoverlapping queues. Ask for identity and overlap rules if a caption can occur twice. Exclude automated delivery and publication."
+  },
+  {
+    "title": "Caption publishing reconciliation",
+    "description": "Weekly count of accepted captions in a publication pipeline with an automated delivery ledger.",
+    "content": "For each publishing destination use its successful acceptance receipts. Deduplicate repeated receipts for the same caption and destination. This method requires a publishing ledger; stop short of counting delivery when the request concerns human review."
+  }
+]

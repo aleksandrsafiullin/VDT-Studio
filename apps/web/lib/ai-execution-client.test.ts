@@ -855,7 +855,7 @@ describe("AiExecutionClient", () => {
 
   it("propagates hosted run-task agentRun through complete progress", async () => {
     const events: AiExecutionProgressEvent[] = [];
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({
         ok: true,
         result: {
@@ -869,6 +869,7 @@ describe("AiExecutionClient", () => {
     const result = await createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch).complete(
       {
         providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "fixture-model", apiKey: "fixture-key" },
         taskType: "deepen_node",
         input: { project: productionVolumeProject, nodeId: "unplanned_downtime" }
       },
@@ -876,6 +877,10 @@ describe("AiExecutionClient", () => {
     );
 
     expect(result).toMatchObject({ kind: "change_set" });
+    expect(fetcher.mock.calls[0]?.[0]).toBe("/api/ai/run-task");
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).expectedExecution).toEqual({
+      mode: "api_keys", profileVersion: 1, providerId: "openai_compatible", modelId: "fixture-model", modelRevision: null
+    });
     expect(events.find((event) => event.phase === "complete")?.agentRun).toMatchObject({
       runId: "agent-run-1",
       selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])

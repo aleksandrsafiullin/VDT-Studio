@@ -513,7 +513,21 @@ describe("evaluateWaitingUserAskPayload", () => {
     expect(second.error.message).toContain("expectedAnswerType");
   });
 
-  it("does not retry a waiting-user result from a non-user.ask tool", () => {
+  it("uses only a matching trusted waiting-user result for a hosted Skill confirmation", () => {
+    const question = { id: "skill-confirm", question: "Use the matching method?", reason: "It matches the selected scope.", required: true };
+    const call = { externalCallId: "skill-call", toolName: "skill.select", args: { questions: [question] } };
+    const trusted = gatewayResult(call, { status: "waiting_user", resultCode: "QUESTION_REQUIRED", payload: { output: { questions: [question] } } });
+    const evaluate = (results: VdtGatewayToolResult[]) => evaluateWaitingUserAskPayload({
+      pausedCall: call, results, retryCount: 0, errorPrefix: "CLAUDE_CHECKPOINT"
+    });
+    expect(evaluate([trusted])).toMatchObject({ kind: "accept", questions: [question] });
+    expect(evaluate([{ ...trusted, externalCallId: "other-call" }])).toMatchObject({ kind: "terminal" });
+    expect(evaluate([{ ...trusted, toolName: "user.ask" }])).toMatchObject({ kind: "terminal" });
+    expect(evaluate([{ ...trusted, status: "succeeded" }])).toMatchObject({ kind: "terminal" });
+    expect(evaluate([{ ...trusted, payload: {} }])).toMatchObject({ kind: "terminal" });
+  });
+
+  it("does not retry a waiting-user result from an unsupported question tool", () => {
     const call = {
       externalCallId: "echo-1",
       toolName: "vdt.echo",
@@ -529,7 +543,7 @@ describe("evaluateWaitingUserAskPayload", () => {
       kind: "terminal",
       error: {
         code: "CLAUDE_CHECKPOINT_QUESTION_INVALID",
-        message: "A waiting-user result must come from the user.ask control tool.",
+        message: "A waiting-user result must come from a supported question tool.",
         retryable: false
       }
     });

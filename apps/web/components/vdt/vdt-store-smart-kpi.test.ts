@@ -2,12 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildKpiSuggestionContext, buildRecipeKpiSuggestions, calculateGraph, calculateScenarioGraph, cloneProject, compileIncomingKpiBatch, compileKpiSuggestion, createSmartKpiMeasuredFixture, createVersionSnapshot, kpiCanonicalJson,
   KPI_SUGGESTION_RECIPES, incomingKpiProposalFormula, inspectIncomingKpiDraft, type IncomingKpiBatchInput, type KpiSuggestionSet } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { POST as createProjectRoute } from "@/app/api/vdt/projects/route";
+import { POST as createVdtRoute } from "@/app/api/vdt/projects/[projectId]/vdts/route";
+import { GET as readVdtRoute } from "@/app/api/vdt/vdts/[vdtId]/route";
+import { GET as readRevisionsRoute, POST as saveRevisionRoute } from "@/app/api/vdt/vdts/[vdtId]/revisions/route";
 import { createIncomingGraphFixture, manualInput, manualKey, modelProposal } from "../../../../packages/vdt-core/src/suggestions/incoming-contract.fixtures";
-import { validateSmartKpiOperation, type SmartKpiOperation, type SmartKpiOperationV1 } from "@/lib/smart-kpi-transaction";
+import { resolveCurrentSmartKpiSelection, validateSmartKpiOperation, type SmartKpiOperation, type SmartKpiOperationV1 } from "@/lib/smart-kpi-transaction";
+import type { PublicAgentExecutionBindingSummary } from "@/lib/agent-client";
 import { persistedExecutionSettings } from "@/lib/execution-mode-catalog";
 import { revisionCasFromHead, runtimeCasFromState, VdtStorageRequestError, workspaceDraftBase, type StoredProjectSummary } from "@/lib/vdt-storage-client";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
 import { getSmartKpiLibraryProposal } from "@/lib/smart-kpi-decisions";
+import { smartKpiSourceKey } from "@/lib/smart-kpi-settings";
 import { apiKeyScope, connectApiKeyPersistence } from "@/lib/api-key-persistence";
 import { applyGatewayPreset, DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
 import { studioStateStorage } from "@/lib/smart-kpi-journal";
@@ -34,6 +43,41 @@ function summary(generation = 1): StoredProjectSummary {
 }
 function saved(generation = 2) { const s = summary(generation); return { summary: s, vdt: s.vdts[0]!.vdt, head: s.vdts[0]!.head, runtimeState: s.runtimeState,
   revision: { id: `r${generation}`, vdtId: "stored", revisionNo: generation, source: "user", createdAt: "2026-10-19T00:00:00Z" } }; }
+const appleBinding: PublicAgentExecutionBindingSummary = {
+  admission: { mode: "local", providerId: "apple_foundation_models", profileVersion: 1, modelId: "SystemLanguageModel.default", modelRevision: null },
+  appleIdentity: { osBuild: "fixture", locale: "en-US" }, bindingId: "apple_smart_apply_fixture", executionProfile: "model_agent",
+  engineId: "model_agent", engineAdapterId: "apple-native-guided-v1", backendId: "apple_foundation_models", modelId: "SystemLanguageModel.default"
+};
+const appleModelResult = { status: "ready", rationale: "Measure productive time and production rate.", limitations: [], groups: [
+  { id: "operations", title: "Operating inputs", selectionMode: "all", requiredKeys: ["hours", "rate"], formula: "hours * rate", recipeId: null, limitations: [],
+    children: [
+      { key: "hours", conceptKey: "productive_time", name: "Productive time", unit: "h/month", description: null, existingNodeId: null },
+      { key: "rate", conceptKey: "production_rate", name: "Production rate", unit: "t/h", description: null, existingNodeId: null }
+    ] }
+] };
+function selectApple() {
+  const settings = { ...DEFAULT_EXECUTION_SETTINGS, analyticalSourceChoice: "apple_manual" as const };
+  store.setState({ executionSettings: settings, appleNativePreview: { settings, binding: appleBinding } });
+  return settings;
+}
+function applePreparationResponse(init?: RequestInit) {
+  expect(JSON.parse(String(init?.body))).toMatchObject({ providerId: appleBinding.backendId,
+    providerConfig: { bindingId: appleBinding.bindingId }, expectedExecution: appleBinding.admission });
+  return Response.json({ ok: true, result: appleModelResult });
+}
+async function applePreview(): Promise<IncomingKpiBatchInput> {
+  const state = store.getState(), context = await state.buildIncomingKpiContext(state.project.rootNodeId);
+  const selection = await resolveCurrentSmartKpiSelection(store.getState);
+  const proposal = await selection.prepare({ context, execution: selection.execution, signal: new AbortController().signal });
+  if (!proposal || !("groups" in proposal) || proposal.origin.kind !== "model") throw new Error("Expected a model-backed Apple proposal");
+  const group = proposal.groups[0]!;
+  return { schemaVersion: "incoming_kpi_apply.v2", context, proposal, draft: {
+    schemaVersion: "incoming_kpi_draft.v2", targetNodeId: context.targetNodeId, contextHash: context.contextHash, revision: 0,
+    source: { kind: "proposal", proposalId: proposal.proposalId, groupId: group.id }, childKeys: group.children.map(child => child.key),
+    manualChildren: [], existingFactors: [], formula: incomingKpiProposalFormula(proposal, group.id)!, formulaAuthorship: "model",
+    inputValues: { p_1: "8", p_2: "0" }
+  } };
+}
 async function prepared() {
   const state = store.getState(), scope = resolveSmartKpiScope(state);
   const context = await buildKpiSuggestionContext(state.project, { ...scope, targetNodeId: state.project.rootNodeId });
@@ -51,10 +95,133 @@ beforeEach(() => {
   const project = createSmartKpiMeasuredFixture(0); project.graph.nodes[0]!.assumptions = ["Time period: monthly"];
   const owner = summary();
   store.setState({ project, projectRevision: 10, selectedNodeId: project.rootNodeId, activeScenarioId: project.scenarios[0]!.id,
+    executionSettings: { ...DEFAULT_EXECUTION_SETTINGS, analyticalSourceChoice: "manual" }, runnerPairingToken: undefined,
+    appleNativePreview: undefined, appleFirstLaunch: undefined,
     workspace: { activePanel: "vdt", activeProjectId: "owner", activeVdtId: "stored", projectSummaries: [owner], isLoading: false, isMutating: false,
       draftRevisionBase: workspaceDraftBase(owner.vdts[0]!.head, runtimeCasFromState(owner.runtimeState)) },
     isGenerating: false, generateActivity: undefined, agentRun: undefined, activeAgentRunId: undefined, agentPendingQuestions: undefined, agentConnectionStatus: "idle", agentChatHistory: [],
     smartKpiSkill: undefined, smartKpiOperation: undefined, smartKpiUndo: undefined, smartKpiRebaseRequired: undefined, smartKpiConflictOperation: undefined, smartKpiFencedRunIds: [], smartKpiMutation: { status: "idle", canUndo: false }, sendManualProjectChange: notify });
+});
+
+describe("Smart Apple Preview and Apply", () => {
+  it("applies the exact reviewed Apple proposal through the normal store into a SQLite revision, then reads and undoes it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vdt-apple-smart-"));
+    vi.stubEnv("VDT_DATA_DIR", directory); vi.stubEnv("VDT_APP_MODE", "development_web");
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    try {
+      const request = (path: string, body: unknown) => new Request(`http://localhost${path}`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const createdProject = await createProjectRoute(request("/api/vdt/projects", { name: "Synthetic Apple Smart Apply" }));
+      expect(createdProject.status).toBe(201);
+      const { summary: projectSummary } = await createdProject.json() as { summary: StoredProjectSummary };
+      const owner = projectSummary.project.id, project = store.getState().project;
+      const vdtId = "synthetic_apple_smart", params = { params: Promise.resolve({ vdtId }) };
+      const createdVdt = await createVdtRoute(request(`/api/vdt/projects/${owner}/vdts`, {
+        schemaVersion: "create_vdt_with_initial_http_request.v1", idempotencyKey: "synthetic-apple-smart-create",
+        expectedRuntime: runtimeCasFromState(projectSummary.runtimeState),
+        vdt: { requestedVdtId: vdtId, name: "Synthetic Apple Smart", rootKpi: "Output", unit: "t/month", timePeriod: "month", status: "draft", metadata: null },
+        project
+      }), { params: Promise.resolve({ projectId: owner }) });
+      expect(createdVdt.status).toBe(201);
+      const { summary: initial } = await createdVdt.json() as { summary: StoredProjectSummary };
+      const base = initial.vdts[0]!.head;
+      store.setState({ workspace: { ...store.getState().workspace, activeProjectId: owner, activeVdtId: vdtId, projectSummaries: [initial],
+        draftRevisionBase: workspaceDraftBase(base, runtimeCasFromState(initial.runtimeState)) } });
+      selectApple();
+      const client = await vi.importActual<typeof import("@/lib/vdt-storage-client")>("@/lib/vdt-storage-client");
+      save.mockImplementation(client.saveStoredVdtRevision); fetchState.mockImplementation(client.fetchStoredVdtRevisionState);
+      fetcher.mockImplementation(async (url, init) => {
+        if (url === "/api/ai/suggestions") return applePreparationResponse(init);
+        if (url === "/api/agent/bindings/apple") return Response.json({ ok: true, binding: appleBinding });
+        expect(url).toBe(`/api/vdt/vdts/${vdtId}/revisions`);
+        const routed = new Request(`http://localhost${url}`, init);
+        return init?.method === "POST" ? saveRevisionRoute(routed, params) : readRevisionsRoute(routed, params);
+      });
+      const input = await applePreview(), before = kpiCanonicalJson(store.getState().project);
+      expect(await store.getState().previewIncomingKpiBatch(input)).toMatchObject({ valid: true, newNodeCount: 2 });
+      expect(kpiCanonicalJson(store.getState().project)).toBe(before); expect(save).not.toHaveBeenCalled();
+      const applied = await store.getState().applySmartKpiSuggestion(input);
+      expect(applied).toMatchObject({ ok: true, durability: "stored" }); expect(applied.addedNodeIds).toHaveLength(2);
+      expect(save).toHaveBeenCalledExactlyOnceWith(vdtId, expect.objectContaining({ expectedHead: revisionCasFromHead(base),
+        idempotencyKey: expect.stringMatching(/^smart-add:/) }));
+      expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/ai/suggestions", "/api/agent/bindings/apple",
+        `/api/vdt/vdts/${vdtId}/revisions`, "/api/agent/bindings/apple", `/api/vdt/vdts/${vdtId}/revisions`]);
+      const read = await readVdtRoute(new Request("http://localhost"), params);
+      expect(read.status).toBe(200);
+      const result = await read.json();
+      expect(result.revisions).toHaveLength(2);
+      expect(result.head.activeRevisionId).not.toBe(base.activeRevisionId);
+      expect(result.activeProject.graph).toEqual(store.getState().project.graph);
+      expect(result.activeProject.graph.nodes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "Productive time", unit: "h/month" }), expect.objectContaining({ name: "Production rate", unit: "t/h" })
+      ]));
+      expect(calculateGraph(result.activeProject).rootValue).toBe(0);
+      expect(selectedExecution).not.toHaveBeenCalled();
+      expect(await store.getState().undoSmartKpiSuggestion()).toBe(true);
+      const afterUndo = await (await readVdtRoute(new Request("http://localhost"), params)).json();
+      expect(afterUndo.revisions).toHaveLength(3);
+      expect(afterUndo.activeProject.graph).toEqual(project.graph);
+      expect(save.mock.calls[1]![1]).toMatchObject({ expectedHead: revisionCasFromHead(result.head), idempotencyKey: expect.stringMatching(/^smart-undo:/) });
+    } finally {
+      fetcher.mockRestore(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["provider", "independent Smart model", "host binding", "unavailable Apple binding", "stored revision", "draft revision", "host Skill"])(
+    "blocks an Apple proposal when the %s changes before commitment", async change => {
+      const settings = selectApple();
+      const content = "# Service output\nUse the selected service definition.";
+      const skill = { id: "custom.service", title: "Service output", version: 1, content,
+        contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` };
+      store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill } });
+      selectedSkill.mockResolvedValue(skill);
+      let release!: (response: Response) => void;
+      const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        if (url === "/api/ai/suggestions") return applePreparationResponse(init);
+        expect(url).toBe("/api/agent/bindings/apple");
+        return new Promise(resolve => { release = resolve; });
+      });
+      try {
+        const input = await applePreview(), before = kpiCanonicalJson(store.getState().project);
+        const manualSettings = { ...settings, analyticalSourceChoice: "manual" as const };
+        if (change === "provider") store.setState({ executionSettings: manualSettings, appleNativePreview: { settings: manualSettings, binding: appleBinding } });
+        if (change === "independent Smart model") store.setState({ executionSettings: { ...settings,
+          smartKpiBySource: { [smartKpiSourceKey(manualSettings)]: { model: "independent-fixture" } } } });
+        if (change === "unavailable Apple binding") store.setState({ appleNativePreview: undefined });
+        const pending = store.getState().applySmartKpiSuggestion(input);
+        if (!["provider", "independent Smart model", "unavailable Apple binding"].includes(change)) {
+          await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+          if (change === "stored revision") {
+            const updated = summary(2), workspace = store.getState().workspace;
+            store.setState({ workspace: { ...workspace, projectSummaries: [updated],
+              draftRevisionBase: workspaceDraftBase(updated.vdts[0]!.head, runtimeCasFromState(updated.runtimeState)) } });
+          }
+          if (change === "draft revision") store.setState({ projectRevision: 11 });
+          if (change === "host Skill") selectedSkill.mockResolvedValue({ ...skill, version: 2 });
+          release(Response.json({ ok: true, binding: change === "host binding" ? { ...appleBinding, bindingId: "superseding_binding" } : appleBinding }));
+        }
+        const result = await pending;
+        expect(result).toMatchObject({ ok: false, addedNodeIds: [] });
+        if (change === "host Skill") expect(result.code).toBe("STALE_SKILL");
+        else if (!["stored revision", "draft revision"].includes(change)) expect(result.code).toBe("STALE_EXECUTION");
+        expect(kpiCanonicalJson(store.getState().project)).toBe(before);
+        expect(selectedExecution).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+      } finally { fetcher.mockRestore(); }
+    }
+  );
+
+  it("keeps an explicitly selected independent Smart model active while analysis uses Apple", async () => {
+    const settings = selectApple(), manual = { ...settings, analyticalSourceChoice: "manual" as const };
+    const independent = { ...settings, smartKpiBySource: { [smartKpiSourceKey(manual)]: { model: "independent-fixture" } } };
+    const execution = { mode: "api" as const, backendId: "openai_compatible", modelId: "independent-fixture", bindingVersion: "v1", credentialEpoch: "epoch" };
+    store.setState({ executionSettings: independent, appleNativePreview: { settings: independent, binding: appleBinding } });
+    selectedExecution.mockResolvedValue({ execution, revalidate: async () => true });
+    const input = await prepared();
+    input.proposal.origin = { kind: "model", requestId: "independent-model", execution };
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: true, durability: "stored" });
+    expect(selectedExecution).toHaveBeenCalledWith(independent, {});
+    expect(save).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Smart immutable user transaction", () => {
@@ -63,7 +230,7 @@ describe("Smart immutable user transaction", () => {
     const skill = { id: "custom.service", title: "Service output", version: 1, content, contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` };
     store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill } });
     const input = await prepared(), before = kpiCanonicalJson(store.getState().project);
-    input.proposal.origin = { kind: "model", requestId: "selected-skill-change", execution: { mode: "cli", backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" } };
+    input.proposal.origin = { kind: "model", requestId: "selected-skill-change", execution: { mode: "api", backendId: "openai_compatible", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" } };
     selectedSkill.mockResolvedValue({ ...skill, version: 2 });
     expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, code: "STALE_SKILL" });
     expect(selectedSkill).toHaveBeenCalledWith("owner", "stored", input.context.root.name);
@@ -75,7 +242,7 @@ describe("Smart immutable user transaction", () => {
     const skill = { id: "custom.service", title: "Service output", version: 1, content, contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` };
     store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill } });
     const input = await prepared();
-    const execution = { mode: "cli" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" };
+    const execution = { mode: "api" as const, backendId: "openai_compatible", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" };
     input.proposal.origin = { kind: "model", requestId: "selected-skill-replay", execution };
     selectedSkill.mockResolvedValue(skill); selectedExecution.mockResolvedValue({ execution, revalidate: async () => true });
     save.mockRejectedValueOnce(new Error("lost selected-Skill acknowledgement"));
@@ -459,7 +626,7 @@ describe("Smart immutable user transaction", () => {
     expect(selectedExecution).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
   });
   it("returns a recoverable execution code before any commit when model lineage changed", async () => {
-    const execution = { mode: "api" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };
+    const execution = { mode: "api" as const, backendId: "openai_compatible", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };
     const input = await prepared(); input.proposal.origin = { kind: "model", requestId: "changed-before-add", execution };
     const before = store.getState().project;
     selectedExecution.mockResolvedValue({ execution: { ...execution, credentialEpoch: "replacement-epoch" }, revalidate: async () => true });
@@ -468,7 +635,7 @@ describe("Smart immutable user transaction", () => {
     expect(store.getState().smartKpiOperation).toBeUndefined();
   });
   it("does not publish a pending model candidate after a real credential epoch change", async () => {
-    const execution = { mode: "api" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };
+    const execution = { mode: "api" as const, backendId: "openai_compatible", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };
     const input = await prepared(); input.proposal.origin = { kind: "model", requestId: "epoch-fixture", execution };
     selectedExecution.mockResolvedValue({ execution, revalidate: async () => true }); save.mockRejectedValueOnce(new Error("lost ack"));
     expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });

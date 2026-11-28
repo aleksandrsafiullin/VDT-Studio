@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase, projectDir } from "@vdt-studio/storage";
 import { PARSER_RESOURCE_LIMITS, type DataDiscoveryRunSnapshot, type IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { applyChangeSet, calculateGraph, productionVolumeProject, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
+import * as providerSecurity from "@/lib/provider-target-security";
 import { revisionCasFromHead, runtimeCasFromState } from "@/lib/vdt-storage-client";
 import { GET as loadVdt } from "@/app/api/vdt/vdts/[vdtId]/route";
 import { POST as commitRevision } from "@/app/api/vdt/vdts/[vdtId]/revisions/route";
@@ -410,12 +411,23 @@ describe("data discovery run API lifecycle", () => {
     vi.stubEnv("OPENAI_COMPATIBLE_API_KEY", "");
     vi.stubEnv("OPENAI_COMPATIBLE_BASE_URL", "https://api.openai.com/v1");
     const offlineFetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    const resolveTarget = vi.spyOn(providerSecurity, "resolvePublicProviderTarget");
     vi.stubGlobal("fetch", offlineFetch);
     try {
       const offline = await createRun(jsonRequest(url, body));
       expect(offline.status).toBe(200);
       const { snapshot } = await readJson<{ snapshot: DataDiscoveryRunSnapshot }>(offline);
       expect(snapshot.incomingKpi?.coverage.totalRows).toBe(10);
+      expect(offlineFetch).not.toHaveBeenCalled();
+
+      const protectedLocal = await createRun(jsonRequest(url, {
+        ...body,
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5.5", apiKey: "request-key" },
+        expectedExecution: { mode: "local", profileVersion: 1, providerId: "ollama", modelId: "qwen3", modelRevision: null }
+      }));
+      expect(protectedLocal.status).toBe(400);
+      expect(await protectedLocal.json()).toMatchObject({ error: { code: "BINDING_CAPABILITY_DENIED" } });
       expect(offlineFetch).not.toHaveBeenCalled();
 
       const assisted = await createRun(jsonRequest(url, {
@@ -428,6 +440,17 @@ describe("data discovery run API lifecycle", () => {
       expect(offlineFetch).not.toHaveBeenCalled();
 
       vi.stubEnv("OPENAI_COMPATIBLE_API_KEY", "qa-test-provider-key");
+      const strictWithoutOwnKey = await createRun(jsonRequest(url, {
+        ...body,
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5.5" },
+        expectedExecution: { mode: "api_keys", profileVersion: 1, providerId: "openai_compatible", modelId: "gpt-5.5", modelRevision: null }
+      }));
+      expect(strictWithoutOwnKey.status).toBe(400);
+      expect(await strictWithoutOwnKey.json()).toMatchObject({ error: { code: "BINDING_CAPABILITY_DENIED" } });
+      expect(offlineFetch).not.toHaveBeenCalled();
+      expect(resolveTarget).not.toHaveBeenCalled();
+
       const whitespace = await createRun(jsonRequest(url, {
         ...body,
         providerId: "openai_compatible",
@@ -451,6 +474,7 @@ describe("data discovery run API lifecycle", () => {
       const active = await loadVdt(new Request(`http://localhost:3000/api/vdt/vdts/${vdtId}`), { params: Promise.resolve({ vdtId }) });
       expect(await active.json()).toMatchObject({ activeProject: testProject });
     } finally {
+      resolveTarget.mockRestore();
       vi.unstubAllGlobals();
     }
   });

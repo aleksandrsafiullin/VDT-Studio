@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalSkillRepository, skillContentHash } from "@vdt-studio/storage";
-import { draftSkillMarkdown, loadAvailableSkillLibrary, publishManagedSkill, rankSkillCandidates, readAvailableSkill, resolveVdtSkill, synchronizeSkillFiles, UNIVERSAL_SKILL_ID } from "./managed-skills";
-import { loadDefaultSkillLibrary } from "./index";
+import { draftSkillMarkdown, loadAvailableSkillLibrary, publishManagedSkill, rankSkillCandidates, recallScopedSkillCandidates, readAvailableSkill, resolveVdtSkill, synchronizeSkillFiles, UNIVERSAL_SKILL_ID } from "./managed-skills";
+import { loadDefaultSkillLibrary, parseSkillMarkdown } from "./index";
 
 let root: string, repository: LocalSkillRepository;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-managed-skills-")); repository = new LocalSkillRepository(root); });
@@ -12,6 +12,77 @@ afterEach(() => { vi.restoreAllMocks(); fs.rmSync(root, { recursive: true, force
 const draft = (title = "Өндіріс") => draftSkillMarkdown({ title, description: "A reusable method", domain: "custom", patterns: ["Өндіріс көлемі", "Выпуск продукции"], instructions: "## When to use\n\nUse measured quantities with consistent units, then validate every dependency." });
 
 describe("managed skill integration", () => {
+  it("keeps only the strongest recall tier and retains up to two same-tier Skills in order", async () => {
+    const authored = [
+      { id: "user.fixture_survey", title: "Field survey", pattern: "sample field", output: "topographic_consistency" },
+      { id: "user.fixture_optics", title: "Lens test", pattern: "visual test", output: "panoramic_alignment", requires: "adjustable_aperture" },
+      { id: "user.fixture_inventory", title: "Warehouse calibration", pattern: "reconcile inventory", output: "shelf_quantity" },
+      { id: "user.fixture_sound", title: "Sound check", pattern: "check audio", output: "harmonic_stability" },
+      { id: "user.fixture_brake", title: "Brake assessment", pattern: "inspect brake", output: "adjustable_friction" }
+    ];
+    for (const { id, title, pattern, output, requires = "observation" } of authored) {
+      repository.files.create("", title, id, [
+        "---", `id: ${id}`, "version: 1", `title: ${title}`, "domain: custom",
+        "description: A local method.", "patterns:", `  - ${pattern}`, "kpi_patterns:", `  - ${pattern}`,
+        "requires:", `  - ${requires}`, "outputs:", `  - ${output}`, "---", "Use the declared operating records."
+      ].join("\n"));
+    }
+    const library = await loadAvailableSkillLibrary(repository);
+    const recall = (scope: string) => recallScopedSkillCandidates(scope, library).map(skill => skill.id);
+    const overlaps = "The warehouse reports inventory and uses a panoramic display.";
+    expect(recall("The warehouse reports inventory.")).toEqual(["user.fixture_inventory"]);
+    expect(recall(overlaps)).toEqual(["user.fixture_optics"]);
+    expect(recall("Report the result on an adjustable instrument.")).toEqual([]);
+    expect(recall("Report the panoramic result on an adjustable instrument.")).toEqual(["user.fixture_optics"]);
+    expect(recall("Report the panoramic result. The technician also noted a harmonic sound.")).toEqual(["user.fixture_optics"]);
+    expect(recall("Report the panoramic and harmonic measurements.")).toEqual(["user.fixture_optics", "user.fixture_sound"]);
+    expect(recall("Report the results. The measurements include a harmonic reading.")).toEqual(["user.fixture_sound"]);
+    expect(recall(`Record topographic consistency. ${overlaps}`)).toEqual(["user.fixture_survey"]);
+    expect(recall("Record topographic consistency and panoramic alignment.")).toEqual(["user.fixture_optics", "user.fixture_survey"]);
+    expect(recall("Record topographic consistency, panoramic alignment and harmonic stability.")).toEqual(["user.fixture_optics", "user.fixture_sound"]);
+  });
+
+  it("requires distinct applicability evidence when weak recall overlaps an incidental output", () => {
+    const calibration = parseSkillMarkdown("calibration.md", [
+      "---", "id: fixture.calibration", "title: Pressure calibration", "domain: testing",
+      "patterns:", "  - Pressure calibration", "kpi_patterns:", "  - Pressure calibration",
+      "requires:", "  - reading", "outputs:", "  - unconfirmed_flags", "  - labels", "---"
+    ].join("\n"));
+    const survey = parseSkillMarkdown("survey.md", [
+      "---", "id: fixture.survey", "title: Pressure survey", "domain: testing",
+      "patterns:", "  - Pressure survey", "kpi_patterns:", "  - Pressure survey",
+      "requires:", "  - reading", "outputs:", "  - pressure_changes", "---"
+    ].join("\n"));
+    const skills = [calibration, survey];
+    const library = { skills, registry: [], byId: new Map(skills.map(skill => [skill.id, skill])) };
+    const recall = (scope: string) => recallScopedSkillCandidates(scope, library).map(skill => skill.id);
+
+    expect(recall("Report the pressure and include any flags.")).toEqual([]);
+    expect(recall("Report pressure after calibration.")).toEqual(["fixture.calibration"]);
+    expect(recall("Report the pressure. Append any labels.")).toEqual([]);
+    expect(recall("Report labels. The worksheet also records pressure.")).toEqual(["fixture.calibration"]);
+  });
+
+  it("recalls distinctive complete output phrases with short and normalized Unicode terms", () => {
+    const skills = [
+      ["rate", "flow_rate", "net_yield", "gross_mass"],
+      ["mass", "net_mass", "masa_útil", "gross_mass"],
+      ["yield", "yield_rate", "masa_total"]
+    ].map(([id, ...outputs]) => parseSkillMarkdown(`${id}.md`, [
+      "---", `id: fixture.${id}`, "title: Operating measures", "domain: testing",
+      "patterns:", "  - produce a record", "kpi_patterns:", "  - process measures",
+      "requires:", "  - records", "outputs:", ...outputs.map(output => `  - ${output}`), "---"
+    ].join("\n")));
+    const library = { skills, registry: [], byId: new Map(skills.map(skill => [skill.id, skill])) };
+    const recall = (scope: string) => recallScopedSkillCandidates(scope, library).map(skill => skill.id);
+
+    expect(recall("Flow rate.")).toEqual(["fixture.rate"]);
+    expect(recall("Net mass.")).toEqual(["fixture.mass"]);
+    expect(recall("MASA U\u0301TIL.")).toEqual(["fixture.mass"]);
+    expect(recall("Overflow rates.")).toEqual([]);
+    expect(recall("Gross mass.")).toEqual([]);
+  });
+
   it("initializes one writable disk library with all supplied skills and their supporting files", async () => {
     const original = await loadDefaultSkillLibrary(), available = await loadAvailableSkillLibrary(repository);
     expect(available.skills.map(skill => skill.id).sort()).toEqual(original.skills.map(skill => skill.id).sort());
@@ -56,8 +127,8 @@ describe("managed skill integration", () => {
     expect(skill.title).toBe("Delivery throughput");
     expect(library.files.issues).toEqual([]);
     expect(repository.files.read("Logistics/delivery/SKILL.md")).toBe(raw);
-    repository.files.renameFolder("Logistics", "Operations");
-    expect((await loadAvailableSkillLibrary(repository)).byId.get(skill.id)?.path).toBe("Operations/delivery/SKILL.md");
+    repository.files.renameFolder("Logistics", "Delivery Operations");
+    expect((await loadAvailableSkillLibrary(repository)).byId.get(skill.id)?.path).toBe("Delivery Operations/delivery/SKILL.md");
     const created = publishManagedSkill({ raw: raw.replace("delivery-throughput", "warehouse-throughput") }, repository);
     expect(created.filePath).toBe("warehouse-throughput/SKILL.md");
     expect(repository.files.read(created.filePath!)).not.toMatch(/^id:|^version:/m);

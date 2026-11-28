@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
   applyInputValueOperation,
@@ -10,6 +11,7 @@ import {
   plannedOrphanLinks,
   prepareEdgeEdit,
   parseValidationUnit,
+  hasTypedDecompositionRelationship,
   readDecompositionAssumptions,
   serializeFormulaTokens,
   stableSnakeId,
@@ -125,7 +127,8 @@ const valueSourceSchema = z.object({
   range: optionalInput(z.tuple([z.number().finite(), z.number().finite()]))
 }).strict();
 
-const isRelationshipNote = (note: string) => readDecompositionAssumptions({ assumptions: [note] }).length > 0;
+const isRelationshipNote = (note: string) =>
+  hasTypedDecompositionRelationship(note) || readDecompositionAssumptions({ assumptions: [note] }).length > 0;
 function appendInputAssumption(existing: string[], note: string): string[] {
   const ordinary = existing.filter(candidate => !isRelationshipNote(candidate));
   const relationships = existing.filter(isRelationshipNote);
@@ -674,6 +677,42 @@ function inputValuePatch(context: AgentToolContext, project: VdtProject, command
   return operation.patch;
 }
 
+function appliedSelectedBaselineReplay(
+  context: AgentToolContext, project: VdtProject, node: VdtNode,
+  requested: VdtNodePatch, patch: VdtNodePatch, revision: number
+) {
+  const value = requested.baselineValue;
+  if (node.type !== "input" || node.goalSeek || node.formula?.trim() || value === undefined
+    || Object.entries(requested).some(([key, argument]) => key !== "baselineValue" && argument !== undefined)
+    || node.baselineValue !== value || node.value !== value) return;
+
+  const state = context.store.getState(context.runId);
+  if (state.status !== "running" || state.pendingMutationProposal || state.pendingPlan
+    || state.request.mode !== "continue_project" || state.request.input.selectedNodeId !== node.id) return;
+  const prior = state.mutationProposals?.at(-1);
+  if (prior?.status !== "applied" || prior.source !== "agent" || prior.policy.autoApply
+    || prior.runId !== context.runId || prior.projectId !== project.id || prior.vdtId !== (project.rootNodeId || project.id)
+    || prior.baseRevision !== revision - 1 || prior.baseRevisionId !== `builder:${prior.baseRevision}`) return;
+  if (state.pendingChangeSet && !isDeepStrictEqual(state.pendingChangeSet, prior.changeSet)) return;
+
+  const { updates, workspaceChange, ...changes } = prior.changeSet;
+  // Keep this exact replay check closed to any other change-set collection,
+  // including data sources, mappings, taxonomy and metadata collections.
+  if (updates.length !== 1 || workspaceChange
+    || Object.values(changes).some(change => Array.isArray(change) && change.length > 0)) return;
+  const [update] = updates;
+  if (!update || update.nodeId !== node.id
+    || prior.selectedChangeIds.length !== 1 || prior.selectedChangeIds[0] !== update.id) return;
+  const normalizedPatch = (value: VdtNodePatch) => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined));
+  const baselinePatch = { baselineValue: value, value, status: node.status };
+  if (!isDeepStrictEqual(normalizedPatch(patch), baselinePatch)
+    || !isDeepStrictEqual(normalizedPatch(update.patch), baselinePatch)
+    || !isDeepStrictEqual(prior.previewProject, project)) return;
+  // The applied proposal and current builder state establish a local no-op.
+  // Durable approval and saved-head verification still belong to the Gateway.
+  return prior.id;
+}
+
 const updateNodeTool: AgentTool = {
   name: "vdt.update_node",
   description: "Update allowed fields on an existing node. Use patch.clearInputValue=true to remove its input value and provenance.",
@@ -782,6 +821,12 @@ const updateNodeTool: AgentTool = {
         correction = sourceUnitCorrection(context, project, node, evidence, patch.unit);
         if (correction) patch.unit = correction.unit;
       }
+    }
+    const revision = builder.getRevision();
+    const appliedProposalId = appliedSelectedBaselineReplay(context, project, node, requested, patch, revision);
+    if (appliedProposalId) {
+      return { nodeId: node.id, revision, baselineValue: node.baselineValue, changed: false, appliedProposalId,
+        message: "The current builder checkpoint already contains this exact baseline from the applied proposal. Continue from the current project." };
     }
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch });

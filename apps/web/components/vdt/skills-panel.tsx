@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Check, ExternalLink, FolderOpen, LoaderCircle, Plus, RefreshCw, Search, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, TextInput } from "@/components/ui/field";
-import { listSkills, NEW_SKILL_MARKDOWN, skillRequest, skillsChanged, type SkillCard, type SkillDocument, type SkillFileLibrary } from "@/lib/skills-client";
-import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
+import { getVdtSkillContext, listSkills, NEW_SKILL_MARKDOWN, skillRequest, skillsChanged, type SkillCard, type SkillDocument, type SkillFileLibrary } from "@/lib/skills-client";
+import { captureCurrentSkillAuthorRequest, revalidateSkillWorkflowContext } from "@/lib/skill-author-client";
+import { skillWorkflowSourceKey } from "@/lib/skill-workflow";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./skills.module.css";
 
@@ -17,7 +18,7 @@ export function SkillsPanel() {
   const [draft, setDraft] = useState<Draft | undefined>(() => retainedDraft), [busy, setBusy] = useState(false), [error, setError] = useState<string>(), [notice, setNotice] = useState<string>();
   const alive = useRef(true), busyRef = useRef(false), refreshRevision = useRef(0), signature = useRef(""), authorController = useRef<AbortController | null>(null);
   const project = useVdtStudioStore(state => state.project), workspace = useVdtStudioStore(state => state.workspace);
-  const settings = useVdtStudioStore(state => state.executionSettings), generating = useVdtStudioStore(state => state.isGenerating);
+  const generating = useVdtStudioStore(state => state.isGenerating);
   const inVdt = Boolean(workspace.activeVdtId && typeof window !== "undefined" && window.location.pathname.startsWith("/projects/") && new URLSearchParams(window.location.search).get("vdt") === workspace.activeVdtId);
   useEffect(() => { retainedDraft = draft; }, [draft]);
   const refresh = useCallback(async () => {
@@ -53,15 +54,36 @@ export function SkillsPanel() {
     await fileAction({ action: "open.skill", id: result.skill.id });
   });
   const fromVdt = () => perform(async () => {
-    if (!inVdt || !workspace.activeProjectId || !workspace.activeVdtId) return;
-    const resolved = resolveExecutionSettings(settings), controller = new AbortController(); authorController.current = controller;
+    const state = useVdtStudioStore.getState();
+    const { activeProjectId: projectId, activeVdtId: vdtId } = state.workspace;
+    if (!inVdt || !projectId || !vdtId) return;
+    const sourceKey = skillWorkflowSourceKey(state.project);
+    const captured = captureCurrentSkillAuthorRequest(state, sourceKey);
+    const rootKpi = state.project.graph.nodes.find(node => node.id === state.project.rootNodeId)?.name ?? state.project.name;
+    const controller = new AbortController();
+    authorController.current = controller;
+    const stillCurrent = () => {
+      const current = useVdtStudioStore.getState();
+      if (!alive.current || controller.signal.aborted || !window.location.pathname.startsWith("/projects/")
+        || new URLSearchParams(window.location.search).get("vdt") !== vdtId
+        || current.workspace.activeProjectId !== projectId || current.workspace.activeVdtId !== vdtId
+        || current.executionSettings !== state.executionSettings) return false;
+      try {
+        return skillWorkflowSourceKey(current.project) === sourceKey
+          && JSON.stringify(captureCurrentSkillAuthorRequest(current, sourceKey).requestProvider) === JSON.stringify(captured.requestProvider);
+      } catch { return false; }
+    };
     try {
+      const context = await getVdtSkillContext(projectId, vdtId, rootKpi);
+      if (!stillCurrent()) throw new Error("The tree or execution selection changed. Prepare the draft again.");
       const result = await skillRequest<{ raw: string; warnings: string[] }>("/api/skills/from-vdt", {
-        projectId: workspace.activeProjectId, vdtId: workspace.activeVdtId, project: { ...project, versions: [], scenarios: [], dataSources: [] },
-        providerId: resolved.providerId, providerConfig: resolved.providerConfig ?? {}
+        projectId, vdtId, project: { ...state.project, versions: [], scenarios: [], dataSources: [] },
+        ...captured.requestProvider
       }, controller.signal);
-      if (alive.current) setDraft({ name: scalar(result.raw, "title"), description: scalar(result.raw, "description"), raw: result.raw, warnings: result.warnings,
-        sourceVdt: { projectId: workspace.activeProjectId, vdtId: workspace.activeVdtId, rootKpi: project.graph.nodes.find(node => node.id === project.rootNodeId)?.name ?? project.name } });
+      if (controller.signal.aborted) return;
+      await revalidateSkillWorkflowContext({ projectId, vdtId, rootKpi, context, stillCurrent });
+      if (stillCurrent()) setDraft({ name: scalar(result.raw, "title"), description: scalar(result.raw, "description"),
+        raw: result.raw, warnings: result.warnings, sourceVdt: { projectId, vdtId, rootKpi } });
     } finally { if (authorController.current === controller) authorController.current = null; }
   });
   const canCreateFromVdt = Boolean(inVdt && project.graph.nodes.length > 1 && project.graph.nodes.length <= 80 && project.graph.nodes.find(node => node.id === project.rootNodeId)?.formula && !generating);

@@ -22,12 +22,16 @@ describe("skill recipes", () => {
       "mining.mine_production_system",
       "mining.production_volume",
       "mining.underground_production_cycle",
+      "operations.process_capacity",
       "saas.funnel_growth"
     ]);
     expect(recipes.every((recipe) => recipe.requiredInputs.length > 0)).toBe(true);
     expect(recipes.every((recipe) => recipe.initialDrivers.length > 0)).toBe(true);
-    expect(recipes.every((recipe) => recipe.recipeQuality !== "missing")).toBe(true);
-    expect(recipes.filter((recipe) => recipe.skillId !== "mining.load_and_haul").every((recipe) => recipe.recipeSource === "template")).toBe(true);
+    const capacity = recipes.find((recipe) => recipe.skillId === "operations.process_capacity");
+    expect(capacity).toMatchObject({ recipeQuality: "missing", recipeSource: "generic_fallback", formulaTemplates: [] });
+    const compiled = recipes.filter((recipe) => recipe.skillId !== "operations.process_capacity");
+    expect(compiled.every((recipe) => recipe.recipeQuality !== "missing")).toBe(true);
+    expect(compiled.filter((recipe) => recipe.skillId !== "mining.load_and_haul").every((recipe) => recipe.recipeSource === "template")).toBe(true);
     expect(recipes.find((recipe) => recipe.skillId === "mining.load_and_haul")?.recipeSource).toBe("markdown_extracted");
     expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.formulaTemplates).toEqual([]);
     expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.warnings.join(" ")).toContain("min(stage_readiness_tonnes, downstream_capacity_tonnes)");

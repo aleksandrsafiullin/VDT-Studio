@@ -11,8 +11,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./server-runtime": "./src/server/runtime.ts",
+    "./apple-foundation-models": "./src/apple-foundation-models/transport.ts",
     "./speech": "./src/speech/runtime.ts",
     "./speech-catalog": "./src/speech/catalog.ts",
+    "./codex-subscription-capability": "./src/speech/codex-subscription-capability.ts",
     "./speech-audio": "./src/speech/audio.ts",
     "./timeout-limits": "./src/timeout-limits.ts"
   },

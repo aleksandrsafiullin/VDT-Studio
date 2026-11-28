@@ -3,12 +3,14 @@ const { createHash, randomBytes } = require("node:crypto");
 const { fstatSync, lstatSync, readFileSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { createRequire, isBuiltin } = require("node:module");
+const { Socket } = require("node:net");
 const { join } = require("node:path");
 const { compileFunction } = require("node:vm");
 
 const cursorIsolationActivationKey = Symbol.for("vdt-studio.packaged-cursor-isolation.activation.v1");
 const packagedWebHostKey = Symbol.for("vdt-studio.packaged-web-host.v1");
 const windowsStorageActivationKey = Symbol.for("vdt-studio.packaged-windows-storage.activation.v1");
+const packagedSpeechSocketKey = Symbol.for("vdt-studio.packaged-speech.socket.v1");
 // The archived-source packager embeds the digests of the exact platform assets.
 // The evaluated module contains separate, reviewed vendor qualification records.
 const cursorIsolationResourceManifest = Object.freeze({});
@@ -137,6 +139,13 @@ async function start() {
   process.stdin.resume();
   // Standard output belongs to the private native-host startup handshake.
   globalThis.console = new Console(process.stderr, process.stderr);
+  if (process.platform === "darwin" && process.env.VDT_PACKAGED_SPEECH_FD === "4") {
+    if (!fstatSync(4).isSocket()) throw new Error("The native host did not supply a private speech socket.");
+    const socket = new Socket({ fd: 4, readable: true, writable: true }).unref();
+    socket.on("error", () => {});
+    Object.defineProperty(globalThis, packagedSpeechSocketKey, { value: socket });
+  }
+  delete process.env.VDT_PACKAGED_SPEECH_FD;
   const dir = process.cwd();
   const { config } = JSON.parse(readFileSync(join(dir, ".next/required-server-files.json"), "utf8"));
   // Persisting the Next.js route cache would write into the signed app bundle.

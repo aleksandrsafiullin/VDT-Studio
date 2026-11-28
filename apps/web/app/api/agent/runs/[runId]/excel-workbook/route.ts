@@ -3,7 +3,7 @@ import { requireLocalFileRequest } from "../../../../data/request-context";
 import { DataApiError } from "../../../../data/store";
 import { openVdtStorageDatabase } from "../../../../vdt/storage-database";
 import { jsonError, parseSafeId } from "../../../../vdt/storage-response";
-import { ExcelWorkbookError, resolveSavedExcelWorkbook } from "../../excel-workbook";
+import { ExcelWorkbookError, hasPersistedExcelDescriptor, resolveSavedExcelWorkbook } from "../../excel-workbook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +36,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ runI
       return jsonError("The workbook link does not match this saved revision and scenario.", 404, "EXCEL_LINK_MISMATCH");
     }
 
+    const modernRun = record.request.outcomeSelection || record.request.outcome || record.request.artifactIntent;
+    if (modernRun && !hasPersistedExcelDescriptor(record.publicSnapshot, record.id, descriptor)) {
+      return jsonError("This workbook has not been exported by the run.", 404, "EXCEL_LINK_MISMATCH");
+    }
     const bytes = createExcelWorkbook(project, descriptor.scenarioId);
     const filename = Array.from(descriptor.filename).map((char) => {
       const codePoint = char.codePointAt(0) ?? 0;

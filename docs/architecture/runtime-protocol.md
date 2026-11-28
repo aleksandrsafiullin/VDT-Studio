@@ -1,5 +1,33 @@
 # Runtime Protocol
 
+## Apple local preview on macOS
+
+The packaged web host and runtime sidecar have independent verified helper
+paths. The analytical helper exchanges one bounded JSON request and response
+through private child-process stdio. The host rechecks the bound OS variant,
+locale and context budget before dispatch. Analytical actions still travel
+through the Supervisor and Gateway. The packaged speech path extends the
+existing `speech` method with bounded Apple status, asset setup, recognition,
+preview and local synthesis operations. Settings, capability probes and
+previews grant no analytical or approval authority.
+
+Notification synthesis uses a scoped one-use grant over the private IPC path.
+On macOS, the native host also passes the packaged web process a dedicated
+inherited Unix socket for proof-bearing capture. The authenticated same-origin
+speech route forwards only capture calls through that socket. It uses the
+existing verified sidecar, speech request schema and one-capture admission.
+The native host isolates bridge-owned captures from the ordinary native command.
+Bridge frames bind their replies to request IDs and cap both payload size and
+outstanding requests. There is no listener address or browser-controlled path.
+
+The web host issues the one-use proof only from a completed, bound recognition
+job. Before admission the Supervisor checks the local session over the same
+socket and then checks the question, transcript hash, working revision and
+saved revision head before consuming the proof. The localhost development path
+still handles these proofs within one host process. Other Desktop builds and
+captures with unavailable proof keep clarification text editable for manual
+submission. [Voice input](../VOICE_INPUT.md)
+
 ## Local harness integration (2026-11-02)
 
 The version-1 private protocol adds harness_settings with action/profile/removeId and generalizes smart_execution to registered harness backend IDs. Smart metadata and completion accept the independently selected modelReasoning value; explicit false is preserved, validated and included in execution identity. Task requests cannot supply executable/configuration fields. Custom definitions are validated and atomically saved by the host; the UI retains only selection identity. See [Harness connections](../HARNESS_CONNECTIONS.md).
@@ -89,4 +117,22 @@ The Rust desktop shell routes reviewed Tauri commands through `apps/desktop/src-
 
 The desktop shell starts the managed runtime during Tauri app setup so normal users do not need a runner pairing step or manual sidecar launch. `DesktopRuntime` owns the child process and drops it on shutdown, while `SidecarProcess` terminates and waits for the child to avoid orphaned local runtime processes.
 
-The reviewed `speech` request method exposes only the closed voice-input operation/payload catalog. Transcription submissions return immediately and clients poll bounded job results over the same pipe. Canonical 16 kHz mono WAV fragments are capped at 12 seconds and remain below the existing 1 MiB frame limit. Download URLs, executable paths and flags are runtime-owned. See [Voice input](../VOICE_INPUT.md).
+The reviewed `speech` request method exposes only the closed voice-input operation/payload catalog. Transcription submissions return immediately and clients poll bounded job results over the same pipe. Canonical 16 kHz mono WAV fragments are capped at 12 seconds and remain below the existing 1 MiB frame limit. If the verified Apple helper reports a waveform size overflow, the TTS result includes the overflow code and corresponding event identity. The composer can close that lease and submit smaller word-bounded fragments with distinct identities. Download URLs, executable paths and flags are runtime-owned. See [Voice input](../VOICE_INPUT.md).
+
+
+## Verified local HTTP references
+
+Version 1 optionally accepts `localHttpSelection` on `complete`,
+`smart_execution` and `test_backend`. Its two bounded fields are
+`profileVersion` and `modelRevision`, with the latter specified as a
+SHA-256 digest. Verified calls also name the exact model. The sidecar resolves
+the reference against a trusted in-process verifier for the exact provider,
+model, revision, endpoint and task. Inference uses the resolved confined
+transport and revalidates the pin at each dispatch. Requests cannot supply
+an endpoint, verifier, offline flag or transport. `test_backend` uses its
+own connection-test admission, separate from Smart or generation. Legacy
+metadata reports an unverified processing boundary. A strict Local HTTP
+host rejects omitted selections and unverified model discovery. The native shell forwards the
+optional references on those same commands and existing callers retain
+compatibility framing. The standalone runner and loopback development diagnostic
+accept the same exact-model reference. A production proof source is pending.

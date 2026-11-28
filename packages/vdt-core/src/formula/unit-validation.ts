@@ -46,6 +46,11 @@ function physical(unit: Unit) {
   return { dimensions: clean(dimensions), scale, known };
 }
 
+function hasKnownFiniteBasis(unit: Unit): boolean {
+  const { known, scale } = physical(unit);
+  return known && Number.isFinite(scale) && scale > 0;
+}
+
 /** A known numeric scale change must appear in the formula; values themselves
  * are never converted. Unknown custom bases are review issues, not invented SI
  * dimensions (for example a declared equipment count may be a scalar count). */
@@ -58,8 +63,10 @@ function compatible(actual: Unit, expected: Unit, coefficient: number | undefine
   return coefficient !== undefined && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
 }
 
-/** Formal unit algebra with an opt-in check for the percent/fraction scale. */
-export function parseValidationUnit(text: string, enforcePercentageScale = false): Unit | undefined {
+/** Formal unit algebra with opt-in checks for numerical scale and known atoms. */
+export function parseValidationUnit(
+  text: string, enforcePercentageScale = false, options: { requireKnownFiniteBasis?: boolean } = {}
+): Unit | undefined {
   if (!text.trim() || text.length > 256) return undefined;
   const tokens = text.trim().toLowerCase().replace(/[·×]/g, "*").match(/[^*/^()]+|[*/^()]/g) ?? [];
   let cursor = 0;
@@ -73,6 +80,7 @@ export function parseValidationUnit(text: string, enforcePercentageScale = false
     } else {
       const atom = Object.hasOwn(aliases, token) ? aliases[token]! : token;
       result = enforcePercentageScale && percent.has(atom) ? { "%": 1 } : scalar.has(atom) ? {} : { [atom]: 1 };
+      if (options.requireKnownFiniteBasis && !hasKnownFiniteBasis(result)) throw new Error("Unknown unit atom");
     }
     if (tokens[cursor] === "^") {
       cursor++;
@@ -92,7 +100,8 @@ export function parseValidationUnit(text: string, enforcePercentageScale = false
   };
   try {
     const result = expression();
-    return cursor === tokens.length ? clean(result) : undefined;
+    if (cursor !== tokens.length || (options.requireKnownFiniteBasis && !hasKnownFiniteBasis(result))) return undefined;
+    return clean(result);
   } catch { return undefined; }
 }
 

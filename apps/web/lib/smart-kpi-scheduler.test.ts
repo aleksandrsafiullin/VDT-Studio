@@ -77,6 +77,53 @@ describe("Smart KPI bounded scheduling", () => {
     await scheduler.whenSettled();
   });
 
+  it("reserves the Apple inference lane for explicit Smart preparation", async () => {
+    const transport = controlled(), scheduler = create({ prepare: transport.prepare });
+    const apple = { ...execution, mode: "local_model" as const, backendId: "apple_foundation_models" };
+    const owner = workspace(1);
+    await scheduler.setWorkspace({ ...owner, execution: apple });
+    await scheduler.prewarm(fixtureTarget, ["child_0"]);
+    await scheduler.prepareImmediateChildren(owner.project.rootNodeId);
+    await scheduler.request(fixtureTarget, { priority: "hover" });
+    await scheduler.whenSettled();
+    expect(transport.prepare).not.toHaveBeenCalled();
+
+    await scheduler.retry(fixtureTarget);
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+    expect(transport.calls[0]?.execution).toEqual(apple);
+    transport.resolve(0);
+    await scheduler.whenSettled();
+  });
+
+  it("offers first preparation after cold Apple admission without staling an unopened proposal", async () => {
+    const transport = controlled(), scheduler = create({ prepare: transport.prepare });
+    const apple = { ...execution, mode: "local_model" as const, backendId: "apple_foundation_models" };
+    const cold = workspace(1);
+    delete cold.execution;
+    await scheduler.setWorkspace(cold);
+    expect(scheduler.freezeDisplay(fixtureTarget).state.status).toBe("idle");
+    await scheduler.request("child_0");
+    expect(scheduler.freezeDisplay("child_0").state.status).toBe("unavailable");
+
+    await scheduler.setWorkspace({ ...cold, execution: apple });
+    await scheduler.request(fixtureTarget, { priority: "hover" });
+    await scheduler.request("child_0", { priority: "hover" });
+    expect(scheduler.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "idle" }, stale: false });
+    expect(scheduler.getSnapshot("child_0")).toMatchObject({ state: { status: "idle" }, stale: false });
+    expect(transport.prepare).not.toHaveBeenCalled();
+
+    await scheduler.retry(fixtureTarget);
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+    expect(transport.calls[0]?.execution).toEqual(apple);
+    transport.resolve(0);
+    await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "ready" }, canApply: true });
+
+    await scheduler.setWorkspace({ ...cold, execution: { ...apple, modelId: "other-model" } });
+    expect(scheduler.getSnapshot(fixtureTarget)).toMatchObject({ stale: true, canApply: false, proposal: { proposalId: "proposal_0" } });
+    expect(transport.prepare).toHaveBeenCalledTimes(1);
+  });
+
   it("changes context/cache generation when only the selected skill pin changes", async () => {
     const transport = controlled(), s = create({ prepare: transport.prepare }), w = workspace();
     const pin = (version: number) => { const content = `# Service method\nVersion ${version}: disjoint service causes.`; return { id: "custom.service", title: "Service method", version, content,

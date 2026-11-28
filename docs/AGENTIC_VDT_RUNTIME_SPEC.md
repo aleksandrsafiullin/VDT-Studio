@@ -1,5 +1,15 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Selected-input replay after reviewed apply (2026-11-27)
+
+An exact repeat of the immediately preceding reviewed selected-input baseline
+patch resolves as a builder-local no-op when the full applied snapshot and the
+current run and selection match. No pending proposal or plan may conflict
+with that checkpoint. The tool returns a successful no-change result, leaving
+subsequent requested edits and verified finish with the ordinary Supervisor
+and Gateway. Durable approval identity and saved-head authority remain in
+their existing ledgers.
+
 ## Current bounded recovery implementation (2026-11-13)
 
 The structured Model Agent has an explicit terminal recovery action for newly
@@ -116,6 +126,243 @@ ordinary planning and graph tools. Manual selections are scoped to a project
 and VDT. The durable V2 selection and authorization contracts remain separate.
 Skill Author is a separate no-publishing operation returning a reviewable draft
 from a bounded VDT structure with numerical source values omitted.
+The Apple preview grounds the draft in exact source labels, formulas and units.
+One bounded semantic audit checks the proposed prose against those anchors.
+An unavailable or rejected audit leaves the working Skill untouched.
+When an Apple update proposes no edits and one unambiguous working prose
+sentence names the saved calculation and its direct operands, a bounded audit
+checks that sentence against the exact saved formula. A match remains a no-op.
+A verified conflict permits one replacement of that sentence before the ordinary
+semantic audit and draft review. The model returns the replacement and its
+reason. The host supplies the exact old statement and source node IDs from the
+verified rule and formula. Indeterminate results and rejected corrections produce
+no edit. Quoted, fenced, commented and other non-prose anchors do not qualify for
+this correction. The guidance generator receives the editable Skill prose.
+The full original Skill remains the authority for anchoring, topology and stale
+version checks.
+
+Apple's on-device preview requires both full catalog review and successful
+search evidence tied to the user scope presented in the current session.
+When the scoped search returns candidates, each needs a successful read before
+a gap is available. Queued steering invalidates earlier gap authority at
+dispatch, including when a saved question answer and a queued instruction
+arrive in one checkpoint. Pending method approval continues to gate a gap.
+When the authored query has no exact match, scoped search may return up to
+two provisional cards using distinctive declared catalog terms found in the
+latest literal user instruction and subsequent literal answers. Recall grants
+only candidate discovery. The same read, fit, selection and gap checks apply.
+
+The Apple guide presents one object variant per available discovery action.
+For an unpinned structural request, catalog and candidate evidence precede
+any business clarification. The question uses the existing required
+`skill_scope` checkpoint. The model may ask how a relationship affects the
+method, and deferred inputs remain available for later entry.
+
+Before an initial unpinned structural selection, Apple can assess the exact
+read method against the submitted brief. An unresolved result permits one
+question-only revision. After the user answers, a bounded assessment can
+compare the proposed follow-up and its rationale with the submitted answer.
+An answered question permits one revised action through the existing catalog
+and Gateway. A method-fit response cites a host-assigned span in the exact
+reviewed Skill excerpt. Its reference is bound to the candidate role,
+version, content hash and read receipt. The assessment has no Skill
+selection or mutation authority.
+For an authenticated two-result search, Apple can propose a preliminary
+match. It then identifies an affirmative counting rule in each complete
+excerpt and cites one current clause for the user's counted operation. Each
+exact read receives its own assessment using that same clause and the
+complete current user evidence. A method can fit through the stated counted
+action or through observed measurements its rule expressly uses at the same
+operation. The initial witness offer can favor clauses with multiple exact
+quantities. Both audits use the complete current source. One assessment can
+find a match while the other affirms a different counted operation. If both
+assessments report a match, a separate review cites the required source from
+each authenticated excerpt. A named record needs a literal user witness in
+this check. Observed inputs need a user clause that supplies that kind of
+measurement at the counted operation. When the current source offers an
+eligible measured pair, the reviewer cites two exact input quantities and
+checks that they fill distinct roles in the authored rule. The initial offer
+can prefer clauses with exactly two quantities while keeping the full user
+context. An explicit hold can widen the offer once. Clauses with more
+quantities require a separate audit of the selected pair. An abstained source
+classification can recover an exact name only after a separate
+assessment confirms that the name identifies a record. Removing the
+competing method from consideration also requires its own express exclusion.
+One final assessment checks both excerpts and current evidence for a competing
+source, alias or applicable alternate rule. Another checks whether the exact
+exclusion applies to the same current clause already verified as the
+supported source. Both checks are required in the dual-match case.
+Clipped excerpts, incomplete evidence and unresolved corrections leave the
+paired proof open. Separate guided decisions identify the governing condition,
+assess whether it is settled, and verify the exact current witness. An open
+condition needs evidence of the affected operation or the unresolved fact.
+
+An independent assessment can skip the exact drafted question when it asks
+solely about the settled condition. It can also skip the question when
+verified alternative answers preserve the method and result. A verified
+unknown occurrence requires an audited neutral question in the user's language.
+The question asks whether the event can occur. When a current English source
+explicitly states uncertainty using a complete clause, the host can render that
+clause verbatim as a yes-or-no question. A guided review validates the question
+against the complete authenticated method and the current user evidence before
+dispatch. The host associates the proof with that exact pending question and
+Skill read. On resume, the exact accepted answer establishes polarity by its
+literal wording or a separate review of the full free-text answer. A guided
+review verifies the consequence under the complete authored rule before
+selection or a treatment question. Changed scope or a fresh read requires a
+current full-evidence assessment. Other wording uses the general question and
+answer review.
+The current user witness governs the business decision. Language metadata
+serves the question and explanation. If the replacement fails its proof, the
+run enters the existing recovery path. An abstention before a material fact is established
+retains the ordinary discovery and question handling.
+After an eligible browse-only checkpoint, one canonical model-authored search
+may provide the missing evidence. The existing Gateway still validates the
+selected receipt, current scope and any required confirmation.
+Before an automatic selection from an authenticated scoped search, Apple checks
+the exact candidate and its read receipt against the current results. It can
+read the sole offered missing card and review both results. A single result
+needs affirmative evidence for the requested operation and an exact passage
+describing what it counts, measures, or calculates. For a new tree or a
+single-root draft with no selected KPI or decomposition plan, Apple can
+assess that evidence immediately after the exact dispatched read succeeds.
+An independent guided check must verify that the authenticated method and
+submitted scope settle every condition that can change the governing rule or
+result. The configured root name, unit, period and goal inform both checks.
+Only literal submitted facts provide affirmative evidence. The positive
+check can lead to the normal Gateway selection before
+Apple drafts a question. An inconclusive check retains ordinary discovery
+and requires materiality review for an otherwise ungrounded draft question.
+An explicit hold on that question can reoffer a Gateway-eligible gap for
+the existing full-catalog audit. The general review checks material
+conditions separately. If it finds no additional condition, a second
+assessment checks the available authenticated excerpt and current user sources.
+If the singleton prerequisite response has a format error, the adapter can
+identify the rejected fields and offer one repair. Apple can accept the
+retained decision, supply only requested replacement fields, or decline.
+The repaired decision still requires the independent assessment.
+An explicitly clipped excerpt cannot support that conclusion. One exact
+candidate can also be reviewed when Apple drafts a question. A newly
+generated singleton question requires independent review. An already
+answered question can lead to selection only with an exact submitted witness
+and a separate audit of the current scope. A material open condition
+requires a business question before selection or modification. The
+review checks the exact submitted reply against the authenticated read before
+selection. When an exact accepted answer invalidates an earlier empty scoped
+search, the adapter offers a new search against the brief and answer. The Gateway
+still checks the active scope, read receipt and any explicit pin or
+confirmation. After a complete catalog browse, an already answered draft can
+lead to an offered current-scope search. A positively proved gap after an
+authenticated empty search still checks the offered unread catalog cards
+for a plausible match. On the first fresh empty search, the adapter can
+screen those offered unread cards before dispatching a provisional read
+or scope question. A positive screen may lead to the exact read. An
+exact provisional method also needs a separate comparison with the submitted
+operation before selection. The model cites exact offered user and Skill
+passages by ID. A mechanically malformed response permits one repair of the
+rejected fields while preserving the verdict. An incompatible method
+returns to catalog review. Unresolved coverage can lead to an independently
+audited required question about a material business fact.
+A draft question after an empty search or a rejected gap needs current user
+evidence that it addresses a material open fact. An unrelated draft can
+receive one separately audited replacement. A conclusively settled draft
+can return to ordinary catalog review. The usual catalog and read checks
+continue to govern whether a gap can be recorded.
+Compact planning for an existing blank root retains that root and accepts its
+direct editable input operands. The host assigns their parent and keeps
+neutral formula dependency edges. After an exact Skill selection, a compact
+direct layer can use two to eight complete measurements from the original
+scope. The model matches each offered measurement ID to one blank planned
+input ID. An independent model check verifies the meaning of each match
+before the host projects the exact value and quote into the normal atomic
+input-write tool. A nonpositive check allows one binding-only revision.
+An explicit hold requires a changed mapping, and a specific rejection also
+rules out that exact pair. An unavailable audit can be retried with the same
+pairing. Both require a fresh affirmative audit before dispatch. Otherwise
+the adapter inspects the hierarchy. The model proposes
+the formula after the source values are persisted. A newer queued scope
+instruction fences the measured writes at Gateway dispatch. When the blank
+root has no unit, a typed action establishes the unit through the normal
+node update before planning. A revised or unbounded
+source set uses ordinary construction. The general construction path supports
+nested, calculated and context factors. A successful hierarchy inspection can
+switch a compact run to that path. On the first full construction action
+after verified Skill resolution, the adapter can retry invalid arguments once
+for the same eligible tool. It sends the field path and schema requirement.
+When it can isolate errors in a bounded draft, Apple returns only the named
+replacement values and approves any exact field omissions. A single scalar
+with a known type can use native guided output. A malformed or non-object
+argument envelope can be regenerated for that tool. Oversized arguments
+and errors that cannot be isolated without replacing valid data stay in
+recovery. Apple can decline a repair. The host preserves the other fields
+and validates the complete action before dispatch. Approval and finish
+requirements still apply. Both construction paths receive the exact
+authenticated selected method excerpt bound to the Gateway read receipt.
+
+For supported two-operand relationships, the Apple adapter can compare the
+proposed root formula against the submitted scope and exact method before
+the tool call. In a measured layer, the relationship review cites scoped
+user and exact method passages by offered ID. One format repair can replace
+invalid IDs while preserving the reported relationship. The adapter runs the
+shared calculation probes on a disposable copy
+with the actual operands and unit basis. A contradiction permits one
+formula-only repair. A typed confirmed assumption requires the existing
+user confirmation and carries its own verification in the saved tree.
+
+The Apple Automatic adapter checks an ordinary read-only or numeric proposal
+against the submitted deliverable before the shared outcome pin. A
+disagreement allows one validated revision or a focused clarification.
+A rejected quote tied to the current outcome proposal allows one repair from
+host-offered exact excerpts of the submitted request or answer. The model
+still chooses the outcome. The Gateway validates its exact quote and
+current scope. A newly submitted user instruction or answer permits a new
+repair. Requested method confirmation survives correction in the same scope.
+On a compact
+checkpoint following a successful formula result, a singleton
+`run.request_finish` with no new user input can proceed directly to the
+Gateway verifier. A verified receipt, an Apple final and durable persistence
+are required for completion.
+
+For a requested historical workbook, admission resolves the exact saved
+version and scenario within the current project and VDT. When the user
+answers a version-name clarification, the submitted answer and the
+original request can supply the two references. Multiple or unresolved
+targets require clarification. The export and finish gates use the
+resolved revision and scenario IDs and the actual issued artifact.
+Apple's answer-mode workbook action becomes available after that exact
+artifact admission. The typed action carries no live selectors. If the
+previous exact historical workbook answer fails quotation verification, a
+single corrective turn can cite host-provided excerpts or ask a focused
+question. A structural proposal cannot satisfy that corrective turn. The
+ordinary route still handles mixed build-and-workbook requests.
+
+For the supported direct save-and-export form, the same instruction names a
+new version and requests a named scenario from that new version. Automatic
+admission verifies the exact saved scenario and the current workspace basis. It requires the
+model to include the workbook in its proposal and binds the new version name
+to the current user instruction. Export and finish require the direct saved
+successor from the run's applied version-save proposal. The host compares
+that successor with a pure replay of the recorded save against the original
+saved project. Additional workspace writes, a different version title, or
+an unverified successor cannot authorize the workbook download.
+An ordinary proposal in an existing tree can also omit the artifact. A named
+Excel or XLSX format in the complete, exactly quoted current instruction can
+schedule one bounded semantic review. A read-only workbook re-proposal needs
+that exact user evidence and ordinary artifact admission. Mixed or unresolved
+evidence can ask a focused question. Recoverable review failure retains the
+ordinary route.
+The read-only correction offers the named version and scenario selectors.
+An opaque revision ID is offered only from an exact version-qualified reference
+in the authenticated current instruction for the same run and VDT. The server
+checks that instruction and the expected saved head again after correction.
+After a correlated saved-scenario rejection, the correction can offer an exact
+saved scenario grounded in the direct request. The run's initialized storage
+reader supplies the bounded choices. It verifies the current project, VDT and
+saved head, and the Gateway independently resolves the export.
+Immediately after a successful exact export, the typed Apple offer can omit the
+completed export and expose the ordinary no-argument finish action. This needs
+the matching authenticated tool result, persisted receipt and retained artifact.
+The other eligible tools remain available for additional requested analysis.
 
 All working skills share one editable folder, initially populated from supplied
 packages and their reference/evaluation resources. Later starts preserve edits
@@ -318,13 +565,25 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
   requires complete inputs and a finite verified root. The host pins the
   outcome for the run and records it with the `workspace-v1` policy and
   verified revision and hash. Final events carry the same evidence, and the
-  run snapshot exposes `finishOutcome` once the final is persisted. When the
-  outcome is omitted, the existing mode-derived rules and receipt format apply.
+  run snapshot exposes `finishOutcome` once the final is persisted. Automatic
+  composer starts opt in with `outcomeSelection: "automatic"` and send the
+  original prompt. The bound model proposes the outcome and any Excel intent
+  through a singleton `run.propose_outcome` call, or asks a material question.
+  The Supervisor validates the submitted source and workspace scope and pins
+  the outcome in the run before other tools can execute. A structured turn
+  that cannot be decoded prompts the user to clarify the goal. Existing
+  starts that omit both fields use the mode-derived rules and receipt format.
 - An initial explicit structure task on an empty tree with no user-pinned
   skill uses a bounded relationship assessment on native OpenAI. A material
   question goes through the normal Supervisor question and answer path.
   Confirmed answers guide skill choice and planning. Missing measurements
   remain outstanding through structural finish.
+- Semantic Skill discovery can ask about a process boundary even when the
+  unit and reporting period are known. A Skill read is provisional until
+  the host verifies the exact selection receipt or existing user pin.
+  Requested method confirmation uses a pending question bound to that Skill
+  version and receipt. It grants no graph approval. A submitted decline
+  leaves project mutations blocked until a different method is confirmed.
 - A clear chat request to deliver Excel for a named scenario requires an
   export artifact for that scenario at the current saved revision before
   finish. The export uses the current run's user instruction and the saved
@@ -784,7 +1043,54 @@ Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agen
 
 Native Ollama turns carry a bounded set of submitted user answers across tool results. The run-local copy preserves question-set IDs and answer fields for planning. Any project write that cites a decision still needs the Gateway's existing evidence and revision checks. In a saved VDT, the current observation includes separate scenario and version IDs for use by the shared scenario, version and Excel tools.
 
-An initial structural request with an unpinned empty tree can use a native read-only relationship assessment before skill discovery. The Ollama assessment distinguishes an unresolved relationship, an immaterial one and a stated one backed by exact user wording. A material question flows through the existing question event. Completed invalid turn envelopes can be regenerated once on the same exchange, with canonical validation required before a tool runs.
+During Automatic admission, Ollama uses a compact decision schema and chooses
+its outcome or focused question against the current submitted request. The
+host offers exact excerpts from the request and submitted answers. It maps
+the chosen ID back to the original text for ordinary Gateway validation.
+A bounded correction can repair a rejected format or check a questionable
+decision. A rejected quote can be replaced without changing the proposed
+outcome or requested deliverables. The accepted scope is retained for normal
+Skill discovery. A newer instruction queued while an outcome or a question
+is being generated is presented before that older outcome or question can
+be dispatched.
+
+Ollama audits a proposed Automatic question against the literal request and
+the submitted answers using a separate decision schema. The audit can
+propose an outcome or certify a question with two distinct, verbatim
+alternatives. If a prior format correction first introduces the question,
+the audit is a bounded third call. Supplied measurements remain editable
+inputs under either tree readiness outcome. The presence of measurements
+alone does not establish a request for a calculated deliverable.
+
+An Ollama proposal carrying an Excel workbook has a dedicated literal
+delivery audit. The exact evidence excerpt must contain the established
+workbook delivery cue. The Gateway correction budget is separate from the
+question audit and applies only to recognized admission errors. Unrelated
+repairs preserve the affirmed workbook and method confirmation.
+
+An initial structural request with an unpinned empty tree can use a native
+read-only relationship assessment before Skill discovery. Ollama reviews an
+unresolved finding against the original user text within the same two-call
+budget. A grounded finding that the detail is already stated or immaterial
+continues Skill discovery. To show the original question, the review must cite
+the brief and identify two distinct, non-overlapping alternatives verbatim
+within the question. A question with a numeral token absent from the user
+text enters recovery, as do two invalid assessments. A material question flows
+through the existing question event. Completed invalid turn envelopes can be
+regenerated once on the same exchange, with canonical validation required
+before a tool runs.
+
+When the assessment review explicitly rejects a preliminary draft as
+unsupported, Ollama discards it and restricts the next exchange to one
+admitted read-only Skill discovery call. A later checkpoint can raise a
+material question through the ordinary path.
+
+The structural Ollama Gateway verifies full catalog browsing, a search
+dispatched in the current scope, and an authenticated read for each returned
+Skill before recording a gap. The exact read identity includes Skill ID,
+version and content hash. Replayed search results and queued scope changes
+cannot establish a fresh search. The compact adapter forwards a rejected
+gap's catalog feedback and opens discovery again.
 
 Native first-plan review supplies the current root, submitted answers and the shared plan diagnostics. Once the Gateway applies a plan, the local response schema derives available additions from the same ready factor layer used by the Gateway. Structural Ollama construction uses the dedicated formula and plan operand checks. Formula calls use the shared syntax from the [Formula Engine](FORMULA_ENGINE.md).
 
@@ -808,9 +1114,18 @@ wired after unchanged Sequence 3. With a SQLite-backed AgentRunStore, qualified
 profiles write all seven normalized tables as primary authority and require
 the current epoch, record per-write 30-second fence audit metadata and
 atomically reserve tool calls. This is not yet the full ADR-005 shared lease.
-The unverified trusted-local Cursor canary instead keeps the complete V2
-authority inside the durable V1 run projection because Sequence 4 intentionally
-rejects unqualified External bindings. Engine-authoritative spawn, segment and
+Unverified trusted-local CLI canaries keep the complete V2 authority inside
+the durable V1 run projection because Sequence 4 rejects unqualified External
+bindings. After controller release, the default-reasoning Codex canary can read
+its persisted Supervisor events from that projection. Active authority and
+normalized SQLite take precedence. The projected run, project, derived binding,
+backend, engine and protocol must agree. A confirmed same-process closure keeps
+its completed status on subsequent Cancel. A saved-head conflict during an
+exact bound approval returns `AGENT_INTERACTION_STALE` and leaves the newer
+saved revision in place. Once the still-owned Codex controller closes, terminal
+cancellation can persist through its original authority after rechecking the
+binding and epoch. A new process still needs valid recovery authority to attest
+cleanup. Engine-authoritative spawn, segment and
 logical-session counters for those canaries are stored on the V1
 `performanceTelemetry` sibling (hashed opaque session id only) and are not
 copied onto `AgentExecutionSummaryV2`. The runtime derives the authoritative

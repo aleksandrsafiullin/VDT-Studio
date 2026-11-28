@@ -18,7 +18,9 @@ interface ExcelWorkbookScope {
   scenarioId?: string | null | undefined;
 }
 
-export function resolveSavedExcelWorkbook(database: VdtDatabase, scope: ExcelWorkbookScope) {
+export function resolveSavedExcelWorkbook(database: VdtDatabase, scope: ExcelWorkbookScope,
+  selectScenario?: (project: ReturnType<VdtDatabase["readVdtRevision"]>) => string | undefined
+) {
   if (!scope.projectId || !scope.vdtId || !scope.revisionId) {
     throw new ExcelWorkbookError("EXCEL_SAVED_REVISION_REQUIRED", 409, "Save the VDT before exporting its workbook from chat.");
   }
@@ -38,9 +40,10 @@ export function resolveSavedExcelWorkbook(database: VdtDatabase, scope: ExcelWor
     throw new ExcelWorkbookError("EXCEL_REVISION_UNAVAILABLE", 404, "The saved Excel revision could not be read.");
   }
 
+  const selected = selectScenario ? selectScenario(project) : scope.scenarioId;
   let scenarioId: string | null;
   try {
-    scenarioId = resolveExcelWorkbookScenario(project, scope.scenarioId);
+    scenarioId = resolveExcelWorkbookScenario(project, selected);
   } catch (error) {
     if (!(error instanceof ExcelWorkbookScenarioError)) throw error;
     throw new ExcelWorkbookError("EXCEL_SCENARIO_UNAVAILABLE", 404, error.message);
@@ -64,4 +67,14 @@ export function resolveSavedExcelWorkbook(database: VdtDatabase, scope: ExcelWor
 /** The provider receives only the bounded descriptor. The host retains the snapshot and workbook bytes. */
 export function describeExcelWorkbook(database: VdtDatabase, scope: ExcelWorkbookScope) {
   return resolveSavedExcelWorkbook(database, scope).descriptor;
+}
+
+export type ExcelWorkbookDescriptor = ReturnType<typeof describeExcelWorkbook>;
+
+export function hasPersistedExcelDescriptor(snapshot: Record<string, unknown> | undefined, runId: string, descriptor: ExcelWorkbookDescriptor) {
+  return Array.isArray(snapshot?.artifacts) && snapshot.artifacts.some(entry => {
+    if (entry?.type !== "excel_workbook" || entry.runId !== runId || entry.id !== descriptor.id || !entry.payload
+      || typeof entry.payload !== "object" || Object.keys(entry.payload).length !== Object.keys(descriptor).length) return false;
+    return Object.entries(descriptor).every(([key, value]) => entry.payload[key] === value);
+  });
 }

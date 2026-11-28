@@ -248,6 +248,17 @@
 .workEvent p { margin-top: 3px; color: var(--workspace-muted); font-size: 0.6875em; line-height: 1.6; overflow-wrap: anywhere; }
 .actionCard { border-radius: 14px; }
 .actionCard [data-testid="continue-agent"] { height: 32px; border-color: var(--workspace-line); border-radius: 9px; background: var(--workspace-ink); color: var(--workspace-surface); }
+.actionCard [data-testid="continue-agent"][data-voice-answer="true"] { background: var(--workspace-surface); color: var(--workspace-ink); }
+.dialogueControls { display: grid; gap: 5px; min-width: 0; padding: 6px 8px; }
+.dialogueControls:focus-visible { outline: 2px solid var(--workspace-focus); outline-offset: 3px; }
+.actionCard .dialogueControls { padding: 0; }
+.dialogueActions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.dialoguePrimary { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid var(--workspace-line); border-radius: 9px; background: var(--workspace-ink); color: var(--workspace-surface); font-size: 0.75em; font-weight: 550; }
+.dialoguePrimary:not(:disabled):hover { opacity: 0.84; }
+.dialoguePrimary:disabled { cursor: not-allowed; opacity: 0.45; }
+.dialoguePrimary > svg { flex-shrink: 0; }
+.dialogueUtilities { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; }
+.dialogueStatus { min-width: 0; color: var(--workspace-muted); font-size: 0.6875em; line-height: 1.5; overflow-wrap: anywhere; }
 
 .voiceFeedback { margin-bottom: 12px; padding: 11px 12px 10px; border-radius: 14px; background: #1d1d1f; color: #f5f5f7; }
 .voiceHeading { display: flex; min-width: 0; align-items: center; gap: 8px; }

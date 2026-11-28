@@ -2,7 +2,7 @@ import { readBoundedText, type ModelReasoningCapabilities, type ModelReasoningVa
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { BYOK_GATEWAY_PRESETS } from "@/lib/execution-mode-catalog";
 import { z } from "zod";
-import { claudeModelSupportsThinkingOff, parseLocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
+import { claudeModelSupportsThinkingOff, FAST_LOCAL_REASONING, parseLocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
 
 export const modelReasoningValueSchema = z.union([z.boolean(), z.string().regex(/^[a-z][a-z0-9_.-]{0,47}$/), z.number().int().min(0).max(32768)]);
 const modelId = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
@@ -132,11 +132,12 @@ function parseOpenAiReasoningLevels(markdown: string): ModelReasoningCapabilitie
   return values.length ? { parameter: "reasoning_effort", values: [...new Set(values)], source: "documentation" } : undefined;
 }
 
-export async function boundedProviderMetadata(url: string, init: RequestInit = {}, fetcher: typeof fetch = fetch, timeoutMs = 10_000): Promise<unknown> {
+export async function boundedProviderMetadata(url: string, init: RequestInit = {}, fetcher: typeof fetch = fetch, timeoutMs = 10_000, allowMissing = false): Promise<unknown> {
   const signal = AbortSignal.timeout(timeoutMs);
   let response: Response;
   try { response = await fetcher(url, { ...init, redirect: "error", cache: "no-store", signal }); }
   catch { throw new ProviderConnectionError("Could not reach the selected provider. Check the connection and retry.", 502); }
+  if (allowMissing && [404, 405].includes(response.status)) { await response.body?.cancel(); return undefined; }
   if (!response.ok) { await response.body?.cancel(); throw new ProviderConnectionError(`Provider model access failed (HTTP ${response.status}). Check the selected model and credentials.`, response.status === 401 || response.status === 403 ? response.status : 502); }
   try { return JSON.parse(await readBoundedText(response, 256 * 1024, "Provider metadata", signal)); }
   catch { throw new ProviderConnectionError("Provider model metadata was invalid or too large.", 502); }
@@ -171,13 +172,13 @@ async function openAiCard(model: string, fetcher: typeof fetch): Promise<ModelRe
 
 export async function providerModelCapabilities(input: ProviderConnection, fetcher: typeof fetch = fetch, purpose?: "suggested_kpi"): Promise<ModelReasoningCapabilities | undefined> {
   if (input.providerId === "local_runner") {
-    const { backendId, model } = input.providerConfig;
+    const { backendId, model, modelReasoning } = input.providerConfig;
     const manifest = createLocalRuntimeContext().manifests.get(backendId);
     const baseUrl = manifest?.localHttp?.baseUrl.replace(/\/$/, "");
     if (!baseUrl) throw new ProviderConnectionError("Local model endpoint is unavailable.");
     const metadata = backendId === "ollama"
-      ? await boundedProviderMetadata(`${baseUrl.replace(/\/v1$/, "")}/api/show`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model }) }, fetcher)
-      : await boundedProviderMetadata(`${baseUrl}/models/${encodeURIComponent(model)}`, {}, fetcher);
+      ? await boundedProviderMetadata(`${baseUrl.replace(/\/v1$/, "")}/api/show`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model }) }, fetcher, 10_000, modelReasoning === FAST_LOCAL_REASONING)
+      : await boundedProviderMetadata(`${baseUrl}/models/${encodeURIComponent(model)}`, {}, fetcher, 10_000, modelReasoning === FAST_LOCAL_REASONING);
     if (backendId === "ollama" && Array.isArray(record(metadata).capabilities) && !(record(metadata).capabilities as unknown[]).includes("completion"))
       throw new ProviderConnectionError("This installed model does not support chat completion. Choose a chat model.");
     return parseProviderReasoning(metadata, backendId);

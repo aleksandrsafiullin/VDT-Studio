@@ -1,6 +1,6 @@
 import { reanalyzeDiscoveryWithUserEdits, validateDiscoveryApply } from "@vdt-studio/data-harness";
 import { jsonError } from "../../../../../vdt/storage-response";
-import { dataApiErrorResponse, readDataOwner, readOptionalJsonObject, reviewProject } from "../../../../request-context";
+import { assertRetainedAppleKpiScope, dataApiErrorResponse, hasRetainedAppleKpiScope, readDataOwner, readOptionalJsonObject, reviewProject } from "../../../../request-context";
 import { checkAnalysisCancellation, DataApiError, withRetainedDatasetForAnalysis, readDiscoveryRun, requireDataId, saveDiscoveryRun } from "../../../../store";
 
 export const runtime = "nodejs";
@@ -18,8 +18,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     return await withRetainedDatasetForAnalysis(originalSnapshot.datasetId, owner, request.signal, async (file) => {
       let snapshot = originalSnapshot;
       if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
-      if (snapshot.semanticModel && snapshot.proposal) {
-        const project = await reviewProject(snapshot, owner, body.project, Boolean(snapshot.incomingKpi && owner));
+      const canReanalyze = Boolean(snapshot.semanticModel && snapshot.proposal);
+      const project = canReanalyze || hasRetainedAppleKpiScope(snapshot)
+        ? await reviewProject(snapshot, owner, body.project, Boolean(snapshot.incomingKpi && owner))
+        : undefined;
+      if (canReanalyze && project) {
         snapshot = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, signal: request.signal, entryContext: snapshot.entryContext }, snapshot, {});
       }
       const validationResults = validateDiscoveryApply(snapshot);
@@ -40,7 +43,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
         }]
       };
       checkAnalysisCancellation(request.signal);
+      if (project) assertRetainedAppleKpiScope(originalSnapshot, owner, project);
       await saveDiscoveryRun(next, owner);
+      if (project) assertRetainedAppleKpiScope(originalSnapshot, owner, project);
       if (blocking.length) return Response.json({
         ok: false,
         error: { code: "DATA_DISCOVERY_VALIDATION_FAILED", message: blocking[0]?.message ?? "Discovery validation failed." },

@@ -3,43 +3,25 @@ import type { AgentChatMessage, VdtAgentStartRequest } from "@vdt-studio/vdt-age
 import { VdtStorageError, type MessageRecord, type VdtDatabase } from "@vdt-studio/storage";
 import { loadScopedConversationMessages, openAgentRunPersistenceDatabase } from "./persistence";
 import { PUBLIC_AGENT_SNAPSHOT_TARGET_BYTES, type PublicAgentRunSnapshot } from "./public-snapshot";
+import {
+  CONFIRM_DECISION_OPTION, isConversationDecisionConfirmation, normalizeTopic, readInstructionDecision, safeContextText, safeDecisionValue
+} from "./conversation-context-decisions";
 import { resolveTrustedStorageWriteMode } from "../../vdt/storage-write-adapter";
 
-const MAX_MESSAGES = 160;
+const MAX_PENDING_QUESTIONS = 64;
 const MAX_DECISIONS = 8;
 const MAX_QUESTIONS = 4;
 const MAX_CONTEXT_BYTES = 8_192;
 
 type Source = { messageId: string; runId: string };
-type Decision = { topic: string; value: string; source: Source; supersedes?: Source | undefined };
+type Decision = {
+  topic: string;
+  value: string;
+  source: Source;
+  confirmedBy: "instruction" | "submitted_answer";
+  supersedes?: Source | undefined;
+};
 type Question = { id: string; text: string; source: Source; options: Map<string, string> };
-
-const DEFINITION_PATTERNS = [
-  /^(?:decision\s*:\s*)?(?<topic>[\p{L}\p{N}][\p{L}\p{N} _/-]{0,63})\s*=\s*(?<value>[^\n?]{1,400})$/iu,
-  /^(?:define|treat)\s+(?<topic>.{1,64}?)\s+as\s+(?<value>[^\n?]{1,400})$/iu,
-  /^(?<topic>.{1,64}?)\s+(?:means|is defined as)\s+(?<value>[^\n?]{1,400})$/iu,
-  /^(?:actually,\s*)?use\s+(?<value>[^\n?]{1,400}?)\s+as\s+(?<topic>.{1,64})$/iu
-];
-
-function normalizeTopic(text: string): string {
-  return text.trim().toLowerCase().replace(/^the\s+/i, "").replace(/[_\s]+/g, " ").replace(/[.!]$/, "");
-}
-
-// Require a declarative definition, explicit keyed decision, or an actual
-// submitted answer. Investigation and assistant proposals do not confirm facts.
-function instructionDecision(content: string): { topic: string; value: string } | undefined {
-  const text = content.trim().replace(/^(?:correction|update)\s*:\s*/i, "")
-    .replace(/^for (?:this|the) (?:tree|model),\s*/i, "");
-  for (const pattern of DEFINITION_PATTERNS) {
-    const fields = text.match(pattern)?.groups;
-    if (!fields) continue;
-    const topic = normalizeTopic(fields.topic ?? "");
-    const value = fields.value?.trim().replace(/[.!]$/, "");
-    if (value && /^[\p{L}\p{N}][\p{L}\p{N} /-]*$/u.test(topic)
-      && !/\b(?:token|password|secret|api[ _-]?key|authorization|formula|equation)\b/i.test(topic)
-      && !/^(?:which|what|whether|ask|check|estimate|calculate|guess)\b/i.test(value)) return { topic, value };
-  }
-}
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -49,38 +31,26 @@ function entries(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-// Conversation carryover excludes credential-shaped strings, attachment and
-// tool payloads, and links. Managed binding egress rules still apply.
-function safeContextText(value: unknown, limit: number): string | undefined {
-  if (typeof value !== "string" || !value.trim() || value.length > limit
-    || /https?:\/\/|file:\/\/|bearer\s+\S+|(?:token|password|secret|api[ _-]?key|authorization)\s*[:=]|\bsk-[\w-]{12,}/i.test(value)) return;
-  return value.trim();
-}
-
-function safeDecisionValue(value: unknown): string | undefined {
-  const text = safeContextText(value, 400);
-  if (!text || /(?:^=|\{[^}]+\}|\[[^\]]+\]|\w\s+[-+*/=]\s+\w|[×÷])/u.test(text)) return;
-  return text;
-}
-
-export function deriveConversationContext(messages: readonly MessageRecord[]): VdtAgentStartRequest["conversationContext"] {
+function conversationDecisionProjection() {
   const questions = new Map<string, Question>();
   const decisions = new Map<string, Decision>();
-  const remember = (topic: string, value: string, source: Source) => {
-    const old = decisions.get(topic);
+  const sources = new Map<string, Source>();
+  const remember = (topic: string, value: string, source: Source, confirmedBy: Decision["confirmedBy"]) => {
+    const priorSource = sources.get(topic);
+    sources.set(topic, source);
     decisions.delete(topic);
-    decisions.set(topic, { topic, value, source, ...(old && { supersedes: old.source }) });
+    decisions.set(topic, { topic, value, source, confirmedBy, ...(priorSource && { supersedes: priorSource }) });
+    if (decisions.size > MAX_DECISIONS) decisions.delete(decisions.keys().next().value!);
   };
 
-  for (const message of messages.slice(-MAX_MESSAGES)) {
-    if (!message.agentRunId) continue;
+  function visit(message: MessageRecord) {
+    if (!message.agentRunId) return;
     const source = { messageId: message.id, runId: message.agentRunId };
     const context = message.runContext;
     if (message.role === "user" && context?.kind === "instruction") {
-      const decision = instructionDecision(message.content);
-      const value = safeDecisionValue(decision?.value);
-      if (decision && value) {
-        remember(decision.topic, value, source);
+      const decision = readInstructionDecision(message.content, object(context.decision));
+      if (decision) {
+        remember(decision.topic, decision.value, source, "instruction");
         for (const [key, question] of questions) if (questionTopic(question.text) === decision.topic) questions.delete(key);
       }
     }
@@ -97,7 +67,10 @@ export function deriveConversationContext(messages: readonly MessageRecord[]): V
           const label = safeContextText(typeof optionItem === "string" ? optionItem : option.label, 120);
           if (label) options.set(id, label);
         }
-        questions.set(JSON.stringify([source.runId, question.id]), { id: question.id, text: questionText, source, options });
+        const key = JSON.stringify([source.runId, question.id]);
+        questions.delete(key);
+        questions.set(key, { id: question.id, text: questionText, source, options });
+        if (questions.size > MAX_PENDING_QUESTIONS) questions.delete(questions.keys().next().value!);
       }
     }
 
@@ -107,7 +80,15 @@ export function deriveConversationContext(messages: readonly MessageRecord[]): V
         const key = JSON.stringify([source.runId, answer.questionId]);
         const question = questions.get(key);
         if (!question) continue;
-        const selected = entries(answer.selectedOptionIds).flatMap((id) => {
+        const optionIds = entries(answer.selectedOptionIds);
+        if (isConversationDecisionConfirmation(question.id)) {
+          const value = optionIds.length === 1 && optionIds[0] === CONFIRM_DECISION_OPTION
+            ? safeDecisionValue(question.options.get(CONFIRM_DECISION_OPTION)) : undefined;
+          if (value) remember(questionTopic(question.text), value, source, "submitted_answer");
+          questions.delete(key);
+          continue;
+        }
+        const selected = optionIds.flatMap((id) => {
           const label = typeof id === "string" ? question.options.get(id) : undefined;
           return label ? [label] : [];
         });
@@ -117,28 +98,40 @@ export function deriveConversationContext(messages: readonly MessageRecord[]): V
         const value = safeDecisionValue([freeText, ...selected, ...fields].filter(Boolean).join("; "));
         if (!value) continue;
         questions.delete(key);
-        remember(questionTopic(question.text), value, source);
+        remember(questionTopic(question.text), value, source, "submitted_answer");
       }
     }
   }
 
-  const resolved = [...decisions.values()].slice(-MAX_DECISIONS);
-  const unresolved = [...questions.values()].slice(-MAX_QUESTIONS).map(({ id, text, source }) => ({ id, text, source }));
-  if (!resolved.length && !unresolved.length) return;
-  const context = {
-    policy: "Use the current VDT revision for existing formulas and values. Honor current user instructions and active user-confirmed decisions. A superseded source is historical. Treat unresolved questions as questions.",
-    decisions: resolved,
-    unresolvedQuestions: unresolved
-  };
-  while (Buffer.byteLength(JSON.stringify(context)) > MAX_CONTEXT_BYTES) {
-    if (unresolved.length) unresolved.shift();
-    else resolved.shift();
+  function finish(scope?: { projectId: string; vdtId: string; conversationId: string }) {
+    const resolved = [...decisions.values()];
+    const unresolved = [...questions.values()].slice(-MAX_QUESTIONS).map(({ id, text, source }) => ({ id, text, source }));
+    if (!resolved.length && !unresolved.length) return;
+    const context = {
+      ...(scope && { scope }),
+      policy: "Use the current VDT revision for existing formulas and values. Honor current user instructions and active user-confirmed decisions. A superseded source is historical. Treat unresolved questions as questions.",
+      decisions: resolved,
+      unresolvedQuestions: unresolved
+    };
+    while (Buffer.byteLength(JSON.stringify(context)) > MAX_CONTEXT_BYTES) {
+      if (unresolved.length) unresolved.shift();
+      else resolved.shift();
+    }
+    return context;
   }
-  return context;
+
+  return { visit, finish };
+}
+
+export function deriveConversationContext(messages: readonly MessageRecord[]): VdtAgentStartRequest["conversationContext"] {
+  const projection = conversationDecisionProjection();
+  messages.forEach(projection.visit);
+  return projection.finish();
 }
 
 function questionTopic(text: string): string {
-  const subject = text.match(/^(?:how do you define|what (?:does|is))\s+(.+?)(?:\s+mean)?\?$/i)?.[1];
+  const subject = text.match(/^(?:how do you define|what (?:does|is))\s+(.+?)(?:\s+mean)?\?$/i)?.[1]
+    ?? text.match(/^Как определить «(.+?)» для этого дерева\?$/iu)?.[1];
   return normalizeTopic(subject ?? text);
 }
 
@@ -161,7 +154,9 @@ export function bindStartConversation(database: VdtDatabase, request: VdtAgentSt
       throw new VdtStorageError("VDT_NOT_FOUND", "Conversation not found for this VDT.");
     }
     const scope = { projectId: workspace.projectId, vdtId: workspace.vdtId, conversationId };
-    request.conversationContext = deriveConversationContext(loadScopedConversationMessages(database, scope, MAX_MESSAGES));
+    const projection = conversationDecisionProjection();
+    database.visitScopedConversationDecisionMessages(scope, projection.visit);
+    request.conversationContext = projection.finish(scope);
   }
 
   // A visible editor draft keeps the usual expected-head admission check.

@@ -193,7 +193,7 @@ export class AiRouteProviderError extends Error {
 export function createAiProvider(
   request: AiRouteProviderRequest,
   requestUrl: string,
-  options: { retainInitialContext?: boolean | undefined } = {}
+  options: { retainInitialContext?: boolean | undefined; fetch?: typeof fetch | undefined } = {}
 ): AiProvider {
   const body = request;
 
@@ -222,6 +222,7 @@ export function createAiProvider(
 
     return new OpenAiCompatibleProvider({
       ...readReasoningOverrides(body.providerConfig),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
       retainInitialContext: options.retainInitialContext,
       baseUrl: requestBaseUrl ?? envBaseUrl,
       apiKey,
@@ -243,6 +244,7 @@ export function createAiProvider(
     }
     return new AnthropicProvider({
       ...readReasoningOverrides(body.providerConfig),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
       baseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_FALLBACK_MODEL,
@@ -275,6 +277,7 @@ export function createAiProvider(
     }
     return new AzureOpenAiProvider({
       ...readReasoningOverrides(body.providerConfig),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
       endpoint,
       apiKey,
       deployment,
@@ -296,6 +299,7 @@ export function createAiProvider(
     }
     return new GeminiProvider({
       ...readReasoningOverrides(body.providerConfig),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
       baseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"

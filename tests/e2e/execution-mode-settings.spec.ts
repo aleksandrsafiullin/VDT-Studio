@@ -41,7 +41,7 @@ test("subscriptions remove, persist through reload and rescan, and can be added 
   await expect(page.getByTestId("cli-agent-select-cursor-agent")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("removing the final subscription clears chat and Undo restores an accessible provider choice", async ({ page }) => {
+test("removing the final subscription clears chat and Undo restores the ready provider", async ({ page }) => {
   await mockDetection(page, [detection("claude")]);
   await openLocalSettings(page);
   await page.getByTestId("cli-agent-select-claude").click();
@@ -50,7 +50,18 @@ test("removing the final subscription clears chat and Undo restores an accessibl
   await expect(page.getByTestId("local-cli-removed-notice")).toContainText("Choose another provider");
   await page.getByTestId("local-cli-undo-remove").click();
   await expect(page.getByTestId("cli-agent-select-claude")).toBeFocused();
-  await expect(page.getByTestId("cli-agent-select-claude")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("cli-agent-select-claude")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => {
+    const { state } = JSON.parse(localStorage.getItem("vdt-studio-state")!);
+    return { selected: state.executionSettings.selectedCliAgentId, removed: state.removedCliAgentIds };
+  })).toEqual({ selected: "claude", removed: [] });
+
+  await page.reload();
+  await page.getByTestId("settings-button").click();
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await page.getByTestId("local-cli-rescan").click();
+  await expect(page.getByTestId("local-cli-scan-status")).toHaveCount(0);
+  await expect(page.getByTestId("cli-agent-select-claude")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("Test exposes busy, failure and retry states without duplicate requests", async ({ page }) => {
@@ -236,4 +247,78 @@ test("execution tabs support arrow wrapping, Home and End with correct panel rou
   await cli.press("End");
   await expect(api).toBeFocused();
   await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
+});
+
+test("a late local model list does not supersede an explicit Apple readiness check", async ({ page }) => {
+  test.skip(process.env.VDT_E2E_DESKTOP_MODE !== "1", "Requires the desktop execution client.");
+  await page.addInitScript(() => {
+    const mock = { ollamaListPending: false, releaseOllama: undefined as (() => void) | undefined };
+    const modelListGate = new Promise<void>(resolve => { mock.releaseOllama = resolve; });
+    Reflect.set(window, "__appleSettingsRace", mock);
+    Reflect.set(window, "__TAURI__", { core: { invoke: async (method: string, args: { backendId?: string }) => {
+      if (method !== "ai_list_models" || args.backendId !== "ollama") throw new Error("No native backend in the browser fixture.");
+      mock.ollamaListPending = true;
+      await modelListGate;
+      return ["late-ollama-model"];
+    } } });
+  });
+  let releaseApple: (() => void) | undefined;
+  await page.route("**/api/agent/bindings/apple", async route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { enabled: true, firstLaunchDefaultEnabled: false } });
+    const { locale } = route.request().postDataJSON();
+    await new Promise<void>(resolve => { releaseApple = resolve; });
+    const providerId = "apple_foundation_models", modelId = "SystemLanguageModel.default";
+    await route.fulfill({ json: { ok: true, binding: { bindingId: "apple_native_settings_race", executionProfile: "model_agent",
+      backendId: providerId, modelId, appleIdentity: { locale, osBuild: "fixture" },
+      admission: { mode: "local", providerId, modelId, profileVersion: 1, modelRevision: null } } } });
+  });
+  await page.goto("/");
+  await page.getByTestId("settings-button").click();
+  await page.getByTestId("execution-mode-tab-local-models").click();
+  await page.getByTestId("local-model-select-ollama_openai").click();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, "__appleSettingsRace").ollamaListPending)).toBe(true);
+  const card = page.getByTestId("apple-local-model");
+  await card.getByRole("button", { name: "Select", exact: true }).click();
+  await expect.poll(() => Boolean(releaseApple)).toBe(true);
+  try {
+    await page.evaluate(() => Reflect.get(window, "__appleSettingsRace").releaseOllama());
+    await expect(page.getByTestId("local-model-model-ollama_openai").locator('option[value="late-ollama-model"]')).toHaveCount(1);
+    await expect(card.getByText("Checking Apple model availability…")).toBeVisible();
+    const model = await page.evaluate(() => JSON.parse(localStorage.getItem("vdt-studio-state")!).state.executionSettings.localModel);
+    expect(model).not.toBe("late-ollama-model");
+  } finally {
+    releaseApple?.();
+  }
+  await expect(card.getByRole("button", { name: "Selected", exact: true })).toBeDisabled();
+});
+
+test("desktop Pro setup copies public addresses and keeps the address usable without clipboard access", async ({ page }) => {
+  test.skip(process.env.VDT_E2E_DESKTOP_MODE !== "1", "Requires the desktop settings presentation.");
+  await page.addInitScript(() => {
+    const clipboard = { text: "https://example.invalid/clipboard-fixture", denied: false };
+    Reflect.set(window, "__voiceSetupClipboard", clipboard);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => {
+        if (clipboard.denied) throw new DOMException("Fixture denied writeText", "NotAllowedError");
+        clipboard.text = text;
+      } }
+    });
+  });
+  await page.goto("/");
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("button", { name: "Voice input", exact: true }).click();
+  await page.getByText("Using ChatGPT Pro with voice", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy link to OpenAI API keys" }).click();
+  await expect(page.getByText("OpenAI API keys link copied. Paste it into your browser.")).toBeVisible();
+  expect(await page.evaluate(() => Reflect.get(window, "__voiceSetupClipboard").text)).toBe("https://platform.openai.com/api-keys");
+
+  await page.evaluate(() => { Reflect.get(window, "__voiceSetupClipboard").denied = true; });
+  await page.getByRole("button", { name: "Copy link to Credit grants" }).click();
+  const fallback = page.getByRole("textbox", { name: "Setup link address" });
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toBeFocused();
+  await expect(fallback).toHaveValue("https://platform.openai.com/settings/organization/billing/credit-grants");
+  expect(await fallback.evaluate(input => (input as HTMLInputElement).readOnly)).toBe(true);
+  expect(await page.evaluate(() => Reflect.get(window, "__voiceSetupClipboard").text)).toBe("https://platform.openai.com/api-keys");
 });

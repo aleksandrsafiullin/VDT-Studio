@@ -13,9 +13,12 @@ import {
   type AgentHumanInput,
   type AgentRunSession,
   type AgentSessionBinding,
-  type InProductModelAgentEngine
+  type InProductModelAgentEngine,
+  type VdtGatewayToolCall,
+  type VdtGatewayToolResult
 } from "./agent-execution-contracts";
 import { agentQuestionSchema } from "./schemas/agent-event";
+import { isReservedConfirmationQuestionId } from "./conversation-decision-proposal";
 import { schemaIssueSummary, type SchemaIssueSummaryInput } from "./schema-issue-summary";
 
 const safeId = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -23,6 +26,30 @@ const sha256 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const MAX_MODEL_AGENT_SESSION_STATE_BYTES = 16 * 1024;
 export const MAX_MODEL_AGENT_REPEATED_TOOL_FAILURES = 3;
 const MAX_MODEL_AGENT_REPEATED_READS = 4;
+
+const waitingQuestionSet = z.array(agentQuestionSchema.strict()).min(1).max(5).refine(
+  questions => questions.every(question => question.decisionProposal == null),
+  { message: "Only resolved questions can be presented to the user." }
+);
+const ordinaryWaitingQuestionSet = waitingQuestionSet.refine(
+  questions => questions.every(question => !isReservedConfirmationQuestionId(question.id)),
+  { message: "Workspace decision confirmations require a trusted tool result." }
+);
+
+export function parseWaitingUserQuestions(
+  call: VdtGatewayToolCall,
+  results: readonly VdtGatewayToolResult[]
+) {
+  const result = results.find(candidate => candidate.externalCallId === call.externalCallId
+    && candidate.toolName === call.toolName && candidate.status === "waiting_user");
+  const payload = result?.payload;
+  const output = payload && typeof payload === "object" && "output" in payload ? payload.output : undefined;
+  if ((call.toolName === "user.ask" || call.toolName === "skill.select")
+    && output && typeof output === "object" && "questions" in output) {
+    return waitingQuestionSet.safeParse(output.questions);
+  }
+  return ordinaryWaitingQuestionSet.safeParse(call.toolName === "user.ask" ? call.args.questions : undefined);
+}
 
 const assistantMessageSchema = z.object({
   messageId: safeId,
@@ -132,6 +159,8 @@ export interface StructuredInProductModelAgentEngineOptions {
   transport: ModelAgentTurnTransport;
   /** The host can provide the opening and progress through runtime events. */
   emitAssistantMessages?: boolean | undefined;
+  /** App-owned transport policy for known completed failures on a fresh first turn. */
+  isTerminalInitialTurnError?: ((error: unknown) => boolean) | undefined;
   maxTurns?: number | undefined;
   now?: (() => string) | undefined;
   idFactory?: (() => string) | undefined;
@@ -142,6 +171,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
   readonly capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }>;
   private readonly transport: ModelAgentTurnTransport;
   private readonly emitAssistantMessages: boolean;
+  private readonly isTerminalInitialTurnError: StructuredInProductModelAgentEngineOptions["isTerminalInitialTurnError"];
   private readonly maxTurns: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
@@ -158,6 +188,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
     }
     this.transport = options.transport;
     this.emitAssistantMessages = options.emitAssistantMessages ?? true;
+    this.isTerminalInitialTurnError = options.isTerminalInitialTurnError;
     this.maxTurns = options.maxTurns ?? 40;
     if (!Number.isSafeInteger(this.maxTurns) || this.maxTurns < 1 || this.maxTurns > 500) {
       throw new ModelAgentEngineError("MODEL_MAX_TURNS_INVALID", "maxTurns must be between 1 and 500.");
@@ -178,6 +209,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
       binding,
       host,
       transport: this.transport,
+      isTerminalInitialTurnError: this.isTerminalInitialTurnError,
       emitAssistantMessages: this.emitAssistantMessages,
       maxTurns: this.maxTurns,
       now: this.now,
@@ -268,6 +300,7 @@ interface StructuredModelAgentSessionOptions {
   host: AgentEngineHost;
   transport: ModelAgentTurnTransport;
   emitAssistantMessages: boolean;
+  isTerminalInitialTurnError?: StructuredInProductModelAgentEngineOptions["isTerminalInitialTurnError"];
   maxTurns: number;
   now: () => string;
   idFactory: () => string;
@@ -280,6 +313,7 @@ class StructuredModelAgentSession implements AgentRunSession {
   private readonly host: AgentEngineHost;
   private readonly transport: ModelAgentTurnTransport;
   private readonly emitAssistantMessages: boolean;
+  private readonly isTerminalInitialTurnError: StructuredInProductModelAgentEngineOptions["isTerminalInitialTurnError"];
   private readonly maxTurns: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
@@ -309,6 +343,7 @@ class StructuredModelAgentSession implements AgentRunSession {
     this.host = options.host;
     this.transport = options.transport;
     this.emitAssistantMessages = options.emitAssistantMessages;
+    this.isTerminalInitialTurnError = options.isTerminalInitialTurnError;
     this.maxTurns = options.maxTurns;
     this.now = options.now;
     this.idFactory = options.idFactory;
@@ -384,13 +419,16 @@ class StructuredModelAgentSession implements AgentRunSession {
           signal: this.host.signal
         });
       } catch (error) {
-        this.activeExchange = { exchangeId, stableCallKey, state: "ambiguous" };
-        yield { type: "checkpoint_requested", reason: "engine_exchange_ambiguous" };
+        const terminalFailure = this.turnCount === 1 && this.binding.sessionEpoch === 1
+          && delta.type === "initial_context" && this.isTerminalInitialTurnError?.(error) === true;
+        this.activeExchange = { exchangeId, stableCallKey, state: terminalFailure ? "failed" : "ambiguous" };
+        this.terminal = terminalFailure;
+        yield { type: "checkpoint_requested", reason: terminalFailure ? "engine_exchange_failed" : "engine_exchange_ambiguous" };
         yield {
           type: "transport_error",
           code: errorCode(error, "MODEL_TURN_FAILED"),
           message: safeErrorMessage(error, "Structured model turn failed."),
-          retryable: true
+          retryable: !terminalFailure
         };
         return;
       }
@@ -415,6 +453,14 @@ class StructuredModelAgentSession implements AgentRunSession {
       yield { type: "checkpoint_requested", reason: "engine_exchange_completed" };
 
       if (response.usage) yield { type: "usage", metrics: response.usage };
+      const action = turn.data.action;
+      const scopeDecision = action.type === "question" || action.type === "action_batch"
+        && action.batch.calls.some(call => call.toolName === "run.propose_outcome" || call.toolName === "user.ask");
+      // A queued instruction may already answer the question or change the goal.
+      if (scopeDecision && this.carryQueuedInstructions()) {
+        yield { type: "checkpoint_requested", reason: "queued_human_input" };
+        continue;
+      }
       if (this.emitAssistantMessages && turn.data.assistantMessage) {
         this.firstUserFacingEvent = true;
         yield {
@@ -424,7 +470,10 @@ class StructuredModelAgentSession implements AgentRunSession {
         };
       }
 
-      const action = turn.data.action;
+      if (scopeDecision && this.carryQueuedInstructions()) {
+        yield { type: "checkpoint_requested", reason: "queued_human_input" };
+        continue;
+      }
       if (action.type === "question") {
         this.firstUserFacingEvent = true;
         const questionCallId = `question-call-${hashJson({
@@ -450,12 +499,18 @@ class StructuredModelAgentSession implements AgentRunSession {
           return;
         }
         if (execution.pause === "waiting_user") {
+          const questions = parseWaitingUserQuestions(execution.pausedCall!, execution.results);
+          if (!questions.success) {
+            this.terminal = true;
+            yield { type: "transport_error", code: "MODEL_QUESTION_TOOL_INVALID", message: "The question tool did not return valid questions.", retryable: true };
+            return;
+          }
           this.paused = true;
           yield {
             type: "question",
             messageId: action.messageId,
             questionSetId: action.questionSetId,
-            questions: action.questions
+            questions: questions.data
           };
           return;
         }
@@ -474,14 +529,8 @@ class StructuredModelAgentSession implements AgentRunSession {
         return;
       }
       if (action.type === "final") {
-        // An instruction can arrive while the final provider turn is in
-        // flight. It wins the race: continue the same logical session and do
-        // not publish a stale final that ignored accepted user input.
-        if (this.queuedInputs.length > 0) {
-          this.pendingDelta = {
-            type: "human_inputs",
-            inputs: this.queuedInputs.splice(0)
-          };
+        // Keep accepting steering that arrives before a final is published.
+        if (this.carryQueuedInstructions()) {
           yield { type: "checkpoint_requested", reason: "queued_human_input" };
           continue;
         }
@@ -519,7 +568,7 @@ class StructuredModelAgentSession implements AgentRunSession {
       }
       if (execution.pause === "waiting_user") {
         const call = execution.pausedCall!;
-        const questions = z.array(agentQuestionSchema.strict()).min(1).max(5).safeParse(call.args.questions);
+        const questions = parseWaitingUserQuestions(call, execution.results);
         if (!questions.success) {
           this.terminal = true;
           yield {
@@ -609,15 +658,21 @@ class StructuredModelAgentSession implements AgentRunSession {
     this.closed = true;
   }
 
+  private carryQueuedInstructions(): boolean {
+    if (!this.queuedInputs.length) return false;
+    this.pendingDelta = { type: "human_inputs", inputs: this.queuedInputs.splice(0) };
+    return true;
+  }
+
   private async executeBatch(batch: AgentActionBatch): Promise<{
     batchId: string;
-    results: Readonly<Record<string, unknown>>[];
+    results: VdtGatewayToolResult[];
     pause: "waiting_user" | "waiting_approval" | null;
     pausedCall: AgentActionBatch["calls"][number] | null;
     reconciliation: Readonly<Record<string, unknown>> | null;
   }> {
     const batchId = `batch-${this.binding.sessionEpoch}-${this.turnCount}`;
-    const results: Readonly<Record<string, unknown>>[] = [];
+    const results: VdtGatewayToolResult[] = [];
     let pause: "waiting_user" | "waiting_approval" | null = null;
     let pausedCall: AgentActionBatch["calls"][number] | null = null;
     let reconciliation: Readonly<Record<string, unknown>> | null = null;
@@ -633,7 +688,7 @@ class StructuredModelAgentSession implements AgentRunSession {
         toolName: call.toolName,
         state: result.status === "failed" ? "failed" : "completed"
       };
-      results.push(result as unknown as Readonly<Record<string, unknown>>);
+      results.push(result);
       this.trackToolFailure(call, result);
       if (result.resultCode === "STALE_REVISION") {
         const payload = result.payload && typeof result.payload === "object"

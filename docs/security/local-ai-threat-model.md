@@ -1,5 +1,27 @@
 # Local AI And Data Threat Model
 
+## Apple AI and speech preview
+
+The macOS host admits fixed, canonical helper paths from the sealed application
+resources. It requires both executable digests to match the bounded manifest,
+clears inherited helper settings and passes verified values only to the owning
+web or sidecar child. The Apple model helper binds the system model variant,
+OS build, locale and bounded native profile. It proposes operations through the
+existing Supervisor, with tool, approval, revision and finish authority at the
+Gateway. Local admission excludes research, delegation and implicit fallback.
+The preview manifest requires `analyticalDefault: false`.
+
+Speech capture uses a separate opt-in scoped grant. Notifications use browser
+projection of recorded runtime events and a distinct, one-use local synthesis
+grant. The grant bounds text, installed voice and playback scope. In localhost
+development, a plain spoken answer also requires proof from the completed local
+recognition job. The proof binds the exact live question and hash of the
+transcript, expires, and is consumed once. It attests recognition of submitted
+audio. Physical microphone origin and human intent require separate evidence.
+Packaged clarification uses an editable draft and any mutation approval uses
+the visual review. End-to-end installed offline execution and separate process
+and OS-service egress observation remain release gates.
+
 ## Local diagnostics and build identity (2026-11-13)
 
 Support reports are explicit local allowlisted snapshots with preview before
@@ -26,6 +48,35 @@ tokens; mismatched versions cannot establish process death. No request,
 environment-provided identity or legacy PID is promoted into trusted evidence.
 The failed owner-less installed run remains eligible only for saved-copy
 continuation. Mac/Linux retain their original failed-probe caching behavior.
+
+## Loopback model admission
+
+Local HTTP connectivity uses a host-owned manifest and a literal loopback endpoint.
+The adapter rejects known cloud aliases, remote targets and automatic redirects.
+An ordinary Ollama, LM Studio or vLLM listener and its model catalog establish
+connectivity only. Legacy completions and metadata therefore have an unverified
+processing boundary, including when the listener exposes an OpenAI-compatible API.
+
+A verified Local HTTP selection references an exact host profile version and
+SHA-256 model revision. A trusted in-process resolver must match that reference
+to the configured provider, exact model, endpoint and task. The resolver must
+supply a transport that confines the runtime's network access and holds the
+selected model revision pinned while it executes. The fetch boundary rechecks
+the current admission on every call and permits only the applicable loopback
+completion or model metadata request. Caller values, localhost, model names and
+catalog responses confer no offline authority. Missing or stale evidence fails
+before the inference request. Current production constructors supply no such
+loopback resolver. A strict host configuration can also reject omitted pins and
+unverified model listing. CLI and API execution keep their respective boundaries.
+
+For L01, timing through the unchanged compatibility route can document observed
+connectivity and performance with locality recorded as unverified. For an offline
+measurement fixture, pin the installed model digest, record the isolated runtime
+configuration with cloud execution disabled, and scope both network confinement
+and independent egress observation to the app, helper and model runtime. Record
+the fixture identity and distinguish completed offline inference from a separate
+attempted-egress observation. A successful loopback response alone supplies
+neither observation.
 
 ## Packaged macOS Alpha Boundary
 

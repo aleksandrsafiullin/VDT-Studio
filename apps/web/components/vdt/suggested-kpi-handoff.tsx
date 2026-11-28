@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { smartKpiTargetIds } from "@/lib/smart-kpi-targets";
 import { useVdtStudioStore, type VdtStudioState } from "./vdt-store";
+import type { EditorHandoffAttempt } from "@/lib/editor-handoff-controller";
 import type { SmartKpiController } from "./use-smart-kpi";
 
 const REVIEW_EVENT = "vdt:review-suggested-kpis";
@@ -13,6 +14,7 @@ interface ReviewRequest {
   vdtId: string;
   nodeId: string;
   trigger: HTMLButtonElement;
+  handoff?: EditorHandoffAttempt | undefined;
 }
 
 type ReviewState = Pick<VdtStudioState, "project" | "selectNode"> & {
@@ -40,14 +42,15 @@ export function listenForSuggestedKpiReview(
     const rail = button?.closest<HTMLElement>('[data-testid="node-incoming-actions"]');
     if (!button || !rail) return;
     selectNode(request.nodeId);
-    openReview(request.nodeId, rail, button, request.trigger);
+    if (request.handoff) openReview(request.nodeId, rail, button, request.trigger, request.handoff);
+    else openReview(request.nodeId, rail, button, request.trigger);
     event.preventDefault();
   };
   target.addEventListener(REVIEW_EVENT, receive);
   return () => target.removeEventListener(REVIEW_EVENT, receive);
 }
 
-export function SuggestedKpiHandoffButton({ nodeId }: { nodeId: string }) {
+export function SuggestedKpiHandoffButton({ nodeId, startHandoff }: { nodeId: string; startHandoff?: (() => EditorHandoffAttempt | undefined) | undefined }) {
   const projectId = useVdtStudioStore(state => state.workspace.activeProjectId);
   const vdtId = useVdtStudioStore(state => state.workspace.activeVdtId);
   const [unavailable, setUnavailable] = useState(false);
@@ -55,8 +58,11 @@ export function SuggestedKpiHandoffButton({ nodeId }: { nodeId: string }) {
   return (
     <div>
       <Button type="button" variant="secondary" size="sm" onClick={(event) => {
-        setUnavailable(!projectId || !vdtId ||
-          !requestSuggestedKpiReview(window, { projectId, vdtId, nodeId, trigger: event.currentTarget }));
+        const handoff = startHandoff?.();
+        if (startHandoff && !handoff) return;
+        const opened = projectId && vdtId && requestSuggestedKpiReview(window, { projectId, vdtId, nodeId, trigger: event.currentTarget, handoff });
+        setUnavailable(!opened);
+        if (!opened) handoff?.cancel();
       }}>
         Review Suggested KPIs
       </Button>

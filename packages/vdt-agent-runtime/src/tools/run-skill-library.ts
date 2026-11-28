@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { loadAvailableSkillLibrary, parseSkillMarkdown, skillCard, type VdtSkill, type VdtSkillLibrary } from "@vdt-studio/vdt-agent";
 import { LocalSkillRepository, SkillLibraryError, skillContentHash } from "@vdt-studio/storage";
 import { AgentToolError, type AgentToolContext } from "../tool-registry";
@@ -43,6 +44,9 @@ function persistRunSkillSelection(context: AgentToolContext, skillId: string, ve
 
 export function activateRunSkill(context: AgentToolContext, skill: VdtSkill, reason: string) {
   const state = context.store.getState(context.runId), contentHash = skillContentHash(skill.raw), version = skill.frontmatter.version ?? 1;
+  if (state.request.outcome === "answer") {
+    throw new AgentToolError("SKILL_SELECTION_READ_ONLY", "An answer run can read Skill guidance without changing the Context selection.");
+  }
   const selectionRevision = persistRunSkillSelection(context, skill.id, version, contentHash, reason);
   const selected = { id: skill.id, title: skill.title, path: skill.path, version, contentHash, score: 100, matchedTerms: [], reason, source: "agent" as const };
   const resolution = state.request.skillResolution;
@@ -52,6 +56,70 @@ export function activateRunSkill(context: AgentToolContext, skill: VdtSkill, rea
     input: { ...state.request.input, skillSelection: { ...skillCard(skill), raw: skill.raw, path: skill.path, source: "agent", reason } }
   } });
   return selected;
+}
+
+/** Explicit Context edits supersede a run's previously observed selection.
+ * The editor's preliminary suggestion remains provisional during discovery. */
+export function assertRunSkillSelectionCurrent(context: AgentToolContext) {
+  const { request, selectedSkills } = context.store.getState(context.runId);
+  const { workspace, skillResolution: resolution } = request;
+  if (!resolution || !workspace?.vdtId) return;
+  const current = new LocalSkillRepository().getSelection(workspace.projectId, workspace.vdtId);
+  const pinned = request.input.skillSelection;
+  const selected = resolution.outcome === "selected" ? selectedSkills[0] : pinned?.source === "user" ? pinned : undefined;
+  if (selected ? current?.revision !== resolution.selectionRevision || current?.skillId !== selected.id
+      || current?.version !== selected.version || current?.contentHash !== selected.contentHash
+    : current?.source !== "auto" && (current?.revision ?? 0) !== resolution.selectionRevision) {
+    throw new AgentToolError("SKILL_CONFLICT", "The selected skill changed in Context. Start a new run with the current choice.");
+  }
+}
+
+function submittedSkillScope(state: Pick<VdtAgentRunState, "chatMessages">) {
+  const messages = state.chatMessages;
+  const isScope = ({ id }: { id: string }) => id === "process_relationship" || id === "skill_scope";
+  const latest = [...messages].reverse().find(message => message.kind === "question" && message.questions?.some(isScope));
+  const questionId = latest?.questions?.find(isScope)?.id;
+  const source = latest && questionId ? messages.slice(messages.indexOf(latest) + 1).find(message =>
+    message.role === "user" && message.kind === "answer" && message.answers?.some(answer =>
+      answer.questionId === questionId && Boolean(answer.freeText?.trim() || answer.selectedOptionIds?.length
+        || Object.keys(answer.fields ?? {}).length))) : undefined;
+  return { questionId, source };
+}
+
+export function assertSkillScopeAnswered(state: VdtAgentRunState) {
+  const scope = submittedSkillScope(state);
+  if (scope.questionId && !scope.source) {
+    throw new AgentToolError("SKILL_SCOPE_UNRESOLVED", "Wait for the user's actual process scope answer before choosing a method.");
+  }
+}
+
+export function announceRunSkill(
+  context: AgentToolContext,
+  selected: VdtAgentRunState["selectedSkills"][number],
+  readReceiptId: string | undefined,
+  toolName: "skill.read" | "skill.select",
+  methodConfirmationSourceMessageId?: string
+) {
+  const state = context.store.getState(context.runId);
+  const resolution = state.request.skillResolution;
+  const selectionId = createHash("sha256").update(JSON.stringify([
+    state.runId, selected.id, selected.version, selected.contentHash, resolution?.selectionRevision
+  ])).digest("hex");
+  if (state.events.some(event => event.type === "skill_selected" && event.metadata?.selectionId === selectionId)) return;
+  const { source: scopeSource } = submittedSkillScope(state);
+  const message = `${selected.title}. ${selected.reason}`;
+  context.emit({
+    type: "skill_selected", title: selected.title, message,
+    metadata: {
+      ...selected, toolName, methodTitle: selected.title, readReceiptId, selectionId,
+      selectionRevision: resolution?.selectionRevision,
+      readReceiptIds: readReceiptId ? [readReceiptId] : [],
+      ...(scopeSource ? { scopeSourceMessageId: scopeSource.id } : {}),
+      ...(methodConfirmationSourceMessageId ? { methodConfirmationSourceMessageId } : {}),
+      ...(resolution ? { resolutionMode: "agent_semantic", usedLegacyMarkers: false, usedLanguageAliases: false } : {})
+    }
+  });
+  if (resolution) context.store.appendChatMessage(state.runId, { role: "assistant", kind: "status", text: message });
 }
 
 export function requireSelectedRunSkill(context: AgentToolContext, skillId: string) {

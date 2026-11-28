@@ -1,3 +1,5 @@
+import { applyPendingMutationProposal } from "./mutation-pipeline";
+import type { MutationProposal, VdtAgentRunState } from "./types";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { VdtBuilderSession } from "@vdt-studio/vdt-core";
@@ -1199,3 +1201,115 @@ function haulageBuilder(): VdtBuilderSession {
   });
   return builder;
 }
+
+describe("reviewed selected-input baseline replay", () => {
+  function setup(autoApplyPatches = false) {
+    const fixture = new VdtBuilderSession();
+    const root = fixture.createDraft({ projectTitle: "Dispatches", rootKpi: "Total", unit: "count" }).project.rootNodeId;
+    fixture.addDriver({ parentNodeId: root, nodeId: "east", name: "East", type: "input", unit: "count", baselineValue: 18 });
+    fixture.addDriver({ parentNodeId: root, nodeId: "west", name: "West", type: "input", unit: "count", baselineValue: 13 });
+    fixture.updateNode({ nodeId: "east", patch: { valueStatus: "user_provided_value",
+      valueSource: { sourceTier: "user_input", note: "Weekly dispatch sheet", catalogRef: "East" } } });
+    const project = fixture.getProject();
+    const builder = new VdtBuilderSession({ project });
+    const store = new AgentRunStore();
+    const run = store.createRun({ mode: "continue_project", providerId: "mock",
+      input: { rootKpi: "Total", project, selectedNodeId: "east", prompt: "Correct the selected baseline to 24 dispatches." },
+      options: { autoApplyPatches } });
+    store.updateRun(run.runId, { builder, draftProject: project, status: "running" });
+    const context: AgentToolContext = {
+      runId: run.runId, store, builder, signal: run.abortController.signal,
+      emit: event => store.appendEvent(run.runId, event), getRun: () => store.getSnapshot(run.runId),
+      updateRun: patch => { store.updateRun(run.runId, patch); }
+    };
+    const registry = createDefaultToolRegistry();
+    const update = (nodeId: string, patch: unknown) => registry.run("vdt.update_node", { nodeId, patch }, context);
+    const state = () => store.getState(run.runId);
+    const approve = () => applyPendingMutationProposal(context);
+    return { builder, update, state, approve, setState: (patch: Partial<VdtAgentRunState>) => store.updateRun(run.runId, patch) };
+  }
+
+  it("keeps the approved receipt and creates no second proposal or revision for an exact replay", async () => {
+    const item = setup();
+    const proposal = await item.update("east", { baselineValue: 24 });
+    expect(proposal).toMatchObject({ ok: true, projectChanged: false });
+    expect(item.state().status).toBe("waiting_approval");
+    const applied = item.approve();
+    const revision = item.builder.getRevision();
+    const project = item.builder.getProject();
+
+    expect(await item.update("east", { baselineValue: 24 })).toMatchObject({
+      ok: true, projectChanged: false, output: { changed: false, nodeId: "east", baselineValue: 24,
+        revision, appliedProposalId: applied.proposal.id }
+    });
+    expect(item.state().pendingMutationProposal).toBeUndefined();
+    expect(item.state().mutationProposals).toHaveLength(1);
+    expect(item.builder.getRevision()).toBe(revision);
+    expect(item.builder.getProject()).toEqual(project);
+    expect(item.builder.getProject().graph.nodes.find(node => node.id === "east")?.valueSource).toMatchObject({
+      catalogRef: "East", note: "Weekly dispatch sheet"
+    });
+  });
+
+  it.each([
+    ["east", { baselineValue: 25 }],
+    ["east", { baselineValue: 24, name: "Reviewed East tally" }],
+    ["west", { baselineValue: 24 }]
+  ] as const)("takes the ordinary review path for an additional edit on %s", async (nodeId, patch) => {
+    const item = setup();
+    await item.update("east", { baselineValue: 24 });
+    item.approve();
+    const proposed = await item.update(nodeId, patch);
+    expect(proposed).toMatchObject({ ok: true, projectChanged: false, output: { mutationProposal: { status: "proposed" } } });
+    expect(item.state().pendingMutationProposal?.changeSet.updates[0]).toMatchObject({ nodeId });
+    expect(item.state().mutationProposals).toHaveLength(2);
+  });
+
+  it("does not infer the reviewed builder checkpoint from equality or an automatic apply", async () => {
+    const equal = setup();
+    expect(await equal.update("east", { baselineValue: 18 })).toMatchObject({
+      ok: true, output: { mutationProposal: { status: "proposed" } }
+    });
+    const auto = setup(true);
+    await auto.update("east", { baselineValue: 24 });
+    expect(await auto.update("east", { baselineValue: 24 })).toMatchObject({
+      ok: true, output: { mutationProposal: { status: "applied" } }
+    });
+  });
+  const alteredCheckpoints: [string, (proposal: MutationProposal) => void][] = [
+    ["other run", proposal => { proposal.runId = "other-run"; }],
+    ["other project", proposal => { proposal.projectId = "other-project"; }],
+    ["other VDT", proposal => { proposal.vdtId = "other-tree"; }],
+    ["stale baseline revision", proposal => { proposal.baseRevisionId = "builder:99"; }],
+    ["different applied preview", proposal => { proposal.previewProject.name = "Manual same-revision change"; }],
+    ["different applied patch", proposal => { proposal.changeSet.updates[0]!.patch.status = "accepted"; }],
+    ["source metadata change", proposal => { proposal.changeSet.updates[0]!.patch.valueSource = { note: "Different source" }; }],
+    ["data source change", proposal => { proposal.changeSet.dataSourceChanges = [{ id: "ds", action: "update", sourceId: "sheet", patch: {} }]; }],
+    ["mapping change", proposal => { proposal.changeSet.dataMappingChanges = [{ id: "mapping" } as NonNullable<MutationProposal["changeSet"]["dataMappingChanges"]>[number]]; }],
+    ["taxonomy change", proposal => { proposal.changeSet.taxonomyChanges = [{ id: "taxonomy" } as NonNullable<MutationProposal["changeSet"]["taxonomyChanges"]>[number]]; }],
+    ["unapplied timestamped proposal", proposal => { proposal.status = "approved"; }]
+  ];
+  it.each(alteredCheckpoints)("keeps review for a %s", async (_, alter) => {
+    const item = setup();
+    await item.update("east", { baselineValue: 24 });
+    const proposal = structuredClone(item.approve().proposal);
+    alter(proposal);
+    item.setState({ mutationProposals: [proposal] });
+    expect(await item.update("east", { baselineValue: 24 })).toMatchObject({ ok: true,
+      output: { mutationProposal: { status: "proposed" } }
+    });
+  });
+
+  it.each(["proposal", "change set"] as const)("does not return a replay no-op with an outstanding %s", async pendingType => {
+    const item = setup();
+    await item.update("east", { baselineValue: 24 });
+    const prior = item.approve().proposal;
+    const pending = { ...prior, status: "proposed" as const, id: "pending-operation" };
+    item.setState(pendingType === "proposal" ? { pendingMutationProposal: pending }
+      : { pendingChangeSet: { ...prior.changeSet, id: "pending-change-set" } });
+    expect(await item.update("east", { baselineValue: 24 })).toMatchObject({ ok: true,
+      output: { mutationProposal: { status: "proposed" } }
+    });
+  });
+
+});

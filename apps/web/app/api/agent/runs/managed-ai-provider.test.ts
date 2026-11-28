@@ -1,11 +1,46 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { calculationsWithoutPlannedInputs, VdtBuilderSession, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
 import { createDefaultToolRegistry, modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
-import { createManagedAwareAiProvider } from "./managed-ai-provider";
+import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
+import { createManagedAwareAiProvider, createTaskAiProvider } from "./managed-ai-provider";
 import { buildOpenAiModelTurn, checkedInitialPlanRepair, openAiConstructionPlan } from "./openai-agent-decision";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("rejects tasks outside the registered manifest or authorization before any runner call", async () => {
+  const runtime = globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: ReturnType<typeof createLocalRuntimeContext> };
+  const previous = runtime.__vdtStudioDevelopmentRuntime;
+  const manifest = {
+    id: "task_limited_mock", label: "Task-limited mock", kind: "mock", supportLevel: "supported",
+    modelSelection: false, taskTypes: ["review_model"], schemaIds: ["review-model-v1"],
+    safety: { toolsDisabled: true, requiresOsSandbox: false, certified: false }
+  } as const;
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const current = createLocalRuntimeContext({ manifests: [manifest] });
+  runtime.__vdtStudioDevelopmentRuntime = current;
+  try {
+    const request = { providerId: "local_runner", providerConfig: {
+      backendId: manifest.id, pairingToken: "test-pairing", runnerUrl: "http://127.0.0.1:8765"
+    } };
+    const url = "http://localhost:3000/api/ai/run-task";
+    expect(() => createTaskAiProvider(request, url, { task: "file_analysis", completions: ["analyze_raw_dataset"] }))
+      .toThrow(/does not support this analytical task/);
+    expect(runtime.__vdtStudioDevelopmentRuntime).toBe(current);
+    expect(() => createTaskAiProvider({
+      providerId: "local_runner", providerConfig: { backendId: "ollama", model: "qwen3" },
+      expectedExecution: { mode: "local", profileVersion: 1, providerId: "ollama", modelId: "qwen3", modelRevision: null }
+    }, url, { task: "bounded_task", completions: ["review_model"] })).toThrow(/Verified on-device execution is unavailable/);
+    const provider = createTaskAiProvider(request, url, { task: "bounded_task", completions: ["review_model"] });
+    await expect(provider.completeStructured({ taskType: "agent_decision", input: {}, schema: {}, systemPrompt: "", userPrompt: "" }))
+      .rejects.toMatchObject({ code: "BINDING_CAPABILITY_DENIED" });
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    if (previous) runtime.__vdtStudioDevelopmentRuntime = previous;
+    else delete runtime.__vdtStudioDevelopmentRuntime;
+  }
+});
 
 it("sends native OpenAI call items and rejects malformed argument strings before execution", async () => {
   const calls = [{ toolName: "project.get_node", argsJson: '{"nodeId":"root"}' }];

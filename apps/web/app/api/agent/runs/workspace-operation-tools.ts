@@ -1,15 +1,15 @@
 import {
   AgentToolError, proposeAndMaybeApplyMutation,
-  type AgentTool, type AgentToolContext, type AgentWorkspaceRevision, type ToolRegistry, type VdtAgentRunSnapshot
+  type AgentTool, type AgentToolContext, type AgentWorkspaceRevision, type ToolRegistry, type VdtAgentRunSnapshot, type VdtAgentRunState
 } from "@vdt-studio/vdt-agent-runtime";
 import {
-  applyWorkspaceChange, compareScenarioOperation, compareVersionOperation, listVersionOperations,
+  createExcelWorkbook, applyWorkspaceChange, compareScenarioOperation, compareVersionOperation, listVersionOperations,
   type ScenarioCommand, type VdtProject, type VdtWarning, type VdtWorkspaceChange, type VersionCommand
 } from "@vdt-studio/vdt-core";
 import { validateStrictVdtProjectCommit } from "@vdt-studio/storage";
 import { z } from "zod";
 import { openVdtStorageDatabase } from "../../vdt/storage-database";
-import { describeExcelWorkbook, ExcelWorkbookError } from "./excel-workbook";
+import { describeExcelWorkbook, ExcelWorkbookError, hasPersistedExcelDescriptor, resolveSavedExcelWorkbook } from "./excel-workbook";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 const id = z.string().min(1).max(160);
@@ -43,14 +43,15 @@ const shortText = (text: string | undefined) => text?.slice(0, 200);
 
 export function registerWorkspaceOperationTools(
   tools: ToolRegistry,
-  openDatabase = () => openVdtStorageDatabase(process.cwd())
+  openDatabase = () => openVdtStorageDatabase(process.cwd()),
+  readScenarioRevision?: (store: AgentToolContext["store"], run: Pick<VdtAgentRunSnapshot, "runId" | "request">, project: VdtProject) => string | undefined
 ): void {
-  function register<I>(tool: Omit<AgentTool<I>, "outputSchema" | "requiresDraftProject">) {
+  function register<I>(tool: Omit<AgentTool<I>, "outputSchema">) {
     if (tools.has(tool.name)) return;
     tools.register({
       ...tool,
       inputJsonSchema: toProviderJsonSchema(tool.inputSchema),
-      requiresDraftProject: true,
+      requiresDraftProject: tool.requiresDraftProject ?? true,
       outputSchema: z.record(z.string(), z.unknown())
     });
   }
@@ -106,11 +107,14 @@ export function registerWorkspaceOperationTools(
     description: "Compare a scenario against Baseline in the current VDT. Returns calculated root values, delta, impact and errors.",
     inputSchema: scenarioRef,
     run(context, input) {
-      const { project, head, revision } = observedProject(context);
+      const { project, head, revision, request } = observedProject(context);
       const comparison = compareScenarioOperation(project, input);
       if (comparison.status === "error") throw new AgentToolError(comparison.code, comparison.message);
       const { result } = comparison;
-      return { status: "ok", revision, savedRevisionId: head?.activeRevisionId ?? null, result: {
+      const savedRevisionId = request.outcome === "answer"
+        ? readScenarioRevision?.(context.store, { runId: context.runId, request }, project) ?? null
+        : head?.activeRevisionId ?? null;
+      return { status: "ok", revision, savedRevisionId, result: {
         ...result,
         unit: shortText(result.unit),
         impactedNodes: result.impactedNodes.slice(0, comparisonLimit).map(node => ({
@@ -140,7 +144,23 @@ export function registerWorkspaceOperationTools(
     inputSchema: versionCommand,
     mutatesProject: true,
     phase: "previewing_mutation",
-    run: (context, command) => edit(context, { kind: "version", command })
+    run(context, command) {
+      const run = context.getRun();
+      const successor = run.request.artifactIntent?.successorVersion;
+      if (successor) {
+        const head = run.workspaceRevision?.head;
+        if (latestWorkspaceInstruction(run)?.id !== successor.instructionId) successorInstructionChanged();
+        if (command.kind !== "save" || command.name !== successor.name) {
+          throw new AgentToolError("EXCEL_SUCCESSOR_VERSION_MISMATCH", "Save the exact new version named by the current workbook request.");
+        }
+        const expected = run.request.workspace?.expectedRevision;
+        if (!head || !expected || !context.builder || head.activeRevisionId !== expected.expectedActiveRevisionId
+          || !matchesSavedContent(context.builder.getProject(), expected.expectedActiveContentIdentity)) {
+          throw new AgentToolError("EXCEL_SUCCESSOR_BASE_CHANGED", "The saved version basis changed. Reopen the current VDT before starting another save and export.");
+        }
+      }
+      return edit(context, { kind: "version", command });
+    }
   });
   register({
     name: "version.compare",
@@ -178,8 +198,16 @@ export function registerWorkspaceOperationTools(
     description: "Create a downloadable Excel link for the current verified saved VDT revision. For a named scenario, supply its scenarioId from scenario.list or its exact scenarioName. Use the editor's active scenario for an unspecified export.",
     inputSchema: z.object({ scenarioId: id.optional(), scenarioName: name.optional() }).strict(),
     phase: "reporting",
+    requiresDraftProject: false,
     run(context, input) {
+      const run = context.getRun();
+      if (run.request.artifactIntent) {
+        const revision = context.builder?.getRevision() ?? 0;
+        return withExcelDatabase(openDatabase, db => recordWorkbook(context, revision,
+          resolveRequestedWorkbook(db, run, context.builder?.getProject(), input).descriptor));
+      }
       const { project, request, head, revision } = observedProject(context);
+      if (!project.graph.nodes.length) throw new AgentToolError("NO_DRAFT_PROJECT", "Open a VDT before exporting a workbook.");
       if (!head?.activeRevisionId || !matchesSavedContent(project, head.activeContentIdentity)) {
         throw new AgentToolError("EXCEL_SAVED_REVISION_REQUIRED", "Save the exact VDT shown in chat before exporting its workbook.");
       }
@@ -193,16 +221,7 @@ export function registerWorkspaceOperationTools(
           runId: context.runId, projectId: head.projectId, vdtId: head.vdtId, revisionId: head.activeRevisionId,
           scenarioId
         });
-        const { artifacts = [] } = context.getRun();
-        if (!artifacts.some(entry => entry.id === artifact.id)) {
-          context.updateRun({ artifacts: [...artifacts.filter(entry => entry.type !== "excel_workbook"),
-            ...artifacts.filter(entry => entry.type === "excel_workbook").slice(-19), {
-              id: artifact.id, runId: context.runId, type: "excel_workbook",
-              summary: artifact.filename, payload: artifact,
-              createdAt: context.invocation?.reservedAt ?? new Date().toISOString()
-            }] });
-        }
-        return { status: "ok", revision, savedRevisionId: artifact.revisionId, artifact };
+        return recordWorkbook(context, revision, artifact);
       } catch (error) {
         if (error instanceof ExcelWorkbookError) throw new AgentToolError(error.code, error.message);
         throw error;
@@ -211,6 +230,142 @@ export function registerWorkspaceOperationTools(
       }
     }
   });
+}
+
+function recordWorkbook(context: AgentToolContext, revision: number, artifact: ReturnType<typeof describeExcelWorkbook>) {
+  const { artifacts = [] } = context.getRun();
+  if (!artifacts.some(entry => entry.id === artifact.id)) {
+    context.updateRun({ artifacts: [...artifacts.filter(entry => entry.type !== "excel_workbook"),
+      ...artifacts.filter(entry => entry.type === "excel_workbook").slice(-19), {
+        id: artifact.id, runId: context.runId, type: "excel_workbook",
+        summary: artifact.filename, payload: artifact,
+        createdAt: context.invocation?.reservedAt ?? new Date().toISOString()
+      }] });
+  }
+  return { status: "ok", revision, savedRevisionId: artifact.revisionId, artifact };
+}
+
+type WorkbookRun = Pick<VdtAgentRunSnapshot, "request" | "workspaceRevision" | "runId" | "chatMessages">;
+type OpenDatabase = () => ReturnType<typeof openVdtStorageDatabase>;
+
+function withExcelDatabase<T>(openDatabase: OpenDatabase, read: (db: ReturnType<OpenDatabase>) => T): T {
+  const db = openDatabase();
+  try {
+    return read(db);
+  } catch (error) {
+    if (error instanceof ExcelWorkbookError) throw new AgentToolError(error.code, error.message);
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
+function resolveRequestedWorkbook(
+  db: ReturnType<OpenDatabase>, run: WorkbookRun, project: VdtProject | undefined,
+  input: { scenarioId?: string | undefined; scenarioName?: string | undefined } = {}
+) {
+  const intent = run.request.artifactIntent!;
+  const head = run.workspaceRevision?.head;
+  const record = db.getAgentRun(run.runId);
+  const projectId = head?.projectId ?? record?.projectId;
+  const vdtId = head?.vdtId ?? record?.vdtId;
+  const currentHead = vdtId ? db.getVdtRevisionHead(vdtId) : undefined;
+  if (intent.successorVersion) verifyWorkbookSuccessor(db, run, currentHead);
+  const revisionId = intent.revisionId ?? (head?.activeRevisionId ?? currentHead?.activeRevisionId);
+  const readOnlyHead = run.request.outcome === "answer" && !project?.graph.nodes.length;
+  if (!revisionId || (!intent.revisionId && (!currentHead || currentHead.activeRevisionId !== revisionId
+    || (!readOnlyHead && (!project || !matchesSavedContent(project, currentHead.activeContentIdentity)))))) {
+    throw new AgentToolError("EXCEL_SAVED_REVISION_REQUIRED", "Read the current saved VDT before exporting its workbook.");
+  }
+  const scope = { runId: run.runId, projectId, vdtId, revisionId };
+  const workbook = resolveSavedExcelWorkbook(db, scope, saved => {
+    let scenarioId = intent.scenarioId;
+    if (intent.scenarioName && !scenarioId) {
+      const named = matchingScenarioNames(saved.scenarios, intent.scenarioName);
+      if (!named.length) unavailableExportScenario();
+      if (named.length > 1) ambiguousExportScenario();
+      scenarioId = named[0]!.id;
+    }
+    return scenarioId ?? run.request.input.activeScenarioId;
+  });
+  if ((input.scenarioId !== undefined && input.scenarioId !== workbook.descriptor.scenarioId)
+    || (input.scenarioName !== undefined && !matchingScenarioNames(workbook.project.scenarios, input.scenarioName)
+      .some(scenario => scenario.id === workbook.descriptor.scenarioId))) conflictingExportScenario();
+  return workbook;
+}
+
+function successorInstructionChanged(): never {
+  throw new AgentToolError("EXCEL_SUCCESSOR_INSTRUCTION_CHANGED", "The workbook request changed. Start a new run from the saved VDT.");
+}
+
+function verifyWorkbookSuccessor(db: ReturnType<OpenDatabase>, run: WorkbookRun,
+  currentHead: AgentWorkspaceRevision["head"] | null | undefined
+) {
+  const intent = run.request.artifactIntent!;
+  const target = intent.successorVersion!;
+  const workspace = run.request.workspace;
+  const expected = workspace?.expectedRevision;
+  const expectedId = expected?.expectedActiveRevisionId;
+  const observed = run.workspaceRevision?.head;
+  const activeId = currentHead?.activeRevisionId;
+  const instruction = latestWorkspaceInstruction(run);
+  if (!instruction || instruction.id !== target.instructionId) successorInstructionChanged();
+  const unavailable = () => new AgentToolError("EXCEL_SUCCESSOR_VERSION_REQUIRED",
+    "First save the exact new version named by this request with version.edit, then export its saved revision.");
+  if (!workspace || !expected || !expectedId || !currentHead || !activeId || intent.revisionId || !observed
+      || observed.activeRevisionId !== activeId || currentHead.pendingRevisionId
+      || currentHead.commitGeneration !== expected.expectedCommitGeneration + 1
+      || currentHead.projectId !== workspace.projectId || currentHead.vdtId !== workspace.vdtId) {
+    throw unavailable();
+  }
+  const base = db.getVdtRevision(expectedId);
+  const successor = db.getVdtRevision(activeId);
+  if (!base || !successor || base.vdtId !== currentHead.vdtId || successor.vdtId !== currentHead.vdtId
+      || successor.parentRevisionId !== expectedId || successor.source !== "agent") throw unavailable();
+  const runtime = db.getProjectRuntimeState(currentHead.projectId);
+  if (runtime?.runtimeGeneration !== expected.expectedRuntimeGeneration
+      || runtime.generationVersion !== expected.expectedGenerationVersion || runtime.writeState !== "enabled") throw unavailable();
+  const original = db.readVdtRevision(base);
+  if (!matchesSavedContent(original, expected.expectedActiveContentIdentity)) throw unavailable();
+  const proposals = db.listMutationProposals(run.runId).filter(proposal => {
+    const change = proposal.changeSet.workspaceChange;
+    return proposal.status === "applied" && proposal.projectId === currentHead.projectId
+      && proposal.vdtId === currentHead.vdtId && proposal.baseRevisionId === expectedId
+      && Date.parse(proposal.appliedAt ?? "") >= Date.parse(instruction.createdAt)
+      && change?.kind === "version" && change.command.kind === "save" && change.command.name === target.name;
+  });
+  const change = proposals[0]?.changeSet.workspaceChange;
+  if (proposals.length !== 1 || !change) throw unavailable();
+  const replay = applyWorkspaceChange(original, change);
+  // Replay is pure. It ties the exact stored parent and durable run proposal
+  // to the successor's canonical bytes without issuing another version save.
+  const saved = db.readVdtRevision(successor);
+  if (replay.status !== "ok" || !matchesSavedContent(replay.project, currentHead.activeContentIdentity)
+      || !matchesSavedContent(saved, currentHead.activeContentIdentity)) throw unavailable();
+}
+
+export function verifyRequestedExcelDelivery(
+  run: VdtAgentRunState, project: VdtProject, openDatabase = () => openVdtStorageDatabase(process.cwd())
+) {
+  if (!run.request.artifactIntent) return undefined;
+  try {
+    return withExcelDatabase(openDatabase, db => {
+      const { descriptor, project: saved } = resolveRequestedWorkbook(db, run, project);
+      if (!hasPersistedExcelDescriptor({ artifacts: run.artifacts }, run.runId, descriptor)
+        || !hasPersistedExcelDescriptor(db.getAgentRun(run.runId)?.publicSnapshot, run.runId, descriptor)) {
+        throw new AgentToolError("EXCEL_REQUESTED_ARTIFACT_MISSING", "Call export.excel for the requested scenario at its exact saved revision before finishing.");
+      }
+      try {
+        createExcelWorkbook(saved, descriptor.scenarioId);
+      } catch {
+        throw new AgentToolError("EXCEL_EXPORT_FAILED", "The verified saved VDT could not produce the requested workbook.");
+      }
+      return { artifact: descriptor };
+    });
+  } catch (error) {
+    if (!(error instanceof AgentToolError)) throw error;
+    return { blocker: { accepted: false as const, code: error.code, payload: { message: error.message } } };
+  }
 }
 
 export function excelScenarioRequestPrompt(run: Pick<VdtAgentRunSnapshot, "runId" | "chatMessages" | "request">): string | undefined {
@@ -256,6 +411,26 @@ export function namedVersionWorkbookDelivery(
     versionName: version.data,
     nextTool: !hasCurrentVersion ? "version.edit" as const : !hasCurrentWorkbook ? "export.excel" as const : "run.request_finish" as const
   };
+}
+
+/** Recognize only a direct save-new plus a workbook from that same new version. */
+export function requestedSuccessorWorkbook(project: VdtProject, prompt: string) {
+  if (prompt.length > 400) return;
+  const request = prompt.match(/^\s*(?:please\s+)?save\s+(?:(?:the|this)\s+)?(?:(?:current|corrected)\s+)?(?:model|vdt|tree)\s+as\s+a\s+new\s+version\s+(?:called|named)\s+([^\r\n]+?)(?:\.\s+|\s+and\s+)(?:then\s+)?(?:please\s+)?(?:give\s+me|send\s+me|provide|create|generate|export|prepare|make)\s+(?:(?:an?|the|editable|downloadable)\s+)*excel\s+workbook\s+for\s+([^\r\n]+?)\s+from\s+(?:that|the)\s+new\s+version[.!]?\s*$/iu);
+  if (!request?.[1] || !request[2]) return;
+  const rawVersion = request[1].trim();
+  const version = name.safeParse(unquoteName(rawVersion));
+  if (!version.success || (rawVersion === version.data && /[.!?;:"“”‘’«»]|\b(?:and|or)\b/iu.test(rawVersion))) {
+    throw new AgentToolError("OUTCOME_ARTIFACT_SCOPE_UNRESOLVED", "Ask for the exact single name of the new version.");
+  }
+  const scenarios = scenarioTarget(project.scenarios, request[2]).matches;
+  if (scenarios.length !== 1) {
+    throw new AgentToolError("OUTCOME_ARTIFACT_SCOPE_UNRESOLVED", "Ask for the exact single saved scenario for this workbook.");
+  }
+  if (project.versions.some(entry => equalWorkspaceName(entry.name, version.data))) {
+    throw new AgentToolError("OUTCOME_ARTIFACT_SCOPE_UNRESOLVED", "That version name already exists. Ask for a distinct new version name.");
+  }
+  return { versionName: version.data, scenario: scenarios[0]! };
 }
 
 export function requestedExcelScenarioId(scenarios: VdtProject["scenarios"], prompt: string | undefined): string | undefined {
@@ -348,8 +523,11 @@ function unquoteName(text: string): string {
 }
 
 function matchingScenarioNames(scenarios: VdtProject["scenarios"], name: string) {
-  const normalized = name.normalize("NFC").toLowerCase();
-  return scenarios.filter((scenario) => scenario.name.trim().normalize("NFC").toLowerCase() === normalized);
+  return scenarios.filter(scenario => equalWorkspaceName(scenario.name, name));
+}
+
+function equalWorkspaceName(left: string, right: string) {
+  return left.trim().normalize("NFC").toLowerCase() === right.trim().normalize("NFC").toLowerCase();
 }
 
 function unavailableExportScenario(): never {

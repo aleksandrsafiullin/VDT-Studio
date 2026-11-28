@@ -1,3 +1,4 @@
+import { isAppleAnalyticalChoice } from "./apple-first-launch";
 import type { AgentExecutionBindingSelection } from "./agent-client";
 import { resolveExecutionBindingId } from "./agent-start-resolver";
 import { resolveSelectedCliReadiness, type CliReadinessDetection } from "./cli-readiness";
@@ -24,7 +25,7 @@ export interface CliConnectionSnapshot {
 }
 
 export function cliConnectionKey(settings: ExecutionSettings): string | undefined {
-  if (resolveExecutionCategory(settings) !== "cli_subscriptions") return undefined;
+  if (isAppleAnalyticalChoice(settings.analyticalSourceChoice) || resolveExecutionCategory(settings) !== "cli_subscriptions") return undefined;
   const execution = resolveExecutionSettings(settings);
   return JSON.stringify([settings.selectedCliAgentId, execution.providerConfig?.model, settings.cliModelSelection?.reasoningEffort]);
 }

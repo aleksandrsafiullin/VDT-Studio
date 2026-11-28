@@ -1,0 +1,471 @@
+{
+  "schemaVersion": 2,
+  "visibility": "evaluator_only",
+  "cases": [
+    {
+      "id": "SKILL-01-excavation",
+      "checkpoints": {},
+      "review": [
+        "Match mining.excavation by actual catalog ID, version and content hash with same-turn browse/read/select receipt before first mutation. Show catalog title and reason in the user's language.",
+        "Reopened model calculates 28,800 t from both excavators and their net productive hours. Exclude haulage, crushing and dispatch. An independent downtime perturbation of 10 h per excavator lowers output by 1,600 t."
+      ],
+      "operatorActions": [
+        "Reopen the saved VDT using its normal UI. Record browse/read/select and first mutation in event order."
+      ]
+    },
+    {
+      "id": "SKILL-01-held-out",
+      "checkpoints": {},
+      "review": [
+        "Select the synthetic caption-review Skill, not the auto-publish distractor with the same root. Verify matching version/hash/read receipt and localized title/reason before first write.",
+        "Reopen and verify 180 accepted captions. Increasing failed corrections by 5 reduces the result to 175. Exclude publication delivery counts and double counting."
+      ],
+      "operatorActions": [
+        "Install both synthetic user Skills via normal library setup in disposable storage. Record actual assigned IDs/version/hash and open a fresh VDT without a pin.",
+        "Reopen the saved VDT and collect chronological selection events."
+      ]
+    },
+    {
+      "id": "SKILL-02-face",
+      "checkpoints": {},
+      "review": [
+        "Require a material measurement-point question and no write or definitive method before the submitted answer. Verify source and selection binding.",
+        "Use the face-loading boundary, productive loading hours and loading rates. Exclude transport and crusher factors."
+      ],
+      "operatorActions": [
+        "Run on Automatic, then in a separate attempt select the numerical composer purpose. Repeat with opt-in spoken correction, collecting exact submitted transcript."
+      ]
+    },
+    {
+      "id": "SKILL-02-delivery",
+      "checkpoints": {},
+      "review": [
+        "Require a material measurement-point question and no write or definitive method before the submitted answer. Verify source and selection binding.",
+        "Use payload and completed deliveries within period. Exclude crusher throughput and loaded-but-undelivered ore."
+      ],
+      "operatorActions": [
+        "Run on Automatic, then in a separate attempt select the numerical composer purpose. Repeat with opt-in spoken correction, collecting exact submitted transcript."
+      ]
+    },
+    {
+      "id": "SKILL-02-confirm",
+      "checkpoints": {},
+      "review": [
+        "Require a scope question first. The proposed method does not mutate the graph. Rejecting the first method leaves it unchanged. Request confirmation again for the changed scope."
+      ],
+      "operatorActions": [
+        "Stop after the revised proposal. Compare project heads and tree content with the starting state."
+      ]
+    },
+    {
+      "id": "SKILL-03-gap",
+      "checkpoints": {},
+      "review": [
+        "Catalog review precedes no_applicable_skill. Explain continuation from business facts in the original language. Saved tree totals 5 h and excludes audio conversion, volunteer scheduling and transcription publication."
+      ],
+      "operatorActions": []
+    },
+    {
+      "id": "SKILL-04-pin",
+      "checkpoints": {},
+      "review": [
+        "Bind the exact explicit user pin. A concurrent pin change must follow the conflict path with no stale or silent activation. Repeat with an editor candidate only, which is provisional and cannot override normal selection."
+      ],
+      "operatorActions": [
+        "Install both synthetic Skills. Pin the review method at its first version, then in separate attempts replace the pin after the read receipt or use only a preliminary Root KPI suggestion."
+      ]
+    },
+    {
+      "id": "SKILL-05-replay",
+      "checkpoints": {},
+      "review": [
+        "Record equivalent admission and selection rules for each actually tested backend. The outstanding question resumes once, the selected method is announced once and acknowledgement grants no graph or billing approval."
+      ],
+      "operatorActions": [
+        "On fresh runs select Apple, another installed local runtime, supported CLI and authorized API separately. Reconnect speech or replay events while scope is outstanding. Do not run a paid path without authorization."
+      ]
+    },
+    {
+      "id": "REV-01-structure",
+      "checkpoints": {
+        "structure": {
+          "outcome": "structural_model",
+          "roles": {
+            "stageA": null,
+            "stageB": null
+          },
+          "unit": "t/h",
+          "premise": "serial",
+          "structureProbe": {
+            "values": {
+              "stageA": 71,
+              "stageB": 55
+            },
+            "root": 55
+          }
+        }
+      },
+      "review": [
+        "Automatic admission and saved receipt agree on structural intent without an injected purpose. An explicit later baseline request has no numerical finish while inputs remain missing. The answer-only follow-up leaves the saved revision unchanged."
+      ],
+      "operatorActions": [
+        "Leave goal and Skill untouched. Reopen before the baseline request. Capture admission intent, builder receipt and project heads after every turn."
+      ]
+    },
+    {
+      "id": "REV-02-definition",
+      "checkpoints": {},
+      "review": [
+        "Persist the confirmed initial definition through compaction and reopening. The submitted correction supersedes it with user-message evidence and VDT scope. A second VDT does not inherit it. An assistant suggestion or transcript never submitted supplies no confirmation."
+      ],
+      "operatorActions": [
+        "Exercise compaction through normal conversation continuation, capture compacted context and reopen. In controls leave a dictated alternative unsubmitted, review an assistant-only alternative and open a second VDT."
+      ]
+    },
+    {
+      "id": "REV-03-workbook",
+      "checkpoints": {
+        "final": {
+          "outcome": "saved",
+          "roles": {
+            "downtime": 110,
+            "scheduled": 1000,
+            "rate": 2
+          },
+          "unit": "t",
+          "root": 1780,
+          "scenario": {
+            "name": "Recovery",
+            "role": "downtime",
+            "value": 90,
+            "result": 1820
+          },
+          "version": "Recovery review",
+          "workbook": true
+        }
+      },
+      "review": [
+        "While Baseline is active and Recovery review exists, the export binds the exact Recovery ID at the current revision. No artifact, Baseline substitution and old-revision replay each prevent a delivery claim. The discussion-only request does not create a workbook.",
+        "In Excel edit Source downtime from 110 h to 120 h and observe baseline recalculate from 1780 t to 1760 t, Recovery remain 1820 t and delta change from 40 t to 60 t. Cite actual artifact and host evidence."
+      ],
+      "operatorActions": [
+        "From the legacy fixture, manually add Recovery at 90 h and Recovery review at 105 h, leaving Baseline active. Record the old head. Change downtime to 110 h and create one saved version named Recovery review.",
+        "Run the discussion-only turn in a fresh control; separately withhold the export artifact, substitute Baseline or replay the old revision in controlled harness captures. Download and open the real workbook for native recalc."
+      ]
+    },
+    {
+      "id": "REV-04-custom",
+      "checkpoints": {},
+      "review": [
+        "Serial throughput is the limiting capacity and independent parallel throughput is additive. Check algebraically equivalent formulations and reject evidence-backed contradictions through editor and agent.",
+        "Custom queue boundary remains unverified until tested or clarified; validation probe does not mutate. Gross 100 USD and a 10% discount give 90 USD. Reject unscaled percent arithmetic in both paths."
+      ],
+      "operatorActions": [
+        "Run original novice-serial and parallel-capacity controls. Submit the equivalent, contradictory and unscaled formulas in separate disposable branches through the editor and agent. Capture before/after head for probes."
+      ]
+    },
+    {
+      "id": "VDT-production",
+      "checkpoints": {
+        "structure": {
+          "outcome": "structural_model",
+          "roles": {
+            "stageA": null,
+            "stageB": null
+          },
+          "unit": "t/h",
+          "premise": "serial",
+          "structureProbe": {
+            "values": {
+              "stageA": 95,
+              "stageB": 85
+            },
+            "root": 85
+          }
+        },
+        "baseline": {
+          "outcome": "calculated_baseline",
+          "roles": {
+            "stageA": 70,
+            "stageB": 90
+          },
+          "unit": "t/h",
+          "root": 70,
+          "premise": "serial",
+          "effect": {
+            "role": "stageB",
+            "value": 100,
+            "result": 70
+          },
+          "probes": [
+            {
+              "role": "stageA",
+              "value": 0,
+              "result": 0
+            },
+            {
+              "role": "stageA",
+              "value": 95,
+              "result": 90
+            }
+          ]
+        }
+      },
+      "review": [
+        "The question resolves the true business premise before structure. Mention which inputs and interventions matter. Cite both measurements and the confirmed relationship."
+      ],
+      "operatorActions": [
+        "Reopen structure before sending measurements. Repeat with independent parallel stages using the v1 parallel case. Preserve the observed zero separately from missing values."
+      ]
+    },
+    {
+      "id": "VDT-zero",
+      "checkpoints": {
+        "baseline": {
+          "outcome": "calculated_baseline",
+          "roles": {
+            "stageA": 0,
+            "stageB": 45
+          },
+          "unit": "cases/h",
+          "root": 45,
+          "premise": "parallel",
+          "probes": [
+            {
+              "role": "stageA",
+              "value": 10,
+              "result": 55
+            }
+          ]
+        }
+      },
+      "review": [
+        "A measured zero survives reopen with measured provenance. Compare the paired missing-measurement attempt: clearing A's measurement leaves an unknown and cannot produce a measured total."
+      ],
+      "operatorActions": [
+        "Reopen the baseline. In a fresh control replace A's stated measurement with 'we did not measure line A'."
+      ]
+    },
+    {
+      "id": "DATA-01-duration",
+      "checkpoints": {},
+      "review": [
+        "Use declared duration in minutes; reconcile accepted rows and per-category totals/checksums against the data oracle.",
+        "Check persisted leaf lineage: source/hash, sheet, column, category path, aggregation, unit, period and coverage."
+      ],
+      "operatorActions": [
+        "Generate the language-matched public CSV or Excel serial-time workbook. Attach only those bytes through normal upload, then capture parser diagnostics and resulting draft."
+      ],
+      "dataGolden": {
+        "rowCount": 15000,
+        "duplicateCount": 1,
+        "invalidCount": 2,
+        "missingCategoryCount": 1,
+        "acceptedRows": 14997,
+        "eligibleRows": 14997,
+        "denominatorDays": 30,
+        "zeroEventDays": 25,
+        "categories": {
+          "mechanical": {
+            "count": 4999,
+            "minutes": 89982,
+            "hoursPerDay": 49.99,
+            "rowMinutesSha256": "53d1f2a88b49c264f278e90582596f81af3069c75cf7305804684a5ac4fce4de"
+          },
+          "electrical": {
+            "count": 4998,
+            "minutes": 89970,
+            "hoursPerDay": 49.983333333333334,
+            "rowMinutesSha256": "fae97298ace74cc940ee1c77474ac51dbf0475a47b61b1bdd70d0015fcea3bf3"
+          },
+          "waiting": {
+            "count": 4999,
+            "minutes": 90078,
+            "hoursPerDay": 50.04333333333333,
+            "rowMinutesSha256": "6311195e009fdc19ad9b8c1dc06a4032aaf785e94c4b1b5c9a642339b5c3fd49"
+          },
+          "uncategorized": {
+            "count": 1,
+            "minutes": 12,
+            "hoursPerDay": 0.006666666666666667,
+            "rowMinutesSha256": "04ab9c760f3ea18571e4ac6189e4e72efe124882469dba213389e98aebdcd384"
+          }
+        }
+      }
+    },
+    {
+      "id": "DATA-02-serial",
+      "checkpoints": {},
+      "review": [
+        "Use Excel serial time including crossing midnight. Use the independent 21-working-day denominator; numerator includes working-day starts only.",
+        "Check persisted leaf lineage: source/hash, sheet, column, category path, aggregation, unit, period and coverage."
+      ],
+      "operatorActions": [
+        "Generate the language-matched public CSV or Excel serial-time workbook. Attach only those bytes through normal upload, then capture parser diagnostics and resulting draft."
+      ],
+      "dataGolden": {
+        "rowCount": 15000,
+        "duplicateCount": 1,
+        "invalidCount": 2,
+        "missingCategoryCount": 1,
+        "acceptedRows": 14997,
+        "eligibleRows": 8999,
+        "denominatorDays": 21,
+        "zeroEventDays": 18,
+        "categories": {
+          "mechanical": {
+            "count": 3000,
+            "minutes": 48000,
+            "hoursPerDay": 38.095238095238095,
+            "rowMinutesSha256": "a98ce4b2bbfe882f48cddb9c8ea422840d63d27a47b8dbac12c5d67a53385d9f"
+          },
+          "electrical": {
+            "count": 2999,
+            "minutes": 47994,
+            "hoursPerDay": 38.09047619047619,
+            "rowMinutesSha256": "dc84f4e2ec85c166f98393f27be2be26463d9ef4b72a33e024e9e723c392b756"
+          },
+          "waiting": {
+            "count": 2999,
+            "minutes": 48078,
+            "hoursPerDay": 38.15714285714286,
+            "rowMinutesSha256": "ed3cb8ce5440e903b595c5bd8ab0ce66c5c47551c81f8a29b2b813f66368a127"
+          },
+          "uncategorized": {
+            "count": 1,
+            "minutes": 12,
+            "hoursPerDay": 0.009523809523809525,
+            "rowMinutesSha256": "04ab9c760f3ea18571e4ac6189e4e72efe124882469dba213389e98aebdcd384"
+          }
+        }
+      }
+    },
+    {
+      "id": "DATA-03-grain",
+      "checkpoints": {},
+      "review": [
+        "Ask for plant-down semantics, join identity and dedup policy. Equipment-hours are not plant time. Block Apply until overlaps and identity are defensible.",
+        "Check persisted leaf lineage: source/hash, sheet, column, category path, aggregation, unit, period and coverage."
+      ],
+      "operatorActions": [
+        "Generate the language-matched public CSV or Excel serial-time workbook. Attach only those bytes through normal upload, then capture parser diagnostics and resulting draft."
+      ]
+    },
+    {
+      "id": "DATA-04-limits",
+      "checkpoints": {},
+      "review": [
+        "Force a 10,000-row test limit for the 15,000-row fixture. Report truncation or rejection and never present partial totals as complete. Verify duplicate, missing category and invalid duration counts.",
+        "Check persisted leaf lineage: source/hash, sheet, column, category path, aggregation, unit, period and coverage."
+      ],
+      "operatorActions": [
+        "Generate the language-matched public CSV or Excel serial-time workbook. Attach only those bytes through normal upload, then capture parser diagnostics and resulting draft."
+      ]
+    },
+    {
+      "id": "VDT-professional",
+      "checkpoints": {
+        "baseline": {
+          "outcome": "saved",
+          "root": 1800,
+          "roles": {
+            "downtime": 100,
+            "scheduled": 1000,
+            "rate": 2
+          },
+          "unit": "t"
+        },
+        "recovery": {
+          "outcome": "saved",
+          "root": 1800,
+          "roles": {
+            "downtime": 100,
+            "scheduled": 1000,
+            "rate": 2
+          },
+          "unit": "t",
+          "scenario": {
+            "name": "Recovery",
+            "role": "downtime",
+            "value": 90,
+            "result": 1820
+          },
+          "effect": {
+            "role": "downtime",
+            "value": 90,
+            "result": 1820
+          }
+        },
+        "final": {
+          "outcome": "saved",
+          "root": 1780,
+          "roles": {
+            "downtime": 110,
+            "scheduled": 1000,
+            "rate": 2
+          },
+          "unit": "t",
+          "scenario": {
+            "name": "Recovery",
+            "role": "downtime",
+            "value": 90,
+            "result": 1820
+          },
+          "version": "Recovery review",
+          "workbook": true
+        }
+      },
+      "review": [
+        "Approve restore only after the manual correction changed the head. The approval is refused as stale and does not overwrite downtime. Preserve original approval basis, rejected command and saved head.",
+        "Exactly one Recovery review snapshot survives reopen. The export has Recovery selected even though Baseline remains active, and the native workbook recalculates after editing Source downtime."
+      ],
+      "operatorActions": [
+        "Create Start of shift from the legacy model before sending the first turn. Capture baseline and Recovery checkpoints. Keep Baseline active.",
+        "While restore approval is pending, make a normal editor change of downtime from 100 to 110 h. Capture old/new heads and submit the pending approval.",
+        "Reopen the corrected model before sending the export request. Open the actual downloaded workbook and edit Source downtime to 120 h. Preserve the observed formula recalculation."
+      ]
+    },
+    {
+      "id": "VDT-unknown",
+      "checkpoints": {},
+      "review": [
+        "Line B is measured at 45 cases/h. Line A remains unknown after reopen. No measured total or numerical baseline receipt may be issued. If the agent asks for a missing measurement, stop and record the question."
+      ],
+      "operatorActions": [
+        "Run immediately after VDT-zero on a fresh VDT without inheriting its facts."
+      ]
+    },
+    {
+      "id": "VDT-percent",
+      "checkpoints": {
+        "baseline": {
+          "outcome": "calculated_baseline",
+          "unit": "USD",
+          "root": 90,
+          "roles": {
+            "gross": 100,
+            "discount": 10
+          },
+          "probes": [
+            {
+              "role": "discount",
+              "value": 0,
+              "result": 100
+            },
+            {
+              "role": "discount",
+              "value": 25,
+              "result": 75
+            }
+          ]
+        }
+      },
+      "review": [
+        "The stored discount uses the same percentage convention as the shared validator. Inspect zero and 25% controls against 100 and 75 USD. Reject an unscaled discount formula in editor and agent."
+      ],
+      "operatorActions": [
+        "On a disposable copy test unscaled and equivalent factor arithmetic through both normal entry points."
+      ]
+    }
+  ]
+}

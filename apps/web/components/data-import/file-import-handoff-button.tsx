@@ -1,11 +1,12 @@
 "use client";
 
+import type { EditorHandoffAttempt } from "@/lib/editor-handoff-controller";
 import { Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVdtStudioStore } from "@/components/vdt/vdt-store";
 import { requestIncomingKpisFromFile } from "./import-context";
 
-export function FileImportHandoffButton({ nodeId }: { nodeId?: string | undefined }) {
+export function FileImportHandoffButton({ nodeId, startHandoff }: { nodeId?: string | undefined; startHandoff?: ((nodeId: string) => EditorHandoffAttempt | undefined) | undefined }) {
   const target = useVdtStudioStore((state) => {
     const targetId = nodeId ?? state.selectedNodeId ?? state.project.rootNodeId;
     return state.project.graph.nodes.find((node) => node.id === targetId);
@@ -21,7 +22,11 @@ export function FileImportHandoffButton({ nodeId }: { nodeId?: string | undefine
       icon={<Paperclip className="h-4 w-4" />}
       aria-haspopup="dialog"
       data-testid="agent-file-import-handoff"
-      onClick={() => requestIncomingKpisFromFile(target.id, "agent_composer_attachment")}
+      onClick={() => {
+        const handoff = startHandoff?.(target.id);
+        if (startHandoff && !handoff) return;
+        if (!requestIncomingKpisFromFile(target.id, "agent_composer_attachment", handoff)) handoff?.cancel();
+      }}
     >
       Choose source for {target.name}
     </Button>

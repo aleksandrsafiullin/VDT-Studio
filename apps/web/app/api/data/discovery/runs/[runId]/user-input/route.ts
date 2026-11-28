@@ -5,7 +5,7 @@ import {
 import type { SemanticLogicalType } from "@vdt-studio/vdt-core";
 import { jsonError, readJsonObject } from "../../../../../vdt/storage-response";
 import { checkAnalysisCancellation, DataApiError, withRetainedDatasetForAnalysis, readDiscoveryRun, requireDataId, saveDiscoveryRun } from "../../../../store";
-import { dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, reviewProject } from "../../../../request-context";
+import { assertRetainedAppleKpiScope, dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, reviewProject } from "../../../../request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +39,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
       const next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, signal: request.signal, entryContext: snapshot.entryContext }, snapshot, edits);
       if (owner) { next.workspaceProjectId = owner.projectId; next.vdtId = owner.vdtId; }
       checkAnalysisCancellation(request.signal);
+      assertRetainedAppleKpiScope(snapshot, owner, project);
       await saveDiscoveryRun(next, owner);
+      assertRetainedAppleKpiScope(snapshot, owner, project);
       return Response.json({ ok: true, snapshot: next });
     });
   } catch (error) { return dataApiErrorResponse(error); }

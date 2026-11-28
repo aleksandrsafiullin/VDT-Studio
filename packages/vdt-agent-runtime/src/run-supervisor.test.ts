@@ -827,6 +827,7 @@ describe("VdtRunSupervisor", () => {
       }
     });
     if (durableFinal.type !== "final") throw new Error("Expected a durable final fixture event.");
+    const resolveFinalText = vi.fn(async () => "Do not replace the already durable final.");
     const onFinal = vi.fn();
     const engine = new FakeEngine(fixture.capability, fixture.binding, async function* () {
       throw new Error("Recovery must not ask the engine for another final.");
@@ -837,6 +838,7 @@ describe("VdtRunSupervisor", () => {
       gateway: fixture.gateway,
       persistence,
       verifyFinish: fixture.verifyFinish,
+      resolveFinalText,
       onFinal
     });
 
@@ -844,6 +846,7 @@ describe("VdtRunSupervisor", () => {
 
     expect(supervisor.status).toBe("succeeded");
     expect(engine.resumeCount).toBe(0);
+    expect(resolveFinalText).not.toHaveBeenCalled();
     expect(onFinal).toHaveBeenCalledOnce();
     expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({
       text: durableFinal.payload.text,

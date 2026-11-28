@@ -2,6 +2,7 @@
 
 import { useEffect, useId, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { ByokGateway, ByokProtocol } from "@/lib/execution-mode-catalog";
+import { appleIsExpected } from "@/lib/apple-first-launch";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { resolveExecutionCategory, type ExecutionCategory } from "@/lib/execution-category";
 import { LocalCliSettings, LocalExecutionOptions } from "./local-cli-settings";
@@ -26,19 +27,22 @@ const TABS: readonly { id: ExecutionCategory; key: string; label: string }[] = [
 export function ExecutionModeSettings() {
   const panelId = useId();
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const appleFirstLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const appleExpected = appleIsExpected(executionSettings.analyticalSourceChoice, appleFirstLaunch);
   const setExecutionCategory = useVdtStudioStore((state) => state.setExecutionCategory);
   const appMode = resolveVdtAppMode();
   const localExecutionAvailable = hasLocalAiUi(appMode);
   const tabs = localExecutionAvailable ? TABS : TABS.filter((tab) => tab.id === "byok");
-  const activeTab = localExecutionAvailable ? resolveExecutionCategory(executionSettings) : "byok";
+  const activeTab = localExecutionAvailable ? appleExpected ? "local_models" : resolveExecutionCategory(executionSettings) : "byok";
   const selectedTab = tabs.find((tab) => tab.id === activeTab)!;
-  const statusLine = activeTab === "byok"
+  const statusLine = appleExpected && localExecutionAvailable
+    ? "Local · Apple on-device" : activeTab === "byok"
     ? `API keys · ${PROTOCOL_LABELS[executionSettings.byokProtocol ?? "openai"]} · ${GATEWAY_LABELS[executionSettings.byokGateway ?? "none"]}`
-    : activeTab === "cli_subscriptions" ? "CLI subscriptions · Provider account" : "Local models · On this computer";
+    : activeTab === "cli_subscriptions" ? "CLI subscriptions · Provider account" : "Local runtime · Offline configuration unverified";
 
   useEffect(() => {
-    if (!localExecutionAvailable && executionSettings.executionMode !== "byok") setExecutionCategory("byok");
-  }, [localExecutionAvailable, executionSettings.executionMode, setExecutionCategory]);
+    if (!localExecutionAvailable && !appleExpected && executionSettings.executionMode !== "byok") setExecutionCategory("byok");
+  }, [localExecutionAvailable, appleExpected, executionSettings.executionMode, setExecutionCategory]);
 
   function handleTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
     const index = tabs.findIndex((tab) => tab.id === activeTab);

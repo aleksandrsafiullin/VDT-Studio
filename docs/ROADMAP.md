@@ -1,5 +1,13 @@
 # Roadmap
 
+## Apple on-device AI and voice
+
+Native analytics, offline model qualification and opt-in speech are tracked
+with the first-launch journey. The shipping default requires a signed clean
+installation and the live workflow evidence in the plan. Optional speech,
+Shortcuts and adaptive reasoning have separate release decisions.
+[Plan](implementation/APPLE_LOCAL_AI_VOICE_WORKSPACE_PLAN_2026-11-25.md) · [Execution](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md)
+
 ## GitHub + Mac + Windows feedback release (2026-11-13)
 
 The [active remediation plan](implementation/OPEN_ALPHA_REMEDIATION_PLAN_2026-11-13.md)
@@ -405,6 +413,7 @@ Implemented at alpha level:
 - a simplified node inspector with Properties/Warnings and direct edits, with AI work in the chat and node-card incoming-KPI action;
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
 - local whisper.cpp dictation with incremental editable drafts and confirmed model downloads; native Windows and packaged microphone qualification remain open ([voice input](VOICE_INPUT.md));
+- in-app ChatGPT Pro API credit setup and an explicitly consented fixed sample in the default-off OpenAI preview. Live API voice, split conversation and subscription entitlement retain separate qualification gates. [Voice input](VOICE_INPUT.md#set-up-openai-voice-with-eligible-chatgpt-pro-api-credits)
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - trusted-local development CLI session starts, with immutable Codex model bindings from the authenticated host catalog and composer binding checks before Send; external isolation and production qualification remain open;
 - automatic selected-CLI and chat-binding checks from app startup/Projects, reused across VDT navigation, with visible-tab transient retry and stale-access recovery on window/network return; no saved-ready shortcut or automatic login;

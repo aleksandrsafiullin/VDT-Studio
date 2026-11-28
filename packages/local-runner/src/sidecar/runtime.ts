@@ -1,4 +1,4 @@
-import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
+import { isHarnessReasoningValue, LocalHttpRouteError } from "@vdt-studio/model-bridge";
 import { randomUUID } from "node:crypto";
 import { getSpeechRuntime } from "../speech/runtime";
 import {
@@ -13,6 +13,8 @@ import {
   openRuntimeProviderAuth,
   listRuntimeBackends,
   parseCompletionPayload,
+  parseRuntimeBackendTestSelection,
+  readRuntimeLocalHttpSelection,
   resolveSmartRuntimeExecution,
   runtimeHarnessSettings,
   type LocalRuntimeConfig,
@@ -157,18 +159,22 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
     }
     return detectRuntimeSubscriptionClis(context, agentId, excludeCursor);
   }
-  if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
+  if (message.method === "test_backend") {
+    const { backendId: _backendId, ...payload } = message.payload;
+    const { model, localHttpSelection, modelReasoning } = parseRuntimeBackendTestSelection(payload);
+    return checkRuntimeBackendReadiness(requireBackendId(message.payload), context, model, localHttpSelection, modelReasoning);
+  }
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }
   if (message.method === "smart_execution") {
     const { backendId, model, modelReasoning, timeoutMs = 5000 } = message.payload;
-    if (typeof backendId !== "string" || Object.keys(message.payload).some(k => !["backendId", "model", "modelReasoning", "timeoutMs"].includes(k))
+    if (typeof backendId !== "string" || Object.keys(message.payload).some(k => !["backendId", "model", "modelReasoning", "timeoutMs", "localHttpSelection"].includes(k))
       || modelReasoning !== undefined && !isHarnessReasoningValue(modelReasoning) || model !== undefined && typeof model !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5000) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
     let entries = smartAdmissions.get(context); if (!entries) { entries = new Map(); smartAdmissions.set(context, entries); }
     if (entries.size >= 16 || entries.has(message.requestId)) throw new LocalRuntimeError(409, "PREPARATION_CAPACITY", "Smart metadata admission is already active or full.");
     const controller = new AbortController(); entries.set(message.requestId, controller);
-    try { return await resolveSmartRuntimeExecution(model as string | undefined, context, controller.signal, Number(timeoutMs), backendId as string, isHarnessReasoningValue(modelReasoning) ? modelReasoning : undefined); }
+    try { return await resolveSmartRuntimeExecution(model as string | undefined, context, controller.signal, Number(timeoutMs), backendId as string, isHarnessReasoningValue(modelReasoning) ? modelReasoning : undefined, readRuntimeLocalHttpSelection(message.payload.localHttpSelection)); }
     finally { entries.delete(message.requestId); }
   }
   if (message.method === "get_run") {
@@ -212,7 +218,7 @@ function requireBackendId(payload: JsonObject): string {
 }
 
 function normalizeSidecarRuntimeError(error: unknown): { readonly code: string; readonly message: string } {
-  if (error instanceof LocalRuntimeError) return { code: error.code, message: error.message };
+  if (error instanceof LocalRuntimeError || error instanceof LocalHttpRouteError) return { code: error.code, message: error.message };
   if (error instanceof SidecarProtocolError) return { code: error.code, message: error.message };
   if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") return { code: "CLEANUP_UNCONFIRMED", message: "Owned Smart execution cleanup could not be confirmed." };
   return { code: "SIDECAR_RUNTIME_ERROR", message: error instanceof Error ? error.message : "Sidecar runtime failed safely." };

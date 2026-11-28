@@ -3,6 +3,7 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { modelAgentToolCatalog, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 
+import { PROPOSE_OUTCOME, registerOutcomeAdmission } from "./outcome-admission";
 import { registerWorkspaceOperationTools } from "./workspace-operation-tools";
 import { registerEditorHandoffTools } from "./editor-handoff-tools";
 
@@ -10,8 +11,15 @@ describe("model-facing tool parameter contracts", () => {
   it("publishes actual enum/type contracts instead of empty parameter placeholders within a bounded catalog", () => {
     const tools = createDefaultToolRegistry();
     registerWorkspaceOperationTools(tools);
+    registerOutcomeAdmission(tools);
     registerEditorHandoffTools(tools);
     const catalog = modelAgentToolCatalog(tools);
+    expect(catalog.find(tool => tool.name === PROPOSE_OUTCOME)).toMatchObject({
+      mutatesProject: false,
+      inputJsonSchema: { properties: {
+        outcome: { enum: ["answer", "structural_model", "calculated_baseline"] }
+      }, required: ["outcome", "evidenceQuote", "artifact"], additionalProperties: false }
+    });
     expect(catalog.find((tool) => tool.name === "excavation.seed_topology")?.inputJsonSchema).toMatchObject({
       type: "object",
       properties: {
@@ -22,8 +30,8 @@ describe("model-facing tool parameter contracts", () => {
         includeReadinessDowntime: { type: "boolean" }
       }
     });
-    // The full catalog includes workspace operations and explicit link edits.
-    expect(JSON.stringify(catalog).length).toBeLessThan(47_500);
+    // The full catalog includes workspace operations, handoffs and the typed outcome proposal.
+    expect(Buffer.byteLength(JSON.stringify(catalog), "utf8")).toBeLessThan(50_000);
     expect(catalog.find(tool => tool.name === "skill.read")?.inputJsonSchema).toMatchObject({ properties: { maxChars: { maximum: 10000 } } });
     expect(JSON.stringify(catalog.find(tool => tool.name === "vdt.instantiate_subtree")?.inputJsonSchema)).toContain('"maxProperties":200');
     expect(JSON.stringify(catalog.find(tool => tool.name === "skill.seed_topology")?.inputJsonSchema)).toContain('"maxProperties":24');
@@ -53,6 +61,7 @@ describe("model-facing tool parameter contracts", () => {
   it("describes full argument contracts only for the immutable public allowlist, without changing project state", async () => {
     const tools = createDefaultToolRegistry();
     registerWorkspaceOperationTools(tools);
+    registerOutcomeAdmission(tools);
     registerEditorHandoffTools(tools);
     tools.register({ name: "private.internal", description: "Hidden", inputSchema: z.object({ secretField: z.string() }), outputSchema: z.object({}), run: () => ({}) });
     const hash = modelAgentToolCatalogHash(tools);

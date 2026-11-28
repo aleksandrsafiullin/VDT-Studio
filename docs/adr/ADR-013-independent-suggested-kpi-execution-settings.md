@@ -14,7 +14,9 @@ Preferences belong to the connection source, including its endpoint or runner,
 and reasoning choices belong to the selected Smart model.
 
 CLI suggestions start with Provider default when a model has no saved reasoning
-choice. API and local HTTP suggestions start Off. These choices are independent
+choice. API suggestions and older local configurations default Off. Fast for
+new local configurations prefers advertised Off, then the lowest known
+advertised effort, and otherwise Provider default. These choices are independent
 of chat. Available levels come from the selected model’s capabilities. A saved
 Off requests explicit disablement, and VDT reports unsupported choices before
 inference. The user can choose Provider default or another supported level.

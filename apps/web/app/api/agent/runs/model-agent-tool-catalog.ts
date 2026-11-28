@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { AgentToolError, type ToolRegistry } from "@vdt-studio/vdt-agent-runtime";
 import { z } from "zod";
+import { PROPOSE_OUTCOME } from "./outcome-admission";
 import { WORKSPACE_OPERATION_TOOL_NAMES } from "./workspace-operation-tools";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 export const TARGET_MODEL_AGENT_TOOLS = [
   "tools.describe",
+  PROPOSE_OUTCOME,
   ...WORKSPACE_OPERATION_TOOL_NAMES,
   "skill.list",
   "skill.search",
@@ -79,6 +81,7 @@ export const TARGET_MODEL_AGENT_TOOLS = [
 ] as const;
 
 const describeInput = z.object({ toolNames: z.array(z.string().min(1).max(160)).min(1).max(6) }).strict();
+const MAX_TOOL_SUMMARY_LENGTH = 64;
 const describeSpec = {
   name: "tools.describe",
   description: "Read exact argument schemas for 1-6 tools from this catalog before using a tool whose schema is not in context.",
@@ -117,9 +120,12 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     const spec = specs.get(name);
     const definition = definitions.get(name);
     if (!spec || !definition) throw new Error(`Required target Model Agent tool "${name}" is unavailable.`);
+    const summary = spec.description.length > MAX_TOOL_SUMMARY_LENGTH
+      ? `${spec.description.slice(0, MAX_TOOL_SUMMARY_LENGTH - 3).trimEnd()}...`
+      : spec.description;
     return {
       ...spec,
-      description: spec.description.length>88?`${spec.description.slice(0,85)}...`:spec.description,
+      description: summary,
       inputJsonSchema: spec.inputJsonSchema
     };
   };

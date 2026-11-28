@@ -189,22 +189,31 @@ export async function captureMicrophone(onSamples: (samples: Float32Array) => vo
   let stopped: Promise<void> | undefined;
   let flushed: (() => void) | undefined;
   const stop = () => stopped ??= (async () => {
-    if (processor && context?.state === "running") {
+    if (!signal.aborted && processor && context?.state === "running") {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 100);
         flushed = () => { clearTimeout(timer); resolve(); };
-        processor!.port.postMessage("flush");
+        try { processor!.port.postMessage("flush"); }
+        catch { flushed(); }
       });
     }
     for (const track of stream.getTracks()) { track.onended = null; track.stop(); }
-    if (processor) { processor.port.onmessage = null; processor.disconnect(); }
-    if (context && context.state !== "closed") await context.close();
+    try {
+      if (processor) { processor.port.onmessage = null; processor.disconnect(); }
+    } finally {
+      if (context && context.state !== "closed") await context.close();
+    }
   })();
   if (signal.aborted) { await stop(); signal.throwIfAborted(); }
+  let abortSetup!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortSetup = () => reject(signal.reason);
+    signal.addEventListener("abort", abortSetup, { once: true });
+  });
   try {
     context = new AudioContext();
-    await context.audioWorklet.addModule("/speech/pcm-worklet.js");
-    if (signal.aborted) { await stop(); signal.throwIfAborted(); }
+    await Promise.race([context.audioWorklet.addModule("/speech/pcm-worklet.js"), aborted]);
+    signal.throwIfAborted();
     const source = context.createMediaStreamSource(stream);
     const resampler = new PcmResampler(context.sampleRate);
     processor = new AudioWorkletNode(context, "vdt-speech-pcm");
@@ -215,7 +224,9 @@ export async function captureMicrophone(onSamples: (samples: Float32Array) => vo
     for (const track of stream.getAudioTracks()) track.onended = onEnded;
     source.connect(processor);
     processor.connect(context.destination); // Worklet outputs silence, never microphone playback.
-    await context.resume();
+    await Promise.race([context.resume(), aborted]);
+    signal.throwIfAborted();
     return { stop };
   } catch (error) { await stop(); throw error; }
+  finally { signal.removeEventListener("abort", abortSetup); }
 }

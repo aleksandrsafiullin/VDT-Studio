@@ -56,9 +56,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Request body must be an object." }, { status: 400 });
   }
 
+  const operation = typeof body.operation === "string" ? body.operation : "";
+  if (["expectedExecution", "executionBindingId", "executionMode"].some(field => field in body)
+    || (operation !== "test" && "localHttpSelection" in body)) {
+    return NextResponse.json({ ok: false, error: { code: "BINDING_CAPABILITY_DENIED", message: "Use the host-admitted route for this execution binding." } }, { status: 422 });
+  }
   try {
     const { runtime, context } = loadRuntime();
-    const operation = typeof body.operation === "string" ? body.operation : "";
     if (operation === "harness_settings") return jsonRuntimeResult(await runtime.runtimeHarnessSettings(body, context));
 
     if (operation === "test") {
@@ -66,7 +70,9 @@ export async function POST(request: Request) {
       if (!backendId) {
         return NextResponse.json({ ok: false, error: "backendId is required." }, { status: 400 });
       }
-      return jsonRuntimeResult(await runtime.checkRuntimeBackendReadiness(backendId, context));
+      const { operation: _operation, backendId: _backendId, ...selection } = body;
+      const { model, localHttpSelection, modelReasoning } = runtime.parseRuntimeBackendTestSelection(selection);
+      return jsonRuntimeResult(await runtime.checkRuntimeBackendReadiness(backendId, context, model, localHttpSelection, modelReasoning));
     }
 
     if (operation === "complete") {

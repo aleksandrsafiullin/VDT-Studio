@@ -24,6 +24,7 @@ export interface DeterministicFinishVerificationInput {
   currentRevision: number;
   expectedHeadRevision: number;
   mode: VdtAgentMode;
+  artifactDelivery?: FinishReceiptV2["artifactDelivery"];
   outcome?: VdtAgentOutcome | undefined;
   /** Server-derived for a run that started from an empty placeholder KPI. */
   requireDerivedRoot?: boolean | undefined;
@@ -170,6 +171,7 @@ function issueReceipt(
   const projectHash = hashJson(input.project);
   const policyVersion = input.outcome ? WORKSPACE_MODEL_READINESS_POLICY_VERSION : undefined;
   const outcomeFields = policyVersion ? { outcome: input.outcome, policyVersion, ...evidence } : {};
+  const artifactFields = input.artifactDelivery ? { artifactDelivery: input.artifactDelivery } : {};
   const existing = input.existingFinishReceipt;
   if (
     existing
@@ -181,6 +183,7 @@ function issueReceipt(
     && existing.calculationHash === calculationHash
     && existing.outcome === input.outcome
     && existing.policyVersion === policyVersion
+    && hashJson(existing.artifactDelivery ?? null) === hashJson(input.artifactDelivery ?? null)
   ) {
     return accepted(existing, calculation);
   }
@@ -196,6 +199,7 @@ function issueReceipt(
     validationHash,
     calculationHash,
     ...outcomeFields,
+    ...artifactFields,
     verifiedAt
   };
   const receiptHash = hashJson(receiptSeed);
@@ -212,6 +216,7 @@ function issueReceipt(
     validationHash,
     calculationHash,
     ...outcomeFields,
+    ...artifactFields,
     finalMessageHash: null,
     verifiedAt,
     finalPersistedAt: null
@@ -308,6 +313,7 @@ function accepted(
       receiptId: receipt.receiptId,
       receiptHash: receipt.receiptHash,
       projectRevision: receipt.projectRevision,
+      ...(receipt.artifactDelivery ? { artifactDelivery: receipt.artifactDelivery } : {}),
       ...(receipt.outcome ? { outcome: receipt.outcome, policyVersion: receipt.policyVersion, projectHash: receipt.projectHash } : {}),
       ...(receipt.missingInputs ? { missingInputs: receipt.missingInputs, missingInputCount: receipt.missingInputCount } : {}),
       ...(rootValue !== undefined && Number.isFinite(rootValue) ? { rootValue } : {})

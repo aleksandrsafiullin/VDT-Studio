@@ -7,14 +7,14 @@ import { loadAvailableSkillLibrary, publishManagedSkill, UNIVERSAL_SKILL_ID } fr
 import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { openVdtStorageDatabase } from "../../vdt/storage-database";
 import { selectedProvider } from "@/lib/smart-kpi-service";
-import { createManagedAwareAiProvider } from "../../agent/runs/managed-ai-provider";
+import { createTaskAiProvider } from "../../agent/runs/managed-ai-provider";
 import { POST, maxDuration as updateMaxDuration } from "./route";
 import { POST as fromVdt, maxDuration as createMaxDuration } from "../from-vdt/route";
 import { SKILL_AUTHOR_LOCAL_TIMEOUT_MS, SKILL_AUTHOR_REMOTE_TIMEOUT_MS, skillAuthorTimeoutMs } from "@/lib/skill-author-deadline";
 
 const mocks = vi.hoisted(() => ({ complete: vi.fn() }));
 vi.mock("@/lib/smart-kpi-service", () => ({ selectedProvider: vi.fn(async () => ({ id: "test", name: "Test", type: "mock", completeStructured: mocks.complete })) }));
-vi.mock("../../agent/runs/managed-ai-provider", () => ({ createManagedAwareAiProvider: vi.fn(() => ({ id: "local_runner", name: "Test local", type: "local_runner", completeStructured: mocks.complete })) }));
+vi.mock("../../agent/runs/managed-ai-provider", () => ({ createTaskAiProvider: vi.fn(() => ({ id: "local_runner", name: "Test local", type: "local_runner", completeStructured: mocks.complete })) }));
 
 let root: string;
 const raw = "---\nname: revenue-method\ndescription: Reusable revenue method.\n---\n\n# Revenue\n\nUse a common period.\n";
@@ -46,14 +46,167 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); });
 
-async function fixture() {
+async function fixture(working = raw) {
   const repository = new LocalSkillRepository();
   await loadAvailableSkillLibrary(repository);
-  const skill = publishManagedSkill({ raw }, repository);
+  const skill = publishManagedSkill({ raw: working }, repository);
   const selection = repository.select("p", "v", { skillId: skill.id, version: skill.version, contentHash: skill.contentHash, source: "user", reason: "Used for this tree.", rootKpi: "Revenue" }, 0);
   return { repository, skill, selection, input: { projectId: "p", vdtId: "v", project: project(),
     providerId: "openai_compatible", providerConfig: {}, base: { id: skill.id, version: skill.version, contentHash: skill.contentHash }, selectionRevision: selection.revision } };
 }
+
+describe("Apple native Skill Author", () => {
+  it.each(["material", "correct", "uncertain", "stale", "bad_anchor", "repeated_noop", "code_fence", "tilde_fence",
+    "comment", "heading", "setext", "blockquote", "list", "first_indented_code", "valid_after_fence"] as const)(
+    "uses the exact working statement for Apple empty-update review (%s)", async variant => {
+    const host = await import("../../agent/runs/apple-native-host");
+    const { admitAppleNativeBinding } = await import("../../agent/runs/apple-native-binding");
+    const runtime = await import("../../agent/runs/runtime");
+    const sourceRule = "Calculate Revenue by multiplying Units by Price.";
+    const oldRule = variant === "correct" || variant === "valid_after_fence" ? sourceRule : "Calculate Revenue by adding Units to Price.";
+    const opaque = {
+      code_fence: `\`\`\`text\n\n${oldRule}\n\n\`\`\``,
+      tilde_fence: `~~~text\n\n${oldRule}\n\n~~~`,
+      comment: `<!-- Example omitted\n\n${oldRule}\n\n-->`,
+      heading: `# ${oldRule}`,
+      setext: `${oldRule}\n===`,
+      blockquote: `> ${oldRule}`,
+      list: `- ${oldRule}`,
+      first_indented_code: `    ${oldRule}`
+    };
+    const nonProse = Object.hasOwn(opaque, variant);
+    const working = variant === "first_indented_code" ? raw.slice(0, raw.lastIndexOf("---") + 4) + opaque.first_indented_code + "\n"
+      : variant === "valid_after_fence" ? raw + `\n~~~text\nFor Revenue, add Units to Price.\n~~~\n\n${oldRule}\n`
+      : raw + "\n" + (nonProse ? opaque[variant as keyof typeof opaque] : oldRule) + "\n";
+    const { repository, skill, selection, input } = await fixture(working);
+    const db = openVdtStorageDatabase(process.cwd());
+    const sourceRoot = input.project.rootNodeId;
+    try {
+      db.saveVdtRevision({ projectId: "p", vdtId: "v", id: "exact_author_source", revisionNo: 1,
+        source: "user", project: input.project });
+      const head = db.getVdtRevisionHead("v");
+      const writes = [vi.spyOn(LocalSkillRepository.prototype, "publish"), vi.spyOn(LocalSkillRepository.prototype, "select"),
+        vi.spyOn(Object.getPrototypeOf(db), "saveVdtRevision"), vi.spyOn(Object.getPrototypeOf(db), "commitVdtRevision")];
+      const calls: string[] = [];
+      const port: import("../../agent/runs/apple-native-host").AppleNativePort = {
+        async discover(locale) {
+          return { identity: { model: "SystemLanguageModel.default", profile: "vdt-native-guided-v1", osBuild: "author-update-fixture", modelRevision: null },
+            locale, contextSize: 8192, tokenBudgetVerified: true };
+        },
+        async complete(request, validate) {
+          const phase = request.schema.fields[0]?.name ?? "unknown";
+          calls.push(phase);
+          expect(request.prompt).not.toMatch(/123456|baselineValue|Private project/);
+          let proposal: unknown;
+          if (phase === "summary" && calls.length === 1) {
+            proposal = { summary: "No change proposed by the generator.", changes: [] };
+          } else if (phase === "workingRelation") {
+            expect(request.timeoutMs).toBe(8000);
+            expect(JSON.parse(request.prompt)).toMatchObject({ statement: oldRule,
+              formulaEvidence: { result: { id: sourceRoot, formula: "units * price" } } });
+            proposal = { workingRelation: (variant === "correct" || variant === "valid_after_fence") ? "matches" : variant === "uncertain" ? "unverifiable" : "conflicts", rootNodeId: sourceRoot };
+          } else if (phase === "replacement") {
+            expect(request.timeoutMs).toBe(12_000);
+            expect(request.maxOutputTokens).toBe(240);
+            expect(request.schema.fields.map(({ name }) => name)).toEqual(["replacement", "why"]);
+            expect(JSON.parse(request.prompt)).toMatchObject({ statement: oldRule,
+              formulaEvidence: { result: { id: sourceRoot, formula: "units * price" } } });
+            expect(JSON.parse(request.prompt).prose).toBeUndefined();
+            proposal = variant === "repeated_noop" ? { summary: "No change.", changes: [] }
+              : variant === "bad_anchor" ? { replacement: sourceRule, why: "Saved multiplication.", before: "Use a common period." }
+              : { replacement: sourceRule, why: "The saved method is multiplicative." };
+          } else if (phase === "businessMeaning") {
+            expect(JSON.parse(request.prompt).proposal.changes[0]).toMatchObject({ before: oldRule, after: sourceRule });
+            proposal = { businessMeaning: "preserved", rootNodeId: sourceRoot };
+          } else throw new Error("Unexpected author stage.");
+          return { value: validate(proposal), context: { inputTokens: 600, contextSize: 8192, reservedOutputTokens: request.maxOutputTokens } };
+        }
+      };
+      vi.spyOn(host, "packagedAppleNativePort").mockReturnValue(port);
+      const binding = await admitAppleNativeBinding(port, runtime.agentExecutionBindingRegistry, "en-US", `sha256:${"a".repeat(64)}`);
+      const payload = { ...input, providerId: "apple_foundation_models", providerConfig: { bindingId: binding.bindingId },
+        selectionRevision: selection.revision + (variant === "stale" ? 1 : 0),
+        expectedExecution: { mode: "local", providerId: binding.backendId, modelId: binding.modelId, profileVersion: 1, modelRevision: null } };
+      const response = await POST(request(payload));
+      const body = await response.json();
+      if (variant === "material" || variant === "correct" || variant === "valid_after_fence" || nonProse) {
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        const proposal = body.proposal;
+        expect(proposal.raw).toBe(working);
+        expect(proposal.target).toMatchObject({ id: skill.id, contentHash: skill.contentHash, selectionRevision: selection.revision });
+        const guidance = proposal.changes.filter(({ id }: { id: string }) => id !== "host.topology");
+        expect(guidance).toEqual(variant === "material" ? [expect.objectContaining({ before: oldRule, after: sourceRule })] : []);
+        const { applySkillChanges } = await import("@/lib/skill-workflow");
+        expect(applySkillChanges(working, guidance)).toBe(variant === "material" ? working.replace(oldRule, sourceRule) : working);
+      } else {
+        expect(response.status).toBe(variant === "stale" ? 409 : 422);
+        expect(body.proposal).toBeUndefined();
+      }
+      const stages = variant === "stale" ? [] : nonProse ? ["summary"] : ["summary", "workingRelation"];
+      if (variant === "material" || variant === "bad_anchor" || variant === "repeated_noop") stages.push("replacement");
+      if (variant === "material") stages.push("businessMeaning");
+      expect(calls).toEqual(stages);
+      expect(repository.getSelection("p", "v")).toEqual(selection);
+      expect(repository.files.read(skill.filePath!)).toBe(working);
+      expect(repository.get(skill.id)?.version).toBe(skill.version);
+      expect(db.getVdtRevisionHead("v")).toEqual(head);
+      expect(db.listVdtRevisions("v")).toHaveLength(1);
+      for (const method of writes) expect(method).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
+  it("prepares both normal routes with the same owned Apple identity and preserves review and exact Skill pin", async () => {
+    const host = await import("../../agent/runs/apple-native-host");
+    const { admitAppleNativeBinding } = await import("../../agent/runs/apple-native-binding");
+    const runtime = await import("../../agent/runs/runtime");
+    const { repository, skill, selection, input } = await fixture();
+    const draft = { title: "Revenue method", description: "Build a consistent revenue model.", domain: "finance", patterns: ["Revenue"],
+      instructions: "Multiply Units (unit) by Price (USD/unit) for Revenue (USD). Match reporting periods and inspect missing input data." };
+    const calls: Array<{ phase: string | undefined; prompt: string }> = [];
+    const port: import("../../agent/runs/apple-native-host").AppleNativePort = {
+      async discover(locale) {
+        expect(locale).toBe("en-US");
+        return {
+          identity: { model: "SystemLanguageModel.default", profile: "vdt-native-guided-v1", osBuild: "skill-author-fixture", modelRevision: null },
+          locale, contextSize: 8_192, tokenBudgetVerified: true
+        };
+      },
+      async complete(request, validate) {
+        const phase = request.schema.fields[0]?.name;
+        calls.push({ phase, prompt: request.prompt });
+        const proposal = phase === "title" ? draft : phase === "summary" ? result().args
+          : phase === "businessMeaning" ? { businessMeaning: "preserved", rootNodeId: JSON.parse(request.prompt).formulaEvidence.result.id } : undefined;
+        return { value: validate(proposal), context: {
+          inputTokens: 600, contextSize: 8_192, reservedOutputTokens: request.maxOutputTokens
+        } };
+      }
+    };
+    vi.spyOn(host, "packagedAppleNativePort").mockReturnValue(port);
+    const binding = await admitAppleNativeBinding(port, runtime.agentExecutionBindingRegistry, "en-US", `sha256:${"a".repeat(64)}`);
+    const provider = { providerId: "apple_foundation_models", providerConfig: { bindingId: binding.bindingId },
+      expectedExecution: { mode: "local", providerId: binding.backendId, modelId: binding.modelId, profileVersion: 1, modelRevision: null } };
+    const { base: _base, selectionRevision: _revision, ...createInput } = input;
+    const forged = await fromVdt(request({ ...createInput, ...provider, providerConfig: { ...provider.providerConfig, apiKey: "must-not-leave" } }));
+    expect(forged.status).toBe(422);
+    expect(calls).toHaveLength(0);
+
+    const created = await fromVdt(request({ ...createInput, ...provider }));
+    expect(created.status).toBe(200);
+    expect((await created.json()).raw).toContain(draft.instructions);
+    const updated = await POST(request({ ...input, ...provider }));
+    expect(updated.status).toBe(200);
+    const update = await updated.json();
+    expect(update.proposal.target).toMatchObject({ id: skill.id, contentHash: skill.contentHash, selectionRevision: selection.revision });
+    expect(update.proposal.changes[0].after).toContain("validate");
+    expect(repository.get(skill.id)?.version).toBe(skill.version);
+    expect(repository.getSelection("p", "v")).toEqual(selection);
+    expect(calls.map(call => call.phase)).toEqual(["title", "businessMeaning", "summary", "businessMeaning"]);
+    expect(calls.map(call => call.prompt).join("\n")).not.toMatch(/123456|789|baselineValue|Private project/);
+    expect(selectedProvider).not.toHaveBeenCalled();
+    expect(createTaskAiProvider).not.toHaveBeenCalled();
+  });
+});
 
 describe("read-only skill drafting routes", () => {
   it("returns a reviewable update anchored in exact portable working bytes, without publishing or changing the pin", async () => {
@@ -124,7 +277,7 @@ describe("read-only skill drafting routes", () => {
   it("uses only the explicitly selected managed local transport and includes bounded feedback", async () => {
     const { input } = await fixture();
     expect((await POST(request({ ...input, providerId: "local_runner", providerConfig: { backendId: "codex_subscription" }, feedback: "Clarify periods." }))).status).toBe(200);
-    expect(createManagedAwareAiProvider).toHaveBeenCalledOnce();
+    expect(createTaskAiProvider).toHaveBeenCalledOnce();
     expect(selectedProvider).not.toHaveBeenCalled();
     expect(mocks.complete.mock.calls[0]![0].input.feedback).toBe("Clarify periods.");
     expect((await POST(request({ ...input, feedback: "x".repeat(4001) }))).status).toBe(400);
@@ -200,7 +353,7 @@ describe("Skill Author provider-specific waiting budgets", () => {
     await vi.advanceTimersByTimeAsync(110_000);
     expect(completed).toBe(false);
     expect(held.signal().aborted).toBe(false);
-    expect(createManagedAwareAiProvider).toHaveBeenCalledWith({ providerId: "local_runner", providerConfig: { ...providerConfig, timeoutMs: SKILL_AUTHOR_LOCAL_TIMEOUT_MS } }, req.url);
+    expect(createTaskAiProvider).toHaveBeenCalledWith({ providerId: "local_runner", providerConfig: { ...providerConfig, timeoutMs: SKILL_AUTHOR_LOCAL_TIMEOUT_MS } }, req.url, { task: "bounded_task", completions: ["agent_decision"] });
     held.finish(draftResult(mode));
     const response = await pending;
     expect(response.status).toBe(200);
@@ -244,7 +397,7 @@ describe("Skill Author provider-specific waiting budgets", () => {
     const pending = handler(mode)(req);
     await held.started;
     expect(selectedProvider).toHaveBeenCalledWith(expect.objectContaining({ providerId: "openai_compatible", timeoutMs: SKILL_AUTHOR_REMOTE_TIMEOUT_MS,
-      providerConfig: { model: "selected-remote", modelReasoning: false } }), expect.any(AbortSignal), req.url, 256 * 1024);
+      providerConfig: { model: "selected-remote", modelReasoning: false } }), expect.any(AbortSignal), req.url, 256 * 1024, { task: "bounded_task", completions: ["agent_decision"] });
     await vi.advanceTimersByTimeAsync(SKILL_AUTHOR_REMOTE_TIMEOUT_MS - 1);
     expect(held.signal().aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);

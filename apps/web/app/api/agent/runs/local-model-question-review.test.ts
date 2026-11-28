@@ -1,111 +1,18 @@
-import { VdtBuilderSession } from "@vdt-studio/vdt-core";
-import { describe, expect, it } from "vitest";
-import { localModelWorkingContext } from "./local-model-context";
-import { constructionQuestionReview } from "./local-model-question-review";
+import { expect, it } from "vitest";
+import { localModelQuestionReviewPrompt } from "./local-model-question-review";
 
-const question = (id: string, text: string, expectedAnswerType: "number" | "text" = "text") => ({
-  id, question: text, expectedAnswerType, reason: "Нужны данные для расчёта.", required: true
-});
+it("sends a singleton typed definition to the Gateway without an extra model review", () => {
+  const prompt = JSON.stringify({ originalBrief: { prompt: "A case is late if it is still open at closing bell." } });
+  const question = { id: "cutoff", question: "Can you confirm the cutoff?", reason: "It determines when a case is late.", required: true };
+  const action = (questions: unknown[]) => ({ action: { type: "question", questions } });
+  const proposal = {
+    ...question,
+    decisionProposal: { topic: "late case", value: "still open at closing bell", evidenceQuote: "if it is still open at closing bell", language: "en" }
+  };
 
-describe("OpenAI construction questions", () => {
-  const brief = { prompt: "Построй чистую выручку за апрель. Продали 120 товаров. НДС не учитываем.", rootKpi: "Чистая выручка", unit: "USD", timePeriod: "Month" };
-  const facts = [{ value: 120, quote: "Продали 120 товаров" }];
-
-  it("removes approval and supplied context confirmations while retaining a different period", () => {
-    const observation = localModelWorkingContext(new VdtBuilderSession().getProject(), 0, true, true);
-    const plan = question("confirm_decomposition_plan", "Подтверждаете создание плана разложения и переход к добавлению драйверов?");
-    const supplied = question("confirm_inputs", "Уточните входные данные: валюта (USD), период (апрель). Подтверждаете данные?");
-    const different = question("confirm_period", "Подтвердите расчёт: валюта (USD), период (май)?");
-    expect(constructionQuestionReview([plan, supplied, different], brief, observation, facts).remaining).toEqual([different]);
-  });
-
-  it("writes supplied inputs first and preserves a genuinely missing price", () => {
-    const builder = new VdtBuilderSession();
-    const draft = builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
-    const parentNodeId = draft.project.rootNodeId;
-    builder.addDriver({ nodeId: "units_sold", name: "Продано товаров", parentNodeId, unit: "items" });
-    builder.addDriver({ nodeId: "price", name: "Цена за товар", parentNodeId, unit: "USD/item" });
-    const observation = () => localModelWorkingContext(builder.getProject(), builder.getRevision(), true, true);
-    const count = question("units_sold", "Сколько товаров продали?", "number");
-    const price = question("price", "Какова цена товара?", "number");
-    const formula = question("root_kpi_formula", "Укажите формулу корневого KPI.");
-    expect(constructionQuestionReview([count, price, formula], brief, observation(), facts)).toEqual({
-      remaining: [count, price], enterKnownFacts: true
-    });
-    builder.updateNode({ nodeId: "units_sold", patch: { baselineValue: 120, valueStatus: "user_provided_value" } });
-    expect(constructionQuestionReview([count, price, formula], brief, observation(), facts)).toEqual({
-      remaining: [price], enterKnownFacts: false
-    });
-  });
-
-  it("leaves structural measurements unknown and retains relationship and scope questions", () => {
-    const builder = new VdtBuilderSession();
-    const { project } = builder.createDraft({ projectTitle: "Capacity", rootKpi: "Capacity" });
-    builder.addDriver({ nodeId: "rate", name: "Rate", parentNodeId: project.rootNodeId });
-    const observation = localModelWorkingContext(builder.getProject(), builder.getRevision(), true, false, "structural_model");
-    const measurement = question("rate", "What rate did you measure?", "number");
-    const relationship = question("overlap", "Are these two activities independent or do they share a resource?");
-    const scope = question("site_count", "How many sites should the model represent?", "number");
-    const prompt = "Set up a capacity structure. I don't have the measured rate yet.";
-    expect(constructionQuestionReview([measurement, relationship, scope], {
-      prompt, outcome: "structural_model"
-    }, observation, undefined)).toEqual({ remaining: [relationship, scope], enterKnownFacts: false });
-    expect(constructionQuestionReview([measurement, relationship, scope], {
-      prompt, outcome: "calculated_baseline"
-    }, observation, undefined).remaining).toEqual([measurement, relationship, scope]);
-  });
-
-  it("resolves tool formula syntax without asking the user", () => {
-    const observation = localModelWorkingContext(new VdtBuilderSession().getProject(), 0, true, true);
-    const syntax = question("formula_syntax", "Please confirm the exact formula syntax.");
-    const parens = question("syntax_parens", "Are parentheses allowed in the formula?");
-    const business = question("discount_basis", "Should shipping count toward the discount basis?");
-    expect(constructionQuestionReview([syntax, parens, business], brief, observation, facts).remaining).toEqual([business]);
-  });
-
-  it("keeps the observed formula and parent-link repairs inside the construction protocol", () => {
-    const builder = new VdtBuilderSession();
-    builder.createDraft({ projectTitle: "Выручка", rootKpi: "Чистая выручка", unit: "USD" });
-    const parentNodeId = builder.getProject().rootNodeId;
-    for (const nodeId of ["gross_revenue", "net_revenue"]) {
-      builder.addDriver({ nodeId, name: nodeId, parentNodeId, type: "calculated", unit: "USD" });
-    }
-    builder.updateNode({ nodeId: parentNodeId, patch: { decompositionPlan: {
-      version: 1, goal: "Calculate revenue", nodes: [
-        { nodeId: "gross_revenue", parentNodeId, kind: "calculated" },
-        { nodeId: "net_revenue", parentNodeId, kind: "calculated" },
-        { nodeId: "quantity", parentNodeId: "gross_revenue", kind: "input" },
-        { nodeId: "price", parentNodeId: "gross_revenue", kind: "input" },
-        { nodeId: "net_after_discounts", parentNodeId, kind: "calculated" },
-        { nodeId: "returns", parentNodeId: "net_after_discounts", kind: "input" }
-      ]
-    } } });
-    builder.setFormula({ nodeId: parentNodeId, formula: "net_revenue" });
-    const observation = localModelWorkingContext(builder.getProject(), builder.getRevision(), true, true);
-    expect(observation.hierarchy.errors).toContainEqual(expect.stringContaining("PARENT_FORMULA_MISMATCH"));
-    const repairs = [
-      { ...question("gross_revenue_formula", "Confirm the intended formula for Gross revenue under the current plan."),
-        reason: "Currently, the plan indicates a missing formula for gross_revenue.",
-        options: ["quantity * price", "price * quantity", "other (specify in free text)"] },
-      { ...question("root_kpi_link", "Should the Root KPI (Чистая выручка) directly reference Gross revenue, or should it reference Net revenue/another intermediate expression?"),
-        reason: "Validation shows PARENT_FORMULA_MISMATCH: root_kpi must directly reference its child gross_revenue.",
-        options: ["reference gross_revenue directly", "reference net_revenue (via a grand formula)", "other (specify in free text)"] },
-      { ...question("net_revenue_formula", "Confirm the Net Revenue formula given post-discount returns: should Net Revenue be Net after Discounts minus Returns (net_after_discounts - returns), or another arrangement?"),
-        reason: "Net revenue placeholder currently exists with no formula; needs clear definition.",
-        options: ["net_revenue = net_after_discounts - returns", "net_revenue = gross_revenue - discounts - returns", "other (specify in free text)"] }
-    ];
-    const price = question("price", "Какова цена товара?", "number");
-    const choice = {
-      ...question("gross_revenue_formula", "Does your accounting formula treat shipping as part of revenue?"),
-      reason: "PARENT_FORMULA_MISMATCH: need to know if gross_revenue includes shipping. The brief does not specify your accounting policy for shipping."
-    };
-    const explicitChoice = {
-      ...question("gross_revenue_formula", "Confirm the formula policy: does your accounting include shipping in gross revenue?"),
-      reason: "The plan has a missing formula for gross_revenue until the accounting choice is known.",
-      options: ["Include shipping in revenue", "Exclude shipping from revenue"]
-    };
-    const mathematicalChoice = { ...explicitChoice, options: ["quantity * price + shipping", "quantity * price"] };
-    expect(constructionQuestionReview([...repairs, price, choice, explicitChoice, mathematicalChoice], brief, observation, facts).remaining)
-      .toEqual([price, choice, explicitChoice, mathematicalChoice]);
-  });
+  expect(localModelQuestionReviewPrompt(prompt, action([proposal]))).toBeUndefined();
+  expect(localModelQuestionReviewPrompt(prompt, action([question]))).toContain("hostQuestionReview");
+  expect(localModelQuestionReviewPrompt(prompt, action([proposal, question]))).toContain("hostQuestionReview");
+  const forged = { ...proposal, decisionProposal: { ...proposal.decisionProposal, vdtId: "another-tree" } };
+  expect(localModelQuestionReviewPrompt(prompt, action([forged]))).toContain("hostQuestionReview");
 });

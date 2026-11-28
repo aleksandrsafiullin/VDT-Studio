@@ -8,8 +8,10 @@ import { resolveTrustedStorageWriteMode, type StorageWriteEnvironment } from "..
 import {
   AgentExecutionBindingRegistry,
   createDefaultModelAgentExecutionBinding,
+  type LocalExecutionProof,
   type StructuredModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
+import type { AdaptiveReasoningPolicy } from "./adaptive-reasoning";
 import type { ModelReasoningValue } from "@vdt-studio/ai-harness";
 
 export const LOCAL_MODEL_AGENT_BACKENDS = ["ollama", "lm_studio", "vllm"] as const;
@@ -36,16 +38,23 @@ export function createLocalModelAgentBinding(
   backendId: LocalModelAgentBackend,
   modelId: string,
   toolCatalogHash: string,
-  modelReasoning?: ModelReasoningValue
+  modelReasoning?: ModelReasoningValue,
+  localProof?: LocalExecutionProof,
+  adaptiveReasoning?: AdaptiveReasoningPolicy
 ): StructuredModelAgentExecutionBindingDefinition {
   const definition = createDefaultModelAgentExecutionBinding({
     env: { VDT_MODEL_AGENT_ENABLED: "true", VDT_MODEL_AGENT_PROVIDER: backendId, VDT_MODEL_AGENT_MODEL: modelId },
     toolCatalogHash
   });
+  const identity = localProof ? JSON.stringify([modelId, modelReasoning, localProof.profileVersion, localProof.modelRevision])
+    : modelReasoning === undefined ? modelId : JSON.stringify([modelId, modelReasoning]);
+  const bindingIdentity = adaptiveReasoning ? JSON.stringify([identity, adaptiveReasoning.start, adaptiveReasoning.repair]) : identity;
   return {
     ...definition,
-    bindingId: `local_model_${backendId}_${createHash("sha256").update(modelReasoning === undefined ? modelId : JSON.stringify([modelId, modelReasoning])).digest("hex")}`,
+    bindingId: `local_model_${backendId}_${adaptiveReasoning ? "adaptive_" : ""}${createHash("sha256").update(bindingIdentity).digest("hex")}`,
+    modelEngineAdapter: { ...definition.modelEngineAdapter, ...(adaptiveReasoning ? { adaptiveReasoning } : {}) },
     ...(modelReasoning === undefined ? {} : { modelReasoning }),
+    ...(localProof ? { localProof } : {}),
     capability: { ...definition.capability, engineAdapterId: "local-http-structured-turn-v1" }
   };
 }

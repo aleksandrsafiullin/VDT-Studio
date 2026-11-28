@@ -2,6 +2,7 @@
 
 import { Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { appleIsExpected, appleRecoveryMessage } from "@/lib/apple-first-launch";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { useVdtStudioStore } from "./vdt-store";
@@ -12,9 +13,12 @@ interface ExecutionModeSummaryCardProps {
 
 export function ExecutionModeSummaryCard({ onConfigure }: ExecutionModeSummaryCardProps) {
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const appleFirstLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const appleExpected = appleIsExpected(executionSettings.analyticalSourceChoice, appleFirstLaunch);
   const localAiAvailable = hasLocalAiUi(resolveVdtAppMode());
-  const summary =
-    executionSettings.executionMode === "local_cli" && !localAiAvailable
+  const summary = appleExpected ? { modeLabel: "Local", primary: "Apple on-device",
+    secondary: appleFirstLaunch?.status === "ready" ? "Verified for new analytical requests" : appleRecoveryMessage(appleFirstLaunch) }
+    : executionSettings.executionMode === "local_cli" && !localAiAvailable
       ? {
           modeLabel: "API keys",
           primary: "Hosted web",

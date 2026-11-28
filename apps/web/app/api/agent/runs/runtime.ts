@@ -1,3 +1,5 @@
+import { isAdaptiveReasoningOffer } from "./adaptive-reasoning";
+import { assertAnalyticalAdmission, hostExecutionAdmission } from "./execution-binding-admission";
 import type { ChatStarterInput, ChatStarterOutput } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
 import { recentClaudeCliCatalog } from "@/lib/claude-cli-catalog";
@@ -49,6 +51,7 @@ import {
 import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 import { cliSessionModelBindingId } from "./cli-session-model-binding";
 import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from "./local-model-bindings";
+import { registerOutcomeAdmission } from "./outcome-admission";
 import { registerWorkspaceOperationTools } from "./workspace-operation-tools";
 import { registerEditorHandoffTools } from "./editor-handoff-tools";
 import { retainedDatasetProvider } from "./dataset-provider";
@@ -57,6 +60,9 @@ import { createPackagedCursorBinding, packagedCursorActivations } from "./packag
 import { standardPackagedCursorProfile, type PackagedCursorAuthStatus } from "./packaged-cursor-profile";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
+  __vdtBoundWorkbookReaders?: WeakMap<AgentRunStore, BoundWorkbookReader>;
+  __vdtNamedWorkbookScopeReaders?: WeakMap<AgentRunStore, NamedWorkbookScopeReader>;
+  __vdtScenarioRevisionReaders?: WeakMap<AgentRunStore, ScenarioRevisionReader>;
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
   __vdtAgentExecutionBindingRegistry?: AgentExecutionBindingRegistry;
   __vdtSqliteBackedAgentRunStores?: WeakSet<AgentRunStore>;
@@ -110,6 +116,12 @@ const sqliteBackedAgentRunStores =
 const supervisorReadAuthorities =
   runtimeGlobal.__vdtAgentSupervisorReadAuthorities
   ?? new WeakMap<AgentRunStore, AgentSupervisorPersistence>();
+const boundWorkbookReaders = runtimeGlobal.__vdtBoundWorkbookReaders
+  ?? new WeakMap<AgentRunStore, BoundWorkbookReader>();
+const namedWorkbookScopeReaders = runtimeGlobal.__vdtNamedWorkbookScopeReaders
+  ?? new WeakMap<AgentRunStore, NamedWorkbookScopeReader>();
+const scenarioRevisionReaders = runtimeGlobal.__vdtScenarioRevisionReaders
+  ?? new WeakMap<AgentRunStore, ScenarioRevisionReader>();
 
 export const agentRuntime =
   runtimeGlobal.__vdtAgentRuntime ?? createVdtAgentRuntime({
@@ -117,7 +129,8 @@ export const agentRuntime =
     tools: createAgentToolRegistryFromEnv()
   });
 
-registerWorkspaceOperationTools(agentRuntime.tools);
+registerWorkspaceOperationTools(agentRuntime.tools, undefined, readScenarioRevision);
+registerOutcomeAdmission(agentRuntime.tools);
 registerEditorHandoffTools(agentRuntime.tools);
 registerModelAgentSchemaTool(agentRuntime.tools);
 
@@ -167,6 +180,9 @@ if (process.env.NODE_ENV !== "production" || standardCursorProfile) {
   runtimeGlobal.__vdtAgentExecutionBindingRegistry = agentExecutionBindingRegistry;
   runtimeGlobal.__vdtSqliteBackedAgentRunStores = sqliteBackedAgentRunStores;
   runtimeGlobal.__vdtAgentSupervisorReadAuthorities = supervisorReadAuthorities;
+  runtimeGlobal.__vdtBoundWorkbookReaders = boundWorkbookReaders;
+  runtimeGlobal.__vdtNamedWorkbookScopeReaders = namedWorkbookScopeReaders;
+  runtimeGlobal.__vdtScenarioRevisionReaders = scenarioRevisionReaders;
   runtimeGlobal.__vdtExternalAgentEngines = externalAgentEngines;
   if (standardCursorProfile) runtimeGlobal.__vdtPackagedCursorConnection = cursorDesktopConnection;
 }
@@ -343,14 +359,20 @@ export function resolveAgentStartRequest(
     return { request };
   }
 
-  const binding = agentExecutionBindingRegistry.resolve(request.executionBindingId);
+  const binding = isAdaptiveReasoningOffer(request.executionBindingId)
+    ? agentExecutionBindingRegistry.resolveAdaptiveStart(request.executionBindingId, request.workspace, request.expectedExecution)
+    : agentExecutionBindingRegistry.resolve(request.executionBindingId);
   if (!isCurrentHarnessSession(request.executionBindingId)) {
     throw new AgentExecutionBindingError("BINDING_DISABLED", "Harness settings changed. Refresh the connection before starting a new run.");
   }
   if (!isCurrentPackagedCursorBinding(request.executionBindingId)) {
     throw new AgentExecutionBindingError("BINDING_DISABLED", "The selected Cursor model is unavailable in the managed profile. Recheck the connection before starting a new run.");
   }
-  const { executionBindingId, ...common } = request;
+  const admission = hostExecutionAdmission(binding);
+  assertAnalyticalAdmission(admission, "agent_run", request.options?.researchMode, request.expectedExecution);
+  const { executionBindingId, expectedExecution: _expectedExecution, ...common } = request;
+  void _expectedExecution;
+  if (!admission.research) common.options = { ...common.options, researchMode: "off" };
   if (isStructuredModelExecutionBinding(binding)) {
     return {
       request: {
@@ -449,18 +471,33 @@ export function createAgentRunStore(env?: StorageWriteEnvironment): AgentRunStor
     return new AgentRunStore();
   }
 
-  const store = new AgentRunStore({
-    persistence: createLazySqliteAgentRunPersistence(process.cwd(), {
-      ...(env
-        ? {
-            actorFactory: (projectId) =>
-              createStorageWriteActor(projectId, { env })
-          }
-        : {})
-    })
+  const persistence = createLazySqliteAgentRunPersistence(process.cwd(), {
+    ...(env ? { actorFactory: (projectId) => createStorageWriteActor(projectId, { env }) } : {})
   });
+  const store = new AgentRunStore({ persistence });
   sqliteBackedAgentRunStores.add(store);
+  boundWorkbookReaders.set(store, persistence.hasBoundWorkbookExport);
+  namedWorkbookScopeReaders.set(store, persistence.readNamedWorkbookScope);
+  scenarioRevisionReaders.set(store, persistence.readScenarioRevision);
   return store;
+}
+
+type BoundWorkbookReader = ReturnType<typeof createLazySqliteAgentRunPersistence>["hasBoundWorkbookExport"];
+
+export function hasBoundWorkbookExport(store: AgentRunStore, ...args: Parameters<BoundWorkbookReader>) {
+  return boundWorkbookReaders.get(store)?.(...args) ?? false;
+}
+
+type NamedWorkbookScopeReader = ReturnType<typeof createLazySqliteAgentRunPersistence>["readNamedWorkbookScope"];
+
+export function readNamedWorkbookScope(store: AgentRunStore, ...args: Parameters<NamedWorkbookScopeReader>) {
+  return namedWorkbookScopeReaders.get(store)?.(...args);
+}
+
+type ScenarioRevisionReader = ReturnType<typeof createLazySqliteAgentRunPersistence>["readScenarioRevision"];
+
+export function readScenarioRevision(store: AgentRunStore, ...args: Parameters<ScenarioRevisionReader>): string | undefined {
+  return scenarioRevisionReaders.get(store)?.(...args);
 }
 
 /** Uses normalized Sequence 4 SQLite as the Supervisor authority whenever the

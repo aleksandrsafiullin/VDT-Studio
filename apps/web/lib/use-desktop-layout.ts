@@ -4,16 +4,16 @@ import { useSyncExternalStore } from "react";
 
 const DESKTOP_QUERY = "(min-width: 1024px)";
 
-function subscribe(onStoreChange: () => void) {
+export function subscribeDesktopLayout(onStoreChange: () => void) {
   const mediaQuery = window.matchMedia(DESKTOP_QUERY);
   mediaQuery.addEventListener("change", onStoreChange);
   return () => mediaQuery.removeEventListener("change", onStoreChange);
 }
 
-function getSnapshot() {
+export function desktopLayoutMatches() {
   return window.matchMedia(DESKTOP_QUERY).matches;
 }
 
 export function useDesktopLayout() {
-  return useSyncExternalStore(subscribe, getSnapshot, () => false);
+  return useSyncExternalStore(subscribeDesktopLayout, desktopLayoutMatches, () => false);
 }

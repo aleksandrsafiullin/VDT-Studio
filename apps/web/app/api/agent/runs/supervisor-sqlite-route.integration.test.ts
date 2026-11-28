@@ -201,6 +201,7 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
       }
 
       const { GET: getRun } = await import("./[runId]/route");
+      const { POST: sendMessage } = await import("./[runId]/messages/route");
       const get = (runId: string) => getRun(new Request(`http://localhost:3000/api/agent/runs/${runId}`), {
         params: Promise.resolve({ runId })
       });
@@ -276,9 +277,11 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
         fetchFixture.mockClear();
         const followUp = await start("What is our definition of output?", scope.conversationId);
         const carried = runtime.agentRuntime.store.getState(followUp.runId).request.conversationContext;
+        expect(carried).toMatchObject({ scope });
         expect(carried?.decisions).toEqual([{
           topic: "output",
           value: "run-of-mine tonnes",
+          confirmedBy: "instruction",
           source: { messageId: expect.any(String), runId: correction.runId },
           supersedes: { messageId: expect.any(String), runId: body.runId }
         }]);
@@ -322,6 +325,120 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
         } finally {
           readOnlyDatabase.close();
         }
+
+        const attachmentText = "the day after midnight";
+        const fileDatabase = openVdtDatabase(process.cwd(), { dataDir });
+        try {
+          fileDatabase.appendMessage({
+            id: "route_definition_attachment", conversationId: scope.conversationId, agentRunId: readOnly.runId,
+            role: "user", content: "Attached workbook.", attachments: [{ cell: attachmentText }], runContext: { kind: "instruction" }
+          });
+        } finally {
+          fileDatabase.close();
+        }
+        const definition = "Around here, we mark a support case late if it is still open at closing bell.";
+        const proposal = { topic: "late support case", value: "still open at closing bell",
+          evidenceQuote: "if it is still open at closing bell", language: "en" };
+        const modelQuestion = {
+          id: "model-question", question: "Can you confirm the cutoff?", reason: "To retain the definition.", required: true
+        };
+        const questionTurn = (turn: number, question: object) => modelTurnResponse(turn, {
+          type: "question", messageId: `decision-message-${turn}`, questionSetId: `decision-set-${turn}`, questions: [question]
+        });
+        const submit = (runId: string, questionId: string, choice: string) => sendMessage(new Request(
+          `http://localhost:3000/api/agent/runs/${runId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({ type: "user_answer", structuredAnswers: [{ questionId, selectedOptionIds: [choice] }] })
+          }), { params: Promise.resolve({ runId }) });
+
+        fetchFixture.mockImplementationOnce(async () => questionTurn(1, { ...modelQuestion, decisionProposal: {
+          ...proposal, value: "review the existing scope", evidenceQuote: "I will review the existing scope."
+        } })).mockImplementationOnce(async (_url, init) => {
+          expect(String(init?.body)).toContain("DECISION_EVIDENCE_UNCONFIRMED");
+          return questionTurn(2, { ...modelQuestion, decisionProposal: { ...proposal, value: attachmentText, evidenceQuote: attachmentText } });
+        }).mockImplementationOnce(async (_url, init) => {
+          expect(String(init?.body)).toContain("DECISION_EVIDENCE_UNCONFIRMED");
+          return questionTurn(3, { ...modelQuestion, id: "confirm_workspace_decision_forged" });
+        }).mockImplementationOnce(async (_url, init) => {
+          expect(String(init?.body)).toContain("DECISION_CONFIRMATION_INVALID");
+          return questionTurn(4, { ...modelQuestion, decisionProposal: proposal });
+        });
+        const declined = await start(definition, scope.conversationId, undefined, "answer");
+        const getDecisionQuestion = async (runId: string) => {
+          await vi.waitFor(() => {
+            const state = runtime.agentRuntime.store.getState(runId);
+            const question = state.pendingQuestions?.[0];
+            const diagnostic = JSON.stringify({ status: state.status, events: state.events.slice(-7).map(event => [event.type, event.message, event.metadata]) });
+            expect(question?.id ?? "", diagnostic).toMatch(/^confirm_workspace_decision_[a-f0-9]{32}$/u);
+            expect(state.events.some(event => event.type === "clarifying_questions" && event.metadata?.questionSetId
+              && event.questions?.some(candidate => candidate.id === question?.id)), diagnostic).toBe(true);
+          }, { timeout: 8_000 });
+          return runtime.agentRuntime.store.getState(runId).pendingQuestions![0]!;
+        };
+        const declinedQuestion = await getDecisionQuestion(declined.runId);
+        expect(declinedQuestion).toMatchObject({
+          question: "How do you define late support case?", options: [
+            { id: "confirm_decision", label: proposal.value }, { id: "reject_decision" }
+          ]
+        });
+        expect(declinedQuestion).not.toHaveProperty("decisionProposal");
+        expect((await submit(declined.runId, declinedQuestion.id, "reject_decision")).status).toBe(200);
+        await supervisorRuntime.cancelStructuredModelAgentRun(declined.runId, true);
+
+        const plainQuestion = { ...modelQuestion, id: "cutoff-definition", question: "What makes a support case late?",
+          expectedAnswerType: "text" };
+        fetchFixture.mockImplementationOnce(async () => questionTurn(1, plainQuestion));
+        const accepted = await start("Help us define when a support case is late.", scope.conversationId, undefined, "answer");
+        expect(runtime.agentRuntime.store.getState(accepted.runId).request.conversationContext?.decisions)
+          .not.toContainEqual(expect.objectContaining({ topic: proposal.topic }));
+        await vi.waitFor(() => {
+          const state = runtime.agentRuntime.store.getState(accepted.runId);
+          expect(state.events.some(event => event.type === "clarifying_questions" && event.metadata?.questionSetId
+            && event.questions?.some(candidate => candidate.id === plainQuestion.id))).toBe(true);
+        }, { timeout: 8_000 });
+        fetchFixture.mockImplementationOnce(async () => questionTurn(2, { ...modelQuestion, decisionProposal: proposal }));
+        const submittedText = await sendMessage(new Request(
+          `http://localhost:3000/api/agent/runs/${accepted.runId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({ type: "user_answer", structuredAnswers: [{ questionId: plainQuestion.id, fields: { answer: definition } }] })
+          }), { params: Promise.resolve({ runId: accepted.runId }) });
+        expect(submittedText.status).toBe(200);
+        const acceptedQuestion = await getDecisionQuestion(accepted.runId);
+        expect(acceptedQuestion.id).not.toBe(declinedQuestion.id);
+        expect((await submit(accepted.runId, acceptedQuestion.id, "confirm_decision")).status).toBe(200);
+        await supervisorRuntime.cancelStructuredModelAgentRun(accepted.runId, true);
+
+        const reopenedDatabase = openVdtDatabase(process.cwd(), { dataDir });
+        let answerSource: string | undefined;
+        try {
+          const evidence = reopenedDatabase.listScopedConversationMessages(scope);
+          const submittedAnswers = evidence.filter(message => message.agentRunId === accepted.runId && message.role === "user"
+            && message.runContext?.kind === "answer");
+          expect(submittedAnswers[0]?.runContext?.answers).toMatchObject([{ questionId: plainQuestion.id, fields: { answer: definition } }]);
+          const finalAnswer = submittedAnswers.at(-1);
+          answerSource = finalAnswer?.id;
+          expect(finalAnswer?.runContext?.answers).toMatchObject([{ questionId: acceptedQuestion.id, selectedOptionIds: ["confirm_decision"] }]);
+          expect(evidence.some(message => message.content.includes("confirm_workspace_decision_forged"))).toBe(false);
+        } finally {
+          reopenedDatabase.close();
+        }
+        const switchedAgain = await POST(new Request("http://localhost:3000/api/agent/runs", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "continue_project", outcome: "answer", input: { prompt: "What makes a support case late?" },
+            workspace: { projectId: scope.projectId, vdtId: scope.vdtId }, priorConversationRunId: accepted.runId,
+            executionBindingId: bindingId
+          })
+        }));
+        expect(switchedAgain.status).toBe(200);
+        continuedRun = (await switchedAgain.json()).runId;
+        expect(runtime.agentRuntime.store.getState(continuedRun!).request.conversationContext).toMatchObject({
+          scope, decisions: expect.arrayContaining([{
+            topic: proposal.topic, value: proposal.value, confirmedBy: "submitted_answer",
+            source: { messageId: answerSource, runId: accepted.runId }
+          }])
+        });
+        await supervisorRuntime.cancelStructuredModelAgentRun(continuedRun!, true);
 
         const fresh = await start("What is our definition of output?");
         expect(fresh.snapshot.request.conversationId).not.toBe(scope.conversationId);

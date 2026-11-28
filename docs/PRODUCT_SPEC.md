@@ -42,6 +42,8 @@ current native release candidates remain under qualification.
 
 ## Local harness integration (2026-11-02)
 
+The workspace keeps analytical runs bound to the selected provider and model. When the selection changes, continuing a pending run requires reselecting its provider and model. Settings shows the offline verification status for third-party model servers. [Host execution admission](adr/ADR-016-host-execution-admission.md)
+
 The local AI catalog has thirteen current harness presets plus custom ACP/VDT JSONL profiles. The added presets are Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi. Suggested KPI independently selects its model and reasoning under Settings → Execution mode, with Same as chat model and explicit Off reasoning defaults. Unsupported Off is explained before preparation; Provider default requires an explicit choice. It has no legacy connection records or historical adapter variants. All registered structured tasks include Suggested KPI; chat uses an immutable external session binding. New/custom adapters remain experimental pending live/native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
 
 ## Baseline back-calculation
@@ -531,7 +533,13 @@ capabilities or bounded official documentation to expose supported native values
 unknown capabilities leave Default with an explanation. Their saved selection is
 scoped to provider/endpoint/model, so changing a model cannot inherit another
 model's effort. Automatic API/local metadata access checks report Connected only
-after successful model access; this is separate from an explicit generation test. Enter sends except
+after successful model access. The Apple desktop preview can expose Apple
+on-device as a deliberate selection. The first-install chooser is gated
+separately and remains off in preview builds. It checks the current device
+and language before choosing Apple on an untouched profile. Settings preserve
+explicit provider choices and an independent Suggested KPI model. When the
+selected Apple model is unavailable, the Local models panel reports the
+reason and offers a new check or another model. Enter sends except
 during IME composition; Shift + Enter inserts a newline. When the agent is running
 and the draft is empty, the composer offers Stop. Chat history and New remain in
 the header. Actual status/elapsed time and a collapsed Work log replace stacked
@@ -539,10 +547,13 @@ status boxes; questions, retries and approvals retain their existing callbacks.
 The redesign changes presentation and draft interaction, not model admission,
 generation policy, persistence or provider qualification.
 
-**Chat outcome** sets the next task's goal. Automatic uses the existing task mode.
-Answer requests a response, Build structure can finish with measurements outstanding,
-and Calculate baseline requires complete inputs and a finite root result. The
-composer keeps the admitted goal while the run is active. A verified structure
+**Chat outcome** sets the next task's goal. When a fresh chat uses Automatic,
+the selected model interprets the original request and may ask a focused
+question if the deliverable or scope is unclear. The Supervisor pins the
+accepted goal before the agent can edit the tree. Answer grants read-only
+project access, Build structure can finish with measurements outstanding,
+and Calculate baseline requires complete inputs and a finite root result.
+The composer keeps the admitted goal while the run is active. A verified structure
 shows its formulas and recorded assumptions alongside a checklist of current
 measurements. Select an input to edit its baseline in the Inspector, or supply
 the measurement in chat. Zero is a known value. Unknown baselines stay blank
@@ -616,6 +627,12 @@ requires compatible operand units and the scale conversion in the formula.
 ### Local voice input
 
 Implemented alpha: a microphone beside the chat model/provider selector dictates into the editable draft using local whisper.cpp. Provisional text appears during recording, Stop finishes recognition and Send remains manual. Settings → Voice input selects the multilingual model/language and requires explicit download confirmation. Model installation supports Apple silicon/Intel macOS and Windows x64; hosted web fails closed. Native packaged/Windows verification remains open. See [Voice input](VOICE_INPUT.md).
+
+Voice Input includes a ChatGPT Pro setup guide for eligible OpenAI API credits. The
+optional OpenAI direct adapter is off by default. An enabled local build can check
+the current saved run's direct credential and offer an explicitly API-billed fixed
+sample. Local conversation and Codex CLI protocol discovery have separate controls.
+[OpenAI voice setup](VOICE_INPUT.md#set-up-openai-voice-with-eligible-chatgpt-pro-api-credits)
 
 The composer displays actual captured microphone energy and elapsed recording
 time before recognition finishes, then a distinct final-transcription state and

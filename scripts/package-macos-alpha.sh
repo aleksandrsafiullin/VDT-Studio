@@ -10,6 +10,17 @@ if (( $# < 1 || $# > 2 )); then
   echo "Usage: scripts/package-macos-alpha.sh EMPTY_OUTPUT_DIR [GIT_REF] [--allow-unsigned-validation]" >&2
   exit 2
 fi
+app_intents_qualification="${VDT_MACOS_APP_INTENTS_QUALIFICATION:-false}"
+case "$app_intents_qualification" in
+  true)
+    if [[ "$allow_unsigned" == true || -n "${VDT_MACOS_NOTARY_PROFILE:-}" ]]; then
+      echo "App Intents qualification requires Developer ID signing without notarization." >&2
+      exit 2
+    fi
+    ;;
+  false) ;;
+  *) echo "VDT_MACOS_APP_INTENTS_QUALIFICATION must be true or false." >&2; exit 2 ;;
+esac
 [[ "$(uname -sm)" == "Darwin arm64" ]]
 [[ "$(node -p 'process.versions.node.split(".")[0]')" == 24 ]]
 repo="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
@@ -78,6 +89,13 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" CARGO_INCREMENTAL=0
 export NEXT_TELEMETRY_DISABLED=1 VDT_NEXT_STANDALONE=1
 export VDT_DATA_DIR="$stage/data" VDT_APP_MODE=desktop NEXT_PUBLIC_VDT_APP_MODE=desktop
 unset VDT_NEXT_DIST_DIR VDT_DESKTOP_SELF_CONTAINED_SIDECAR
+unset VDT_APP_INTENTS_STAGE NEXT_PUBLIC_VDT_APP_INTENTS_QUALIFICATION
+if [[ "$app_intents_qualification" == true ]]; then
+  export VDT_APP_INTENTS_STAGE="$stage/app-intents"
+  export NEXT_PUBLIC_VDT_APP_INTENTS_QUALIFICATION=true MACOSX_DEPLOYMENT_TARGET=14.0
+  mkdir "$VDT_APP_INTENTS_STAGE"
+  apps/desktop/native-checks/app-intents/prepare-qualification.sh "$VDT_APP_INTENTS_STAGE"
+fi
 corepack pnpm install --frozen-lockfile --store-dir "$stage/pnpm-store"
 corepack pnpm desktop:sidecar:prepare
 corepack pnpm desktop:verify
@@ -106,8 +124,19 @@ curl --fail --silent --show-error --location --retry 2 \
   # The production server was already built with this candidate's identity.
   # Skip Tauri's default source-build hook to avoid rebuilding it in place.
   printf '%s\n' '{"build":{"beforeBuildCommand":null}}' > "$stage/macos-build-config.json"
+  tauri_options=(--config "$stage/macos-build-config.json")
+  if [[ "$app_intents_qualification" == true ]]; then
+    node --input-type=module - "$stage/macos-build-config.json" "$PWD/native-checks/app-intents/tauri-qualification.json" <<'JS'
+import { readFileSync, writeFileSync } from "node:fs";
+const [configFile, overlayFile] = process.argv.slice(2);
+const config = JSON.parse(readFileSync(configFile, "utf8"));
+const overlay = JSON.parse(readFileSync(overlayFile, "utf8"));
+writeFileSync(configFile, JSON.stringify({ ...config, ...overlay }) + "\n");
+JS
+    tauri_options+=(--features app-intents-qualification)
+  fi
   corepack pnpm exec tauri build --bundles app --no-sign --ci --target aarch64-apple-darwin \
-    --config "$stage/macos-build-config.json" -- --locked
+    "${tauri_options[@]}" -- --locked
 )
 app="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle/macos/VDT Studio.app"
 contents="$app/Contents"
@@ -153,7 +182,34 @@ done < <(find "$contents/Resources/web" -type f \( -name '*.node' -o -name '*.dy
 sign_code --identifier com.vdtstudio.desktop.node \
   --entitlements apps/desktop/src-tauri/NodeEntitlements.plist "$contents/Helpers/node"
 sign_code --identifier com.vdtstudio.desktop.cursor-supervisor "$contents/Helpers/vdt-cursor-macos-supervisor"
+if [[ "${VDT_MACOS_APPLE_AI_PREVIEW:-false}" == true ]]; then
+  sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+  if ! awk -F. '$1 > 26 || ($1 == 26 && $2 >= 4) {supported=1} END {exit !supported}' <<< "$sdk_version"; then
+    echo "The Apple AI preview requires macOS SDK 26.4 or later." >&2
+    exit 1
+  fi
+  swift_flags=(-parse-as-library -swift-version 6 -target arm64-apple-macos14.0 -module-cache-path "$stage/swift-modules")
+  model_flags=(-D VDT_AFM_SDK_26_4)
+  if [[ "${sdk_version%%.*}" -ge 27 ]]; then
+    model_flags+=(-D VDT_AFM_SDK_27)
+  fi
+  model_helper="$contents/Helpers/vdt-apple-foundation-models"
+  voice_helper="$contents/Helpers/vdt-apple-voice"
+  xcrun --sdk macosx swiftc "${swift_flags[@]}" "${model_flags[@]}" \
+    apps/desktop/native-checks/apple-foundation-models-helper.swift -o "$model_helper"
+  xcrun --sdk macosx swiftc "${swift_flags[@]}" \
+    apps/desktop/native-checks/apple-voice-helper.swift -o "$voice_helper"
+  sign_code --identifier com.vdtstudio.desktop.apple-foundation-models "$model_helper"
+  sign_code --identifier com.vdtstudio.desktop.apple-voice "$voice_helper"
+  model_hash="$(shasum -a 256 "$model_helper" | cut -d ' ' -f 1)"
+  voice_hash="$(shasum -a 256 "$voice_helper" | cut -d ' ' -f 1)"
+  printf '{"version":1,"foundationModels":"%s","voice":"%s","analyticalDefault":false}\n' "$model_hash" "$voice_hash" \
+    > "$contents/Resources/vdt-apple-helpers.json"
+fi
 "$contents/Helpers/node" --version
+if [[ "$app_intents_qualification" == true ]]; then
+  apps/desktop/native-checks/app-intents/stage-qualification-metadata.sh "$VDT_APP_INTENTS_STAGE" "$contents"
+fi
 sign_code \
   --entitlements apps/desktop/src-tauri/Entitlements.plist "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
@@ -187,15 +243,15 @@ mv "$stage/$disk_name" "$output/$disk_name"
   shasum -a 256 "$disk_name" > SHA256SUMS
   printf '%s\n' "$commit" > SOURCE_COMMIT
 )
-node --input-type=module - "$output" "$version" "$commit" "$disk_name" "$allow_unsigned" "$notarized" "$stage/cursor-isolation.json" <<'JS'
+node --input-type=module - "$output" "$version" "$commit" "$disk_name" "$allow_unsigned" "$notarized" "$stage/cursor-isolation.json" "$app_intents_qualification" <<'JS'
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-const [output, version, sourceCommit, fileName, unsigned, notarized, cursorManifest] = process.argv.slice(2);
+const [output, version, sourceCommit, fileName, unsigned, notarized, cursorManifest, intentsQualification] = process.argv.slice(2);
 const signed = unsigned !== "true";
 writeFileSync(join(output, "macos-package.json"), JSON.stringify({
   schemaVersion: 1, platform: "darwin", architecture: "arm64", version, sourceCommit,
-  nodeVersion: "24.22.2", signed, notarized: notarized === "true", qualification: "unverified",
+  nodeVersion: "24.22.2", signed, notarized: notarized === "true", qualification: intentsQualification === "true" ? "app-intents-validation-only" : "unverified",
   cursorIsolation: JSON.parse(readFileSync(cursorManifest, "utf8")).digests,
   installer: { fileName, sha256: createHash("sha256").update(readFileSync(join(output, fileName))).digest("hex"),
     signatureStatus: signed ? "developer-id" : "ad-hoc-validation" }

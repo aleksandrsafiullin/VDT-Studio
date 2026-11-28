@@ -373,7 +373,9 @@ const CONTROL_TOOLS = new Set([
   "user.ask",
   "approval.request",
   "user.request_approval",
-  "run.request_finish"
+  "run.request_finish",
+  "run.propose_outcome",
+  "skill.select"
 ]);
 
 export const agentActionBatchSchema = z.object({
@@ -397,7 +399,7 @@ export const agentActionBatchSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["calls", index, "toolName"],
-          message: "Question, approval, and finish calls must be the only call in a batch."
+          message: "Question, approval, outcome and finish calls must be the only call in a batch."
         });
       }
     }

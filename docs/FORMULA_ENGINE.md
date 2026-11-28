@@ -206,6 +206,16 @@ conversion for both purposes. An ordinary manual tree can use these checks
 without a construction plan. Import and draft checks retain their original
 repair behavior. [Workspace operations contract](adr/ADR-015-ai-first-workspace-operations.md)
 
+### Confirmed decomposition relationships
+
+In the Node Inspector, select a relationship type and its two KPI operands, then confirm it. For a two-stage serial flow without a bypass, the expected output is the lower capacity. For independent non-overlapping flows, it is the sum. Both use the operands' common unit and reporting basis. For a quantity and a per-item rate, choose the Quantity KPI first and the Rate KPI second. The output unit must match the numerator of the rate at the same numerical scale, for example `count × h/item → h` or `count × USD/item → USD`. The saved v2 relationship captures ordered operand IDs, both operand units, the output unit and the condition for reconsideration. Existing serial and additive notes retain their v1 format.
+
+Chat records a quantity-rate relationship after the user selects its exact option for the current draft revision, roles and units. A newer user instruction or answer requires current confirmation. If the exact identifiers and units exceed the option limit, confirm in the Node Inspector. Use a clarifying question when the business relationship is uncertain.
+
+Both structural and calculated readiness evaluate the formula with the same calculator and report contradictions in the editor warnings and agent finish check. The check samples two nonnegative operand values at a time, including zero, either side as the limiting stage, equal values, fractional rates and the available measured pair. Factor probes also check the simulated pair when available. Sampling runs on an isolated dependency graph and leaves actual inputs, scenarios and assumptions intact. Quantity-rate verification also requires the product of the two confirmed references, in either order and with optional parentheses. Unknown unit atoms, implicit scale conversion and nonfinite results cannot verify the relationship. Other formulas can remain in an editable draft.
+
+This check samples specific values. Its evidence covers the recorded unit basis, two named operands and the tested formula behavior. An extra unconfirmed input, back-calculation dependency, missing operand or changed unit blocks verification of a typed relationship. The current scope is up to 24 typed relationships per model, with at most 200 dependencies per check. Free-form and historical assumptions remain readable and carry their original evidence. The editor labels their formula behavior unverified. An unverified custom process can still use ordinary readiness and calculation checks.
+
 ## Unit Validation
 
 The general engine derives formal units through multiplication/division and

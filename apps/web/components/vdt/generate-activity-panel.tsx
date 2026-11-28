@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, Download, Loader2, RotateCcw, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import type { AgentAnswerPayload, AgentChatMessage, PublicAgentStatus, VdtAgentQuestion } from "@/lib/agent-client";
+import { dialogueDestination, type DialogueDestination } from "@/lib/voice-dialogue";
+import { questionMatches } from "@/lib/voice-confirmation";
 import type { GenerateActivityState } from "./vdt-store";
 import { MarkdownText } from "./markdown-text";
 import { VdtTreeIcon } from "./vdt-tree-icon";
@@ -12,6 +14,12 @@ import styles from "./agent-chat.module.css";
 import { EditorHandoffActions } from "./editor-handoff-actions";
 
 export type AgentAnswerSubmission = Record<string, string | number | string[]> | AgentAnswerPayload[];
+
+interface QuestionVoiceControl {
+  target: Extract<DialogueDestination, { kind: "answer" }>;
+  control: ReactNode;
+  onManualAnswer: () => void;
+}
 
 type QuestionField = NonNullable<VdtAgentQuestion["fields"]>[number];
 type QuestionOption = NonNullable<VdtAgentQuestion["options"]>[number];
@@ -253,6 +261,24 @@ function fieldsForQuestion(question: VdtAgentQuestion): QuestionField[] {
   return [];
 }
 
+function questionFormSignature(questions: VdtAgentQuestion[] | undefined): string | undefined {
+  return JSON.stringify(questions?.map(({ answerKind, expectedAnswerType, freeTextAllowed, placeholder, ...question }) => {
+    const kind = answerKind ?? expectedAnswerType ?? "text";
+    const plainText = kind === "text" && !question.fields?.length && !question.options?.length;
+    // The legacy user.ask message fills in these defaults before the Supervisor publishes the same question.
+    return {
+      ...question,
+      answerKind: kind,
+      freeTextAllowed: plainText ? freeTextAllowed ?? true : freeTextAllowed,
+      placeholder: plainText && placeholder === "Add details or provide a custom answer..." ? undefined : placeholder
+    };
+  }), (_key, value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const entries = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(entries).sort().map(key => [key, entries[key]]));
+  });
+}
+
 function fieldValue(field: QuestionField, value: string): string | number {
   const trimmed = value.trim();
   if (field.kind !== "number") return trimmed;
@@ -330,11 +356,13 @@ function MessageBubble({
   message,
   canAnswer,
   cancelled,
+  questionVoice,
   onAnswer
 }: {
   message: AgentChatMessage;
   canAnswer: boolean;
   cancelled: boolean;
+  questionVoice: QuestionVoiceControl | undefined;
   onAnswer: ((answers: AgentAnswerSubmission) => void) | undefined;
 }) {
   const isUser = message.role === "user";
@@ -374,6 +402,7 @@ function MessageBubble({
           questions={message.questions}
           canSubmit={canAnswer}
           cancelled={cancelled}
+          questionVoice={questionVoice}
           onAnswer={onAnswer}
         />
       ) : null}
@@ -405,11 +434,13 @@ function ActivityStatusRow({
   status,
   activity,
   elapsed,
+  showCancel,
   onCancel
 }: {
   status: PublicAgentStatus | undefined;
   activity: GenerateActivityState;
   elapsed: string;
+  showCancel: boolean;
   onCancel: () => void;
 }) {
   const isWorking = activity.status === "running" && !isWaitingForUser(activity);
@@ -437,7 +468,7 @@ function ActivityStatusRow({
         <span className={styles.statusLabel}>{statusLabel(activity)}</span>
         <span className={styles.elapsed} data-testid="generate-activity-elapsed">{elapsed}</span>
       </div>
-      {isWorking || isWaiting || isRecoverable ? (
+      {showCancel && (isWorking || isWaiting || isRecoverable) ? (
         <Button
           size="sm"
           variant="ghost"
@@ -447,7 +478,7 @@ function ActivityStatusRow({
           onClick={onCancel}
           data-testid="cancel-generate"
         >
-          {activity.cancelRequested ? "Cancelling" : isRecoverable ? "End interrupted run" : "Cancel"}
+          {activity.cancelRequested ? "Cancelling" : isRecoverable ? "End interrupted run" : "Cancel run"}
         </Button>
       ) : null}
       {status?.message && activity.status !== "cancelled" && (activity.status !== "ready" || status.phase === "ready") ? (
@@ -461,11 +492,13 @@ function QuestionCard({
   questions,
   canSubmit,
   cancelled,
+  questionVoice,
   onAnswer
 }: {
   questions: VdtAgentQuestion[];
   canSubmit: boolean;
   cancelled: boolean;
+  questionVoice: QuestionVoiceControl | undefined;
   onAnswer: ((answers: AgentAnswerSubmission) => void) | undefined;
 }) {
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string[]>>({});
@@ -495,6 +528,7 @@ function QuestionCard({
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSubmit || !canContinue) return;
+        questionVoice?.onManualAnswer();
         const payload: AgentAnswerPayload[] = [];
         for (const question of questions) {
           const selected = selectedByQuestion[question.id] ?? [];
@@ -522,6 +556,7 @@ function QuestionCard({
             <div className="font-medium">{question.question}</div>
             {question.reason ? <div className="mt-1 text-xs leading-5 text-muted">{question.reason}</div> : null}
           </div>
+          {questionVoice?.target.questionId === question.id ? questionVoice.control : null}
           {question.options && question.options.length > 0 ? (
             <div className="grid gap-2">
               {question.options.map((option, index) => {
@@ -541,6 +576,7 @@ function QuestionCard({
                         name={question.id}
                         value={value}
                         checked={checked}
+                        disabled={!canSubmit}
                         onChange={() => setSelectedByQuestion((current) => ({
                           ...current,
                           [question.id]: isMulti
@@ -560,6 +596,7 @@ function QuestionCard({
                               className="mt-1 w-full rounded-md border border-line bg-white px-2 py-1.5 text-sm text-ink"
                               type={field.kind === "number" ? "number" : "text"}
                               placeholder={field.placeholder}
+                              disabled={!canSubmit}
                               onChange={(event) => setFieldValues((current) => ({
                                 ...current,
                                 [question.id]: {
@@ -587,13 +624,13 @@ function QuestionCard({
                     className="mt-1 w-full rounded-md border border-line bg-white px-2 py-1.5 text-sm text-ink"
                     type={field.kind === "number" ? "number" : "text"}
                     placeholder={field.placeholder}
-                    onChange={(event) => setFieldValues((current) => ({
-                      ...current,
-                      [question.id]: {
-                        ...(current[question.id] ?? {}),
-                        [field.id]: event.target.value
-                      }
-                    }))}
+                    disabled={!canSubmit}
+                    onChange={(event) => {
+                      questionVoice?.onManualAnswer();
+                      setFieldValues((current) => ({ ...current, [question.id]: {
+                        ...(current[question.id] ?? {}), [field.id]: event.target.value
+                      } }));
+                    }}
                     data-testid={`agent-answer-field-${question.id}-${field.id}`}
                   />
                 </label>
@@ -608,6 +645,7 @@ function QuestionCard({
               className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-blue-100"
               rows={2}
               value={freeTextByQuestion[question.id] ?? ""}
+              disabled={!canSubmit}
               onChange={(event) => setFreeTextByQuestion((current) => ({ ...current, [question.id]: event.target.value }))}
               data-testid={questions.length === 1 ? "agent-answer-freeform" : `agent-answer-freeform-${question.id}`}
               placeholder={question.placeholder ?? (question.options && question.options.length > 0 ? "Custom answer or additional context" : "Additional details")}
@@ -621,8 +659,9 @@ function QuestionCard({
         variant="primary"
         disabled={!canSubmit || !canContinue}
         data-testid="continue-agent"
+        data-voice-answer={questionVoice ? "true" : undefined}
       >
-        {cancelled ? "Cancelled" : canSubmit ? "Send answer" : "Working..."}
+        {cancelled ? "Cancelled" : canSubmit ? "Send answer" : "Previous question"}
       </Button>
     </form>
   );
@@ -644,6 +683,9 @@ function MutationPreviewCard({
     <section
       className={clsx("border border-blue-200 bg-blue-50 px-3 py-3", styles.actionCard)}
       data-testid="mutation-preview"
+      data-proposal-id={proposal.id}
+      data-proposal-run={proposal.runId}
+      data-proposal-revision={proposal.baseRevisionId}
     >
       <div className="text-sm font-semibold text-ink">{proposal.title}</div>
       <p className="mt-1 text-sm leading-5 text-graphite">{proposal.summary}</p>
@@ -786,6 +828,8 @@ function workbookDownloads(run: GenerateActivityState["runtimeAgentRun"]) {
 export function GenerateActivityPanel({
   activity,
   onCancel,
+  cancelInToolbar = false,
+  questionVoice,
   onSavedCopy,
   onAnswer,
   onContinueRun,
@@ -794,6 +838,8 @@ export function GenerateActivityPanel({
 }: {
   activity: GenerateActivityState;
   onCancel: () => void;
+  cancelInToolbar?: boolean | undefined;
+  questionVoice?: QuestionVoiceControl | undefined;
   onSavedCopy?: (() => void) | undefined;
   onAnswer?: (answers: AgentAnswerSubmission) => void;
   onContinueRun?: () => void;
@@ -820,6 +866,47 @@ export function GenerateActivityPanel({
     : fallbackChatMessages(activity);
   const pendingMutation = activity.runtimeAgentRun?.pendingMutationProposal;
   const visibleMessages = messages.filter((message) => message.kind !== "status");
+  const runtime = activity.runtimeAgentRun;
+  const questionEvents = (runtime?.events ?? []).filter(event => event.runId === activity.runId
+    && (event.type === "clarifying_questions" || event.type === "user_answer_received"));
+  const questionEvent = questionEvents.slice().reverse().find(event => event.type === "clarifying_questions");
+  const previousQuestionEvents = questionEvent ? questionEvents.slice(0, questionEvents.indexOf(questionEvent)) : [];
+  const precedingEvent = previousQuestionEvents.at(-1);
+  const previousOccurrence = previousQuestionEvents.slice().reverse().find(event => event.type === "user_answer_received"
+    || typeof event.metadata?.questionSetId === "string");
+  const awaitingAnswer = activity.status === "needs_user_input" && (!runtime || runtime.status === "needs_user_input");
+  const latestInteraction = awaitingAnswer ? visibleMessages.slice().reverse().find(message => message.runId === activity.runId
+    && ((message.role === "assistant" && message.kind === "question") || (message.role === "user" && message.kind === "answer"))) : undefined;
+  const latestQuestion = latestInteraction?.kind === "question" ? latestInteraction : undefined;
+  const reportedQuestions = awaitingAnswer ? (runtime ? runtime.pendingQuestions : questionsFromActivity(activity)) : undefined;
+  const pendingQuestions = reportedQuestions?.length ? reportedQuestions : !runtime && awaitingAnswer ? latestQuestion?.questions : undefined;
+  const pendingSignature = questionFormSignature(pendingQuestions);
+  const questionSetId = questionEvent?.metadata?.questionSetId;
+  // Keep the form mounted when its legacy event is followed by the canonical event for the same question.
+  const questionAnchor = typeof questionSetId === "string" && precedingEvent?.type === "clarifying_questions"
+    && precedingEvent.metadata?.questionSetId === undefined && questionFormSignature(precedingEvent.questions) === pendingSignature
+    ? precedingEvent : questionEvent;
+  const activeQuestionKey = `${activity.runId}:current-question:${questionAnchor?.id ?? ""}:${pendingSignature}`;
+  let activeQuestion: AgentChatMessage | undefined;
+  if (pendingQuestions?.length) {
+    if (latestQuestion && questionFormSignature(latestQuestion.questions) === pendingSignature
+      && (!previousOccurrence || Date.parse(latestQuestion.createdAt) > Date.parse(previousOccurrence.timestamp))) {
+      activeQuestion = { ...latestQuestion, questions: pendingQuestions };
+      visibleMessages[visibleMessages.indexOf(latestQuestion)] = activeQuestion;
+    } else {
+      activeQuestion = { id: activeQuestionKey, runId: activity.runId,
+        role: "assistant", kind: "question", questions: pendingQuestions, createdAt: activity.updatedAt };
+      visibleMessages.push(activeQuestion);
+    }
+  }
+  const destination = questionVoice && awaitingAnswer ? dialogueDestination({ runId: activity.runId,
+    status: "needs_user_input",
+    projectId: runtime?.request?.workspace?.projectId, vdtId: runtime?.request?.workspace?.vdtId,
+    questionSetId: typeof questionSetId === "string" ? questionSetId : undefined,
+    questionEventId: questionEvent?.id, questions: pendingQuestions
+  }) : undefined;
+  const currentVoice = questionVoice && destination?.kind === "answer" && questionMatches(questionVoice.target, destination) ? questionVoice : undefined;
+  const cancelInRetryCard = activity.retryableError !== undefined && activity.status === "needs_user_input";
   const latestStatusMessage = [...messages].reverse().find((message) => message.kind === "status");
   const publicStatus = latestStatusMessage?.status ?? activity.publicStatus;
   const resolvedPublicStatus = activity.status === "error" && activity.message
@@ -842,10 +929,11 @@ export function GenerateActivityPanel({
       <div className={styles.thread} data-testid="agent-chat-thread">
         {visibleMessages.map((message) => (
           <MessageBubble
-            key={message.id}
+            key={message === activeQuestion ? activeQuestionKey : message.id}
             message={message}
-            canAnswer={activity.status === "needs_user_input" && message.kind === "question"}
+            canAnswer={message === activeQuestion}
             cancelled={activity.status === "cancelled"}
+            questionVoice={message === activeQuestion ? currentVoice : undefined}
             onAnswer={onAnswer}
           />
         ))}
@@ -866,6 +954,7 @@ export function GenerateActivityPanel({
         status={resolvedPublicStatus}
         activity={activity}
         elapsed={elapsed}
+        showCancel={!cancelInToolbar && !cancelInRetryCard}
         onCancel={onCancel}
       />
 
@@ -954,14 +1043,15 @@ export function GenerateActivityPanel({
                   </Button>
                 </>
               )}
-              <Button
+              {!cancelInToolbar ? <Button
                 size="sm"
                 icon={<X className="h-3.5 w-3.5" />}
+                disabled={activity.cancelRequested}
                 onClick={onCancel}
                 data-testid="cancel-generate"
               >
-                Cancel
-              </Button>
+                {activity.cancelRequested ? "Cancelling" : "Cancel run"}
+              </Button> : null}
             </div>
           ) : null}
         </div>

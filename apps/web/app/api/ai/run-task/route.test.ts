@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildChatStarterInput, productionVolumeProject } from "@vdt-studio/vdt-core";
+import * as pinnedProvider from "@/lib/pinned-provider-fetch";
+import * as providerSecurity from "@/lib/provider-target-security";
 import { POST } from "./route";
 
 function jsonRequest(body: unknown) {
@@ -29,6 +31,7 @@ describe("run-task API route", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("uses the selected API model for one bounded chat starter completion", async () => {
@@ -52,6 +55,49 @@ describe("run-task API route", () => {
     const sent = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
     expect(sent).toMatchObject({ model: "gpt-5-mini", max_completion_tokens: 1024 });
     expect(sent).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("checks the asserted API identity before pinning and invoking the selected model", async () => {
+    const prompts = ["What drives production volume?", "Where is downtime counted?", "Which assumptions need data?"];
+    const target = { url: new URL("https://api.openai.com/v1/chat/completions"), address: "203.0.113.1", family: 4 };
+    const resolve = vi.spyOn(providerSecurity, "resolvePublicProviderTarget").mockResolvedValue(target);
+    const complete = vi.spyOn(pinnedProvider, "fetchPinnedProvider").mockResolvedValue(Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ prompts }) } }]
+    }));
+    const ordinaryFetch = vi.fn();
+    vi.stubGlobal("fetch", ordinaryFetch);
+    const body = {
+      taskType: "suggest_chat_starters", providerId: "openai_compatible",
+      providerConfig: { baseUrl: "https://api.openai.com/v1", apiKey: "test-key", model: "gpt-5-mini", reasoningEffort: "high" },
+      input: buildChatStarterInput(productionVolumeProject, "en")
+    };
+    const expectedExecution = {
+      profileVersion: 1, providerId: "openai_compatible", modelId: "gpt-5-mini", modelRevision: null
+    };
+    for (const invalid of [
+      { ...expectedExecution, mode: "local" },
+      { ...expectedExecution, mode: "cli_subscription" },
+      { ...expectedExecution, mode: "api_keys", modelId: "different-model" },
+      { ...expectedExecution, mode: "api_keys", modelRevision: "different-revision" }
+    ]) {
+      expect((await POST(jsonRequest({ ...body, expectedExecution: invalid }))).status).toBe(400);
+    }
+    const mixed = await POST(jsonRequest({ ...body, executionBindingId: "opaque-agent-binding",
+      expectedExecution: { ...expectedExecution, mode: "api_keys" } }));
+    expect(mixed.status).toBe(400);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(ordinaryFetch).not.toHaveBeenCalled();
+
+    const valid = await POST(jsonRequest({ ...body, expectedExecution: { ...expectedExecution, mode: "api_keys" } }));
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toMatchObject({ result: { kind: "chat_starters", prompts } });
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    const envelope = JSON.parse(complete.mock.calls[0]![1].body);
+    expect(envelope.model).toBe("gpt-5-mini");
+    expect(envelope).not.toHaveProperty("reasoning_effort");
+    expect(ordinaryFetch).not.toHaveBeenCalled();
   });
 
   it("rejects generate_tree with 400 before provider execution", async () => {

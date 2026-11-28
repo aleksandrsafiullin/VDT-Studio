@@ -124,6 +124,8 @@ export async function readAvailableSkill(id: string, version?: number, repositor
   return { skill, card };
 }
 
+const normalizeSkillQuery = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
 /** Provisional lexical recall only. The agent can explicitly select another
  * skill after reading it; scores are never semantic confidence. */
 export function rankSkillCandidates(query: string, library: VdtSkillLibrary) {
@@ -137,6 +139,57 @@ export function rankSkillCandidates(query: string, library: VdtSkillLibrary) {
   }).filter(candidate => candidate.score > 0).sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
   const universal = library.byId.get(UNIVERSAL_SKILL_ID);
   return scored.length ? scored : universal ? [{ skill: universal, score: 1, matchedTerms: [] as string[], reason: "Universal skill: no specific preliminary match was found." }] : [];
+}
+
+const skillScopeSentences = new Intl.Segmenter(undefined, { granularity: "sentence" });
+
+/** Backstop for an empty agent search. Only declared metadata and literal
+ * user text contribute. Return a small list for exact reads and fit review. */
+export function recallScopedSkillCandidates(literalScope: string, library: VdtSkillLibrary): VdtSkill[] {
+  const boundedScope = literalScope.slice(0, 4_000).trim();
+  const scope = ` ${normalizeSkillQuery(boundedScope)} `;
+  const leadingStatement = skillScopeSentences.segment(boundedScope).containing(0)?.segment ?? "";
+  const leadingTokens = new Set(normalizeSkillQuery(leadingStatement).split(" "));
+  const queryTokens = new Set(scope.trim().split(" ").filter(token => token.length >= 5));
+  const phraseFrequency = new Map<string, number>();
+  const frequency = new Map<string, number>();
+  const documents = library.skills.map(skill => {
+    const outputs = [...new Set(skill.frontmatter.outputs.map(normalizeSkillQuery).filter(Boolean))];
+    for (const output of outputs) {
+      if (output.includes(" ") && scope.includes(` ${output} `)) {
+        phraseFrequency.set(output, (phraseFrequency.get(output) ?? 0) + 1);
+      }
+    }
+    const terms = [skill.title, ...skill.frontmatter.kpiPatterns, ...skill.frontmatter.patterns].map(normalizeSkillQuery);
+    const intentMatches = new Set(terms.flatMap(term => term.split(" ")).filter(token => queryTokens.has(token)));
+    const matches = new Set([...intentMatches, ...outputs.flatMap(output => output.split(" ")).filter(token => queryTokens.has(token))]);
+    // Required inputs make a token less distinctive without adding match evidence.
+    const corpusTokens = new Set([...matches, ...skill.frontmatter.requires
+      .flatMap(term => normalizeSkillQuery(term).split(" ")).filter(token => queryTokens.has(token))]);
+    for (const token of corpusTokens) frequency.set(token, (frequency.get(token) ?? 0) + 1);
+    return { skill, outputs, matches, intentMatches };
+  });
+
+  const candidates = documents.flatMap(({ skill, outputs, matches, intentMatches }) => {
+    if (skill.id === UNIVERSAL_SKILL_ID) return [];
+    const distinctive = [...matches].filter(token => frequency.get(token) === 1);
+    const exactPhrase = outputs.some(output => phraseFrequency.get(output) === 1);
+    if (!exactPhrase && !distinctive.length) return [];
+    const evidence = outputs.filter(output => distinctive.some(token => output.split(" ").includes(token)));
+    const exactOutput = exactPhrase || evidence.some(output => !output.includes(" ") && scope.includes(` ${output} `)
+      && (leadingTokens.has(output) || intentMatches.has(output)));
+    const outputFragments = evidence.filter(output => output.includes(" ")).flatMap(output => output.split(" "))
+      .filter(token => token.length >= 7 && distinctive.includes(token));
+    const tier = exactOutput ? 3 : outputFragments.length ? 2 : 1;
+    // Weak token overlap needs evidence from the declared applicability of the Skill.
+    if (tier === 1 && (matches.size < 2 || !distinctive.some(token => intentMatches.has(token)))) return [];
+    const leadingFragment = tier === 2 && outputFragments.some(token => leadingTokens.has(token));
+    return [{ skill, tier, leadingFragment, distinctive: distinctive.length, matches: matches.size }];
+  }).sort((a, b) => b.tier - a.tier || Number(b.leadingFragment) - Number(a.leadingFragment) || b.distinctive - a.distinctive
+    || b.matches - a.matches || (a.skill.id < b.skill.id ? -1 : a.skill.id > b.skill.id ? 1 : 0));
+  const strongest = candidates[0];
+  return candidates.filter(candidate => candidate.tier === strongest?.tier && candidate.leadingFragment === strongest.leadingFragment)
+    .slice(0, 2).map(candidate => candidate.skill);
 }
 
 export async function pinAvailableSkill(id: string, source: SkillPin["source"], reason: string, version?: number, repository = new LocalSkillRepository()): Promise<SkillPin> {

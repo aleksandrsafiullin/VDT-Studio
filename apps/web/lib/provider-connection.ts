@@ -14,7 +14,7 @@ export interface ProviderConnectionCheck {
 export function providerConnectionKey(settings: ExecutionSettings): string | undefined {
   if (resolveExecutionCategory(settings) === "cli_subscriptions") return undefined;
   const { providerId, providerConfig: config = {} } = resolveExecutionSettings(settings);
-  if (providerId === "mock") return undefined;
+  if (providerId === "mock" || providerId === "apple_foundation_models") return undefined;
   return JSON.stringify([providerId, config.backendId, config.endpoint ?? config.baseUrl, config.model, config.deployment, config.apiVersion, config.anthropicVersion]);
 }
 

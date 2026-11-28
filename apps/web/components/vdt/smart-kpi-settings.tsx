@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ModelReasoningValue } from "@vdt-studio/ai-harness/browser";
+import { FAST_LOCAL_REASONING, resolveLocalReasoning } from "@vdt-studio/model-bridge/reasoning";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { providerModelSource } from "@/lib/provider-model-catalog";
@@ -22,23 +23,27 @@ export function SmartKpiSettings() {
   const execution = resolveExecutionSettings(effective), chat = resolveExecutionSettings(settings);
   const source = providerModelSource(effective), sourceKey = smartKpiSourceKey(effective);
   const modelId = String(execution.providerConfig?.model ?? "auto"), apiKey = source.apiKey;
+  const followsApple = execution.providerId === "apple_foundation_models";
   const needsKey = source.source.category === "byok" && source.source.providerId !== "mock" && !apiKey?.trim();
   const request = useMemo(() => ({ identity: {}, sourceKey, apiKey, modelId, pairingToken, refresh }), [sourceKey, apiKey, modelId, pairingToken, refresh]);
   const current = loaded?.identity === request.identity ? loaded : undefined;
   const rememberedModels = !pairingToken && source.source.category === "cli_subscriptions" && settings.selectedCliAgentId ? discovered[settings.selectedCliAgentId] ?? [] : [];
   const models = [...new Set([...(current?.models ?? rememberedModels), ...(preferences.model ? [preferences.model] : [])])];
   const selectedReasoning = smartKpiReasoning(settings), values = current?.reasoning;
+  const local = source.source.category === "local_models";
+  const localFast = local && values?.some(value => value !== false) ? resolveLocalReasoning({ values }, FAST_LOCAL_REASONING).value : undefined;
+  const showReasoning = !followsApple && (!local || localFast !== undefined || Boolean(values?.some(value => value !== false)));
   const supportsOff = values?.some(isReasoningOffValue), offUnsupported = values !== undefined && !supportsOff;
   const levels = [...new Set(values?.filter(value => !isReasoningOffValue(value)).map(value => JSON.stringify(value)) ?? [])].map(value => JSON.parse(value) as ModelReasoningValue);
   const selectedKey = JSON.stringify(selectedReasoning ?? null);
-  const missingLevel = selectedReasoning !== undefined && selectedReasoning !== false && !levels.includes(selectedReasoning);
+  const missingLevel = selectedReasoning !== undefined && selectedReasoning !== false && selectedReasoning !== FAST_LOCAL_REASONING && !levels.includes(selectedReasoning);
 
   useEffect(() => { setManualModel(""); }, [sourceKey]);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController(), identity = request.identity;
-    if (needsKey) {
+    if (followsApple || needsKey) {
       setLoaded({ identity, loading: false, models: [] });
       return () => { active = false; controller.abort(); };
     }
@@ -65,26 +70,27 @@ export function SmartKpiSettings() {
   return <section className="space-y-3 rounded-xl border border-line p-4" data-testid="smart-kpi-settings" aria-label="Suggested KPI settings">
     <div className="flex items-start justify-between gap-3">
       <div><h3>Suggested KPI</h3><p className="mt-1 text-xs leading-5 text-muted">Uses the selected connection. Model and reasoning are separate from chat.</p></div>
-      <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)} disabled={current?.loading} aria-label="Refresh Suggested KPI model options">Refresh</Button>
+      {!followsApple && <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)} disabled={current?.loading} aria-label="Refresh Suggested KPI model options">Refresh</Button>}
     </div>
     <div className="grid gap-3 sm:grid-cols-2">
       <Field label="Model">
-        <SelectInput aria-label="Suggested KPI model" data-testid="smart-kpi-model" value={preferences.model ?? ""} onChange={event => setPreference({ model: event.target.value || null })}>
-          <option value="">Same as chat · {String(chat.providerConfig?.model ?? "Provider default")}</option>
+        <SelectInput aria-label="Suggested KPI model" data-testid="smart-kpi-model" disabled={followsApple} value={preferences.model ?? ""} onChange={event => setPreference({ model: event.target.value || null })}>
+          <option value="">Same as chat · {String(chat.providerId === "apple_foundation_models" ? "Apple on-device" : chat.providerConfig?.model ?? "Provider default")}</option>
           {models.map(model => <option key={model} value={model}>{model}</option>)}
         </SelectInput>
       </Field>
-      <Field label="Reasoning">
+      {showReasoning ? <Field label="Reasoning">
         <SelectInput aria-label="Suggested KPI reasoning" data-testid="smart-kpi-reasoning" value={selectedKey}
           onChange={event => setPreference({ reasoning: JSON.parse(event.target.value) as ModelReasoningValue | null })}>
           <option value="false" disabled={offUnsupported}>Off{offUnsupported ? " — unsupported" : values === undefined ? " (requested)" : ""}</option>
           <option value="null">Provider default</option>
+          {localFast !== undefined ? <option value={JSON.stringify(FAST_LOCAL_REASONING)}>Fast ({smartReasoningLabel(localFast)})</option> : null}
           {levels.map(level => <option key={JSON.stringify(level)} value={JSON.stringify(level)}>{smartReasoningLabel(level)}</option>)}
           {missingLevel ? <option value={selectedKey} disabled>{smartReasoningLabel(selectedReasoning)} — recheck availability</option> : null}
         </SelectInput>
-      </Field>
+      </Field> : null}
     </div>
-    <p className="text-xs leading-5 text-muted">{source.source.category === "cli_subscriptions" ? "CLI suggestions use the provider’s default reasoning until you choose a level." : "Reasoning is requested off by default."} Changes apply to new preparations.</p>
+    <p className="text-xs leading-5 text-muted">{source.source.category === "cli_subscriptions" ? "CLI suggestions use the provider’s default reasoning until you choose a level." : local ? "Fast requests Off or the lowest known supported level." : "Reasoning is requested off by default."} Changes apply to new preparations.</p>
     {selectedReasoning === false && offUnsupported ? <p className="text-xs leading-5 text-amber-700" role="status">This model does not advertise a way to disable reasoning. Choose another model or explicitly select Provider default.</p> : null}
     {current?.loading ? <p className="text-xs text-muted" role="status">Checking model options…</p> : null}
     {needsKey ? <p className="text-xs text-muted" role="status">Add an API key in provider settings above to load models and reasoning options.</p> : null}

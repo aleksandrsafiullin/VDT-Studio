@@ -1,5 +1,192 @@
 # Production Readiness
 
+## Apple local AI and voice (2026-11-25)
+
+P0 shipping remains **HOLD**. Preview builds can include the two signed Apple
+helpers and seal the first-launch default off. Deterministic qualification
+covers English and Russian automatic Skill discovery, unresolved method
+questions, pins, catalog gaps and saved results through the Supervisor and
+SQLite. A controlled professional run reopened the exact Recovery export with
+Baseline active. Excel for Mac recalculated the workbook after a 110 to 120 h
+downtime edit. Chrome restarts preserved explicit Ollama, fixture Codex CLI and
+configured Anthropic choices. The CLI subscription Undo regression passed
+in Chrome with detected-provider fixtures. Restoring the only ready
+provider kept its selection across reload and rescan. Restoring a
+different provider preserved an existing selection.
+
+The signed ARM64 preview passed package integrity, a fresh mounted-copy start
+and strict unauthenticated loopback rejection. The first installed UI admitted
+manual Apple and exposed contention from speculative local inference and a
+Voice Settings routing label. The rebuilt preview passed those two installed
+checks after unlock. Its first ordinary Automatic request entered recovery
+before any tool, and SQLite retained the original revision. The source repair
+passed live Automatic admission and individual Skill reads with the signed
+helper. An earlier clean signed install admitted the ordinary structural
+request and browsed the catalog under an outbound IP restriction with the
+Skill picker untouched. It reported a false catalog gap over blank measurements
+and paused. A read-only SQLite check confirmed the original draft and no
+verified finish. The updated source requires scoped gap evidence and preserves
+Apple readiness when an empty credential vault restores. A fresh Chrome
+profile with the development switch enabled auto-selected the real system
+model with the Skill picker untouched. The English serial-capacity journey
+read the Skill, paused for one relationship answer with the saved head intact,
+selected the exact read version, and reached a persisted verified finish.
+After the server and browser restarted, the saved revision reopened with the
+serial minimum formula and two blank t/h inputs. Five arithmetic probes
+passed. This qualifies one source-based run on the tested Mac.
+The reviewed ARM64 preview starts in a clean profile under app outbound IP
+restriction. Manual Apple admission and the local Voice Input label passed.
+The shipping switch stays sealed off. Repeated live qualification, the signed
+default-on journey, system offline acceptance and notarized distribution
+still gate rollout.
+
+A separately signed Developer ID qualification build seals the default on.
+The exact source passed independent route tests, but all three live repeat
+trials returned `invalid_output` after the material-flow answer and before
+Skill selection. Each original saved graph reopened unchanged. The
+qualification image passed strict signatures and a fresh offline mount,
+copy and launch. Its automated scenario stopped before the first request
+at the native UI control limit. See the dated execution ledger for the
+separate source, package and connectivity evidence.
+
+The later candidate accepts a longer verbatim Skill excerpt and checks
+redundant compact questions. The verbatim-evidence cohort passed two of
+three. The next exact-source sample passed and reopened the verified saved
+tree. One fresh signed profile selected Apple automatically, asked while
+offline, then finished after the answer arrived with system Wi-Fi restored.
+The app retained loopback-only access. Its saved tree reopened byte-for-byte
+after a restart in a separate offline window. A second clean profile
+submitted both turns in the same physical offline window. It entered
+recovery after a successful second Skill search. The original blank
+revision reopened unchanged after diagnostic restart. The signed default
+remains validation-only.
+
+The final matched typed source cohort passed three of three. The signed QA
+image then passed the clean-install English text journey while the Mac was
+physically offline from installation through saved finish. Apple was
+selected automatically and the Skill picker stayed untouched. A separate
+offline restart found the same saved graph bytes. The same signed
+installation later showed the formula and its two blank measurements in
+the editor with Wi-Fi restored and app access restricted to loopback.
+
+Two later attempts with the newest signed QA image verified the clean
+install and launch during a full system disconnect. Neither reached the
+initial workspace checkpoint. One stopped on a transient native loading
+state, and the other lost the remote desktop control path. The
+independent watchdog restored the original network path on both
+attempts. Two later supervised windows reached the analytical route
+from a fresh system-offline install. In the first, the saved head stayed
+unchanged at the correct question, then the fixture checker stopped on
+a final-period mismatch. In the repeat, Apple reported a gap after
+listing the applicable capacity card. It saved the correct minimum with
+both inputs blank without first asking about material flow or selecting
+the Skill. The arithmetic passed and the intended journey failed.
+The combined physical dialogue and latest-image system-offline reopen is
+scheduled for final acceptance.
+
+The source now checks an exact user-grounded count and per-item rate in
+compact Apple runs with a verified catalog gap. The prior false finish
+had both leaves labelled as hours and used a minimum. Focused tests now
+reject that result when the review identifies the product. Exact role
+spans and a compatible rate basis are required. Durable editor and
+cross-backend relationship parity still need separate qualification.
+All three normal archive source trials found a genuine catalog gap from
+the original brief. One saved the two blank operands and correct product,
+passed 16 independent arithmetic probes and reopened the exact bytes
+under a network-denied signed helper. One failed compact plan validation
+before writing. The third persisted a structural finish for an extra
+measure and an incorrect minimum. The independent business oracle
+rejected that tree. The current serial replay passed nine probes and
+exact reopen after one material answer. The latest installed full
+system-offline and physical audio checks are separate release gates.
+
+The shared v2 quantity-rate relationship is available in the editor and
+Gateway. Chrome saved and reopened the exact operand roles and units
+after explicit confirmation. The editor can still retain an invalid
+manual formula for repair. Shared readiness requires exact same-scale
+units and a direct product, and the Apple compact formula path uses the
+saved relationship. This provides controlled source and browser evidence.
+
+The live system model on the tested Apple Silicon Mac completed a small English
+guided request and the unpinned serial tree above. Suggested KPI and Data
+Discovery have separate live gates. The latest live Smart request returned
+the correct minimum on its first attempt. The shared Apply compiler and
+production revision endpoint saved it. The reopened result matched five
+independent probes. The three-row Data case saved verified source lineage
+and reopened at 1.75 h/day. The corrected full English Q01 CSV then passed
+the production source route with the Developer ID helper. Apply required
+confirmation, and the reopened revision matched all four independent
+category totals across 14,997 rows.
+The same corrected case passed on signed yj3fYb under app-level loopback
+confinement. It retained the first model mapping, waited for explicit
+business scope confirmation, saved all four independently checked
+categories, and reopened the matching revision and source lineage in a
+second process. Whole-system offline Data remains open. Native Smart
+generated an additive proposal for an explicitly serial target under
+the same app-level confinement. Its saved revision stayed unchanged.
+The signed follow-up fixed the cold Prepare control. One explicit
+attempt produced no proposal and left the measured revision unchanged.
+A separate exact signed control with the process-capacity Skill
+preconfigured produced the two stage inputs and the serial minimum.
+After the operator entered 70 and 90 t/h and applied, a new process
+reopened the same graph bytes at 70 t/h. Signed EPzTyj then passed
+the same native Smart workflow in a fresh profile with the default
+settings and no Skill pin. The app remained confined to loopback.
+Two native whole-system offline attempts reached launch, then timed out
+before completing the journey. Both restored Wi-Fi and removed their
+owned profiles. Whole-system offline Smart and Data remain open.
+A later archive source replay with the signed helper recorded a genuine
+gap and saved two blank count and hours-per-item inputs and their
+product. All 16 independent probes and the exact reopened bytes passed.
+The signed package predates that archive correction. Live selection of
+the authored caption-review Skill remains open.
+The explicit Settings inference test passed its mounted Chrome controls
+and separately returned 2,000 USD through the signed Apple helper in a
+network-denied source worker. The Smart and Data production source routes
+both subsequently saved and reopened their verified results inside a monitored
+whole-Mac offline window. Smart kept two editable blank inputs and its serial
+minimum. Data processed 14,997 rows. The signed installed UI in the same
+whole-host boundary and the signed-app diagnostic remain open. The automation
+runner lacks macOS Accessibility and event-posting permission.
+The host reported Russian
+analytical and recognition locales unsupported, and English recognition needed
+an OS asset. Native system voices generated English and Russian PCM and the
+signed app prepared a local English preview. A later signed run recognized
+physical microphone input with Whisper. The operator reported a silent
+clarification, and the retrieved conversation failed Apple tool validation
+before it saved a revision. Audible two-turn playback and headset
+qualification remain open. Source checks now cover a
+private macOS bridge for automatic plain-text answers in an explicitly
+selected English or Russian locale. It requires proof from the current
+recognition job, question and saved and working revision. Other captures
+remain editable. Approvals require the existing visual review. The current
+source uses shorter spoken fragments and the exact pending Supervisor
+checkpoint to avoid silently failing on the recorded English question
+or speaking both its preliminary and final copies. The fragments were
+verified against the Developer ID helper. Physical conversation requires
+a new signed run.
+
+The real Apple model passed two exact serial first-launch source replays.
+It waited for the stage relationship, selected the previously read Process
+Capacity method after the answer, and reopened the saved minimum with two
+editable blank capacities. The real historical Recovery workbook passed
+verified finish, download and an independent byte comparison. A separately
+signed validation artifact passed native startup and exact seeded SQLite
+readback across two launches in a monitored whole-Mac offline window. The
+composer journey on the current signed installation and physical speech
+remain release gates. The authored-Skill challenge has separate live and
+controlled records in the execution ledger.
+
+An isolated no-cloud Ollama transport returned the expected exact answers in
+nine controlled requests. The exact Qwen 4B follow-up also observed natural
+idle eviction at five minutes. A completed novice or professional journey under the
+same isolation remains open. The installed app opened and saved a blank VDT
+with its inherited outbound IP restricted to its own listener. The Ollama
+catalog was unreachable there. macOS model and WebKit network services require
+separate egress observation. The
+release decisions for each alternate backend, voice mode and optional P1 lane
+are recorded with their evidence. [Execution ledger](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md)
+
 ## AI-first workspace
 
 Both the professional scenario/version/export journey and the novice
@@ -981,7 +1168,14 @@ Codex now selects the newest recognizable safe installation already on host `PAT
 
 ## Local Voice Input Alpha
 
-Local whisper.cpp dictation, incremental draft updates, confirmed model downloads and the desktop private-IPC path are implemented. Targeted automated checks cover the request/download/audio/cancellation boundaries. Windows native execution, packaged WebView microphone permissions, real-user Russian accuracy/latency and abrupt-shutdown cleanup remain unqualified. This capability does not change the production/release decision. See [VOICE_INPUT.md](VOICE_INPUT.md).
+Local whisper.cpp dictation, incremental draft updates, confirmed model
+downloads and the desktop private-IPC path are implemented. The current
+runtime streams canonical audio through a private pipe and requires the
+engine's exact byte acknowledgment. An abrupt-exit test and the pinned
+arm64 engine's synthetic recognition, cancellation and reuse passed.
+Windows native execution, packaged WebView permissions and real-user
+Russian accuracy and latency remain unqualified. See
+[VOICE_INPUT.md](VOICE_INPUT.md).
 
 ## W0.1 Atomic Revision Closure
 
@@ -1438,3 +1632,73 @@ delivery rather than guaranteed model obedience. Live semantic compliance,
 account sync, packaged-native/Windows qualification and full production release
 are not established. Release remains NO-GO. See
 [ADR-011](adr/ADR-011-personalisation-and-project-rules.md).
+
+### Apple local AI P0 follow-up (2026-11-27)
+
+The stored Smart handoff passed a mounted Chrome and SQLite loss-and-reload
+check. The recovered card matched the saved head. Undo advanced the head
+and cleared the old confirmation. The public Apple default remains gated.
+The real Apple authored-Skill cases still lack a verified selection and saved
+finish. The isolated CPU-only 4B binding has a passing diagnostic. Its ordinary
+Supervisor journey and full context and contention comparisons require separate
+qualification. The exact source, current release decisions and evidence scopes
+are in the [Apple local AI execution ledger](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#first-three-p0-closure-stages-27-november-2026).
+
+The follow-up real Apple XLSX import passed after an explicit grouping update
+in mapping review. The same original brief still lacks a passing autonomous
+grouping result. The installed Codex subscription saved the exact new version
+and delivered its scenario workbook through verified finish. The final
+authored-Skill replays preserved the original trees after the model
+misclassified the counting evidence. P0 remains on hold. See the
+[continuation decisions and receipts](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#p0-authored-skill-xlsx-and-cli-export-continuation-27-november-2026).
+
+The authored Apple follow-up passed controlled resume, exact read and
+construction handoff checks. An experimental question path withheld its
+ambiguous draft and emitted a redundant question in the clear control.
+The candidate removes that path. The live reopens preserved the original
+trees. Live authored-Skill acceptance and P0 shipping remain on hold.
+See the [authored replay evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#r06-authored-skill-and-occurrence-question-continuation-27-november-2026).
+
+The next authored-Skill check reproduced the dual match at the record-source
+boundary. The live model confused quantities from the desk operation with
+sources required by a publishing method. Independent reopens confirmed that
+the rejected trials preserved the original saved revisions. The final
+candidate verified the correct operand evidence in both live controls.
+Apple held at competing-source coverage for both. The controlled question
+path binds the exact unresolved occurrence and the submitted answer to
+the authenticated Skill read. R06 and P0 shipping remain on hold. See the
+[record-source diagnosis and replay evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#r06-authored-record-source-and-exact-overlap-question-27-november-2026).
+
+The subsequent general Apple repair restored actual outcome admission after
+two quote rejections. Fresh tree-building runs still stopped before a
+verified save. In the final inspection regression the incorrect provisional
+Skill activation did not recur, and the required question also did not
+appear. Both final saved heads reopened unchanged. The Apple construction
+lane remains on hold. [General repair and live evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#general-apple-construction-repairs-and-new-briefs-27-november-2026)
+
+The Apple format-repair follow-up verified the live helper's omission decision
+and targeted replacement on synthetic pre-dispatch probes. Focused tests
+covered decline, invalid replies and unchanged neighboring arguments. Full
+Apple tree construction and verified save remain release gates.
+[Format repair evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#apple-format-feedback-and-repair-28-november-2026)
+
+The Apple and Ollama Automatic follow-up validated compact admission and
+exact Skill evidence handling in controlled tests. The live source cohort
+reached the authored Skill read on Apple and catalog discovery on Ollama
+4B. No test tree reached verified finish. The packaged Apple default remains
+gated pending qualification.
+[Automatic follow-up evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#apple-and-ollama-automatic-follow-up-28-november-2026)
+
+A real Apple source-route check verified a selected-KPI input correction,
+including recalculation and reopening the saved revision. The explicit
+Build structure replay found and read the right specialist Skill for the
+contribution brief and stopped at a redundant scope question. New-tree
+construction and the packaged default remain on hold.
+[Practical local work evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#practical-local-structured-work-28-november-2026)
+
+A subsequent source-route greenfield run on the real Apple model built and
+reopened an editable serial-capacity tree with two measured inputs. An
+independent calculation checked the saved formula and both one-input probes.
+The larger greenfield briefs and the Ollama construction path still need
+live qualification. The packaged default remains on hold.
+[Greenfield construction evidence](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md#greenfield-construction-with-local-models-28-november-2026)

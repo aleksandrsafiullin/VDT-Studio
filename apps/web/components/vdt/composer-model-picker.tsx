@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
+import { FAST_LOCAL_REASONING, resolveLocalReasoning } from "@vdt-studio/model-bridge/reasoning";
 import { modelReasoningKey, type ModelReasoningValue } from "@vdt-studio/ai-harness/browser";
 import { useCliConnectionCheck } from "@/lib/cli-connection-state";
 import type { CliRequestReadiness, CliRequestReadinessState } from "@/lib/cli-readiness";
@@ -10,6 +11,8 @@ import { composerModelOptions, reasoningSliderSteps, REASONING_LABELS } from "@/
 import { loadProviderModelCatalog, providerModelSource, type ProviderModelSource } from "@/lib/provider-model-catalog";
 import { providerConnectionKey } from "@/lib/provider-connection";
 import { useProviderConnectionCheck } from "@/lib/provider-connection-state";
+import { appleIsExpected, appleRecoveryMessage } from "@/lib/apple-first-launch";
+import { prepareAppleNativeAgentBinding } from "@/lib/apple-native-client";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./agent-chat.module.css";
@@ -19,7 +22,7 @@ export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessSta
   return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusClass}`} data-testid="execution-mode-status-dot" data-readiness={state} aria-hidden="true" />;
 }
 
-export function ComposerModelPicker({ modelLabel, providerLabel, readiness, locked, onOpenSettings }: {
+export function ComposerModelPicker({ modelLabel: configuredModel, providerLabel: configuredProvider, readiness: configuredReadiness, locked, onOpenSettings }: {
   modelLabel: string;
   providerLabel: string;
   readiness: Pick<CliRequestReadiness, "state" | "label" | "message">;
@@ -30,6 +33,9 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
   const open = view !== null;
   const showModels = view === "models";
   const [manualModel, setManualModel] = useState("");
+  const [appleEnabled, setAppleEnabled] = useState(false);
+  const [applePending, setApplePending] = useState(false);
+  const [appleError, setAppleError] = useState<string>();
   const [modelQuery, setModelQuery] = useState("");
   const [loaded, setLoaded] = useState<{
     identity: object; models?: string[];
@@ -42,6 +48,20 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
   const back = useRef<HTMLButtonElement>(null);
   const id = useId();
   const settings = useVdtStudioStore((state) => state.executionSettings);
+  const appleBinding = useVdtStudioStore(state => state.appleNativePreview?.settings === state.executionSettings
+    ? state.appleNativePreview.binding : undefined);
+  const setAppleBinding = useVdtStudioStore(state => state.setAppleNativePreviewBinding);
+  const appleLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const appleExpected = !locked && appleIsExpected(settings.analyticalSourceChoice, appleLaunch);
+  const modelLabel = appleExpected ? "Apple on-device" : configuredModel;
+  const providerLabel = appleExpected ? "Local" : configuredProvider;
+  const readiness: Pick<CliRequestReadiness, "state" | "label" | "message"> = appleExpected
+    ? appleBinding
+      ? { state: "ready", label: "Connected", message: "Apple will be rechecked when you start a new request." }
+      : { state: appleLaunch?.status === "checking" ? "checking" : "warning",
+          label: appleLaunch?.status === "checking" ? "Checking" : "Connection needs attention",
+          message: appleRecoveryMessage(appleLaunch) }
+    : configuredReadiness;
   const discovered = useVdtStudioStore((state) => state.cliDiscoveredModelsByAgent);
   const setCliModel = useVdtStudioStore((state) => state.setCliModelForAgent);
   const setField = useVdtStudioStore((state) => state.setExecutionSettingsField);
@@ -61,19 +81,55 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
   const options = composerModelOptions(settings, catalog, cliModels, current?.models);
   const visibleModels = options.models.length > 10 ? options.models.filter((model) => model.label.toLowerCase().includes(modelQuery.trim().toLowerCase())) : options.models;
   const execution = resolveExecutionSettings(settings);
+  const capabilities = providerConnection?.capabilities;
+  const localFast = options.category === "local_models" && capabilities?.values.some(value => value !== false)
+    ? resolveLocalReasoning(capabilities, FAST_LOCAL_REASONING).value : undefined;
   const steps: Array<ModelReasoningValue | undefined> = options.category === "cli_subscriptions"
-    ? reasoningSliderSteps(options.reasoningEfforts) : [undefined, ...(providerConnection?.capabilities?.values ?? [])];
-  const hasReasoning = steps.length > 1;
+    ? reasoningSliderSteps(options.reasoningEfforts)
+    : [undefined, ...(localFast === undefined ? [] : [FAST_LOCAL_REASONING]),
+      ...(options.category === "local_models" && !capabilities?.values.some(value => value !== false) ? [] : capabilities?.values ?? [])];
+  const hasReasoning = !appleExpected && steps.length > 1;
   const selectedEffort = options.category === "cli_subscriptions" ? settings.cliModelSelection?.reasoningEffort
     : typeof execution.providerConfig?.modelReasoning === "boolean" || typeof execution.providerConfig?.modelReasoning === "string" || typeof execution.providerConfig?.modelReasoning === "number" ? execution.providerConfig.modelReasoning : undefined;
   const sliderValue = Math.max(0, steps.indexOf(selectedEffort));
-  const reasoningLabel = (value: ModelReasoningValue | undefined) => value === undefined ? "Default" : value === false ? "Off" : value === true ? "On" : typeof value === "number" ? value === 0 ? "Off (0 tokens)" : `${value.toLocaleString()} tokens`
+  const reasoningLabel = (value: ModelReasoningValue | undefined): string => value === undefined ? "Default" : value === FAST_LOCAL_REASONING && options.category === "local_models" ? localFast === undefined ? "Fast" : `Fast (${reasoningLabel(localFast)})` : value === false ? "Off" : value === true ? "On" : typeof value === "number" ? value === 0 ? "Off (0 tokens)" : `${value.toLocaleString()} tokens`
     : REASONING_LABELS[value as ReasoningEffort] ?? value.charAt(0).toUpperCase() + value.slice(1);
   const selectedEffortLabel = reasoningLabel(selectedEffort);
   const effortLabel = selectedEffort === undefined ? "Default reasoning" : selectedEffortLabel;
 
   useEffect(() => {
-    if (!showModels || isCli) return;
+    if (!open || appleExpected) return;
+    const controller = new AbortController();
+    void fetch("/api/agent/bindings/apple", { cache: "no-store", signal: controller.signal })
+      .then(response => response.ok ? response.json() : null)
+      .then(result => { if (!controller.signal.aborted) setAppleEnabled(result?.enabled === true); })
+      .catch(() => { if (!controller.signal.aborted) setAppleEnabled(false); });
+    return () => controller.abort();
+  }, [open, appleExpected]);
+
+  async function previewApple() {
+    if (locked || applePending || appleExpected) return;
+    if (appleBinding) {
+      setAppleBinding();
+      return;
+    }
+    setApplePending(true);
+    setAppleError(undefined);
+    try {
+      const binding = await prepareAppleNativeAgentBinding(navigator.language, AbortSignal.timeout(12_000));
+      const current = useVdtStudioStore.getState();
+      if (current.executionSettings !== settings || current.isGenerating) return;
+      setAppleBinding(binding);
+      setView(null);
+    } catch (error) {
+      setAppleError(error instanceof Error ? error.message : "Apple model preview could not be verified.");
+    } finally {
+      setApplePending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!showModels || isCli || appleExpected) return;
     const controller = new AbortController();
     const { identity } = request;
     setLoaded((previous) => ({ ...(previous?.identity === identity ? previous : {}), identity, loading: true, error: undefined }));
@@ -90,7 +146,7 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
       }));
     });
     return () => controller.abort();
-  }, [request, showModels, isCli]);
+  }, [request, showModels, isCli, appleExpected]);
 
   useEffect(() => {
     if (view === "summary") {
@@ -121,7 +177,8 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
   }, [open, showModels]);
 
   function selectModel(model: string) {
-    if (locked) return;
+    if (locked || appleExpected) return;
+    if (appleBinding) setAppleBinding();
     if (options.category === "cli_subscriptions" && settings.selectedCliAgentId) {
       setCliModel(settings.selectedCliAgentId, model === "auto" ? { source: "agent_default" } : { source: "custom", customModel: model });
     } else setField(options.category === "local_models" ? "localModel" : source.source.providerId === "azure_openai" ? "deployment" : "model", model);
@@ -137,7 +194,7 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
     }
     const key = modelReasoningKey(execution.providerId, execution.providerConfig);
     const selections = Object.fromEntries(Object.entries(settings.modelReasoningBySource ?? {}).filter(([entry]) => entry !== key).slice(-127));
-    if (value !== undefined) selections[key] = value;
+    if (value !== undefined || options.category === "local_models") selections[key] = value ?? null;
     setField("modelReasoningBySource", selections);
   }
 
@@ -154,7 +211,15 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
       </button>
       {open ? (
         <div ref={panel} id={id} role="dialog" aria-label={showModels ? "Select model" : "Model and reasoning"} className={styles.modelPopover} data-testid="composer-model-picker">
-          {showModels ? <>
+          {showModels && !appleExpected ? <>
+            {appleEnabled ? (
+              <div className={styles.modelPickerHeading}>
+                <button type="button" disabled={locked || applePending} onClick={() => void previewApple()}>
+                  {applePending ? "Checking Apple preview…" : appleBinding ? "Use configured provider" : "Preview Apple on-device"}
+                </button>
+                {appleError ? <p role="status">{appleError}</p> : null}
+              </div>
+            ) : null}
             <div className={styles.modelPickerHeading}>
               <button ref={back} type="button" className={styles.modelPickerBack} aria-label="Back to model and reasoning"
                 onClick={() => setView("summary")}><ChevronLeft size={16} aria-hidden="true" /></button>
@@ -190,11 +255,15 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
           </> : <>
             <button ref={modelTrigger} type="button" className={styles.modelDetailsTrigger} data-testid="composer-model-list-trigger"
               aria-label={`Select model. Current model ${modelLabel}`}
-              onClick={() => { setModelQuery(""); setView("models"); }}>
+              onClick={() => {
+                if (appleExpected) { setView(null); onOpenSettings(); }
+                else { setModelQuery(""); setView("models"); }
+              }}>
               <span><small>Model</small><strong>{modelLabel}</strong></span>
               <ChevronRight size={16} aria-hidden="true" />
             </button>
-            <fieldset className={styles.reasoningOptions} disabled={locked}>
+            {appleExpected && readiness.state !== "ready" ? <p className={styles.modelPickerNotice} role="status">{readiness.message}</p> : null}
+            {!appleExpected && <fieldset className={styles.reasoningOptions} disabled={locked}>
               <legend>Reasoning</legend>
               {hasReasoning ? <>
                 <div className={styles.reasoningHeader}>
@@ -212,9 +281,9 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
                 </div>
                 <div className={styles.reasoningEnds} aria-hidden="true"><span>Default</span><span>{reasoningLabel(steps[steps.length - 1])}</span></div>
               </> : <p className={styles.modelPickerNotice}>{(isCli ? checkingCliCatalog : providerConnection?.state === "checking") ? "Checking reasoning options…" : "Reasoning controls are unavailable for this provider/model."}</p>}
-              {!hasReasoning && selectedEffort !== undefined ? <button type="button" className={styles.modelSettingsLink} onClick={() => selectEffort()}>Reset reasoning to default</button> : null}
-            </fieldset>
-            {hasReasoning ? <p className={styles.modelPickerNotice}>Applies to new chat runs.</p> : null}
+              {!hasReasoning && selectedEffort !== undefined && selectedEffort !== FAST_LOCAL_REASONING ? <button type="button" className={styles.modelSettingsLink} onClick={() => selectEffort()}>Reset reasoning to default</button> : null}
+            </fieldset>}
+            {hasReasoning ? <p className={styles.modelPickerNotice}>{options.category === "local_models" ? "Applies to new work with this local model. Suggested KPI uses its own setting." : "Applies to new chat runs."}</p> : null}
             {options.category !== "cli_subscriptions" && providerConnection?.state === "warning" ? <p className={styles.modelPickerNotice} role="status">{providerConnection.message}</p> : null}
             {locked ? <p className={styles.modelPickerNotice}>Finish this run or start a new chat to change the model or reasoning.</p> : null}
             {isCli && !hasCliCatalog && !checkingCliCatalog && readiness.state === "warning"

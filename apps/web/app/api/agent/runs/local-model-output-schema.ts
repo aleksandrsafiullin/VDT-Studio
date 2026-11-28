@@ -1,25 +1,138 @@
+import { agentOutcomeSchema, modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
+import { z } from "zod";
 import { plannedFactorNodeTypes, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
 import { LocalModelVerification, type LocalModelVerificationProgress } from "./local-model-verification";
 import type { LocalSkillResolution } from "./local-model-knowledge";
+import { MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH, PROPOSE_OUTCOME } from "./outcome-admission";
 import { WORKSPACE_OPERATION_TOOL_NAMES } from "./workspace-operation-tools";
 
 type JsonObject = Record<string, unknown>;
 const isObject = (value: unknown): value is JsonObject => !!value && typeof value === "object" && !Array.isArray(value);
+const outcomeProposalDraft = z.object({
+  decision: z.literal("propose_outcome"),
+  outcome: agentOutcomeSchema,
+  evidenceId: z.string(),
+  confirmSkillMethod: z.boolean(),
+  artifact: z.object({
+    kind: z.literal("excel_workbook"),
+    scenarioName: z.string().trim().min(1).max(160).nullable(),
+    versionName: z.string().trim().min(1).max(160).nullable().optional(),
+    revisionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u).nullable().optional()
+  }).strict().nullable()
+}).strict();
+
+const outcomeQuestionDraft = z.object({
+  decision: z.literal("ask_user"),
+  question: z.string().trim().min(1).max(500),
+  reason: z.string().trim().min(1).max(600)
+}).strict();
+
+export type OllamaOutcomeDraft = z.infer<typeof outcomeProposalDraft> | z.infer<typeof outcomeQuestionDraft>;
+
+export function ollamaOutcomeDraftSchema(evidenceIds: readonly string[], allowQuestion: boolean) {
+  const proposal = outcomeProposalDraft.extend({ evidenceId: z.enum(evidenceIds) });
+  if (evidenceIds.length && allowQuestion) return z.union([proposal, outcomeQuestionDraft]);
+  if (evidenceIds.length) return proposal;
+  if (allowQuestion) return outcomeQuestionDraft;
+  throw new Error("No action is available for Ollama Automatic outcome admission.");
+}
+
+export function ollamaOutcomeQuestionAuditSchema(evidenceIds: readonly string[]) {
+  const question = outcomeQuestionDraft.extend({
+    firstAlternative: z.string().trim().min(2).max(120),
+    secondAlternative: z.string().trim().min(2).max(120)
+  });
+  return evidenceIds.length ? z.union([outcomeProposalDraft.extend({ evidenceId: z.enum(evidenceIds) }), question]) : question;
+}
+
+export const ollamaOutcomeWorkbookAuditSchema = z.discriminatedUnion("delivery", [
+  z.object({ delivery: z.literal("no_workbook") }).strict(),
+  z.object({ delivery: z.literal("workbook_requested"),
+    requestQuote: z.string().trim().min(4).max(MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH) }).strict()
+]);
+
+export function ollamaOutcomeWorkbookRepairSchema(evidenceIds: readonly string[], allowQuestion: boolean) {
+  const candidate = z.object({
+    decision: z.literal("repair_workbook"),
+    artifact: outcomeProposalDraft.shape.artifact,
+    evidenceId: z.enum(evidenceIds)
+  }).strict();
+  if (evidenceIds.length && allowQuestion) return z.union([candidate, outcomeQuestionDraft]);
+  if (evidenceIds.length) return candidate;
+  if (allowQuestion) return outcomeQuestionDraft;
+  throw new Error("No current evidence is available for Ollama Automatic workbook scope repair.");
+}
+
+export function ollamaOutcomeQuoteRepairSchema(evidenceIds: readonly string[], allowQuestion: boolean) {
+  const quote = z.object({ decision: z.literal("replace_quote"), evidenceId: z.enum(evidenceIds) }).strict();
+  if (evidenceIds.length && allowQuestion) return z.union([quote, outcomeQuestionDraft]);
+  if (evidenceIds.length) return quote;
+  if (allowQuestion) return outcomeQuestionDraft;
+  throw new Error("No replacement evidence is available for Ollama Automatic outcome admission.");
+}
+
+const outcomeSentences = new Intl.Segmenter("und", { granularity: "sentence" });
+
+/** Offer exact, bounded excerpts without deciding what the wording means. */
+export function ollamaOutcomeEvidence(sources: readonly string[]): Record<string, string> {
+  const excerpts = new Set<string>();
+  const options = sources.map(source => {
+    if (source.length <= MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH) return [source];
+    const sentences = [...outcomeSentences.segment(source)].map(({ segment }) => segment.trim());
+    const bounded = sentences.flatMap(sentence => sentence.length <= MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH ? [sentence]
+      : [sentence.slice(0, MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH), sentence.slice(-MAX_OUTCOME_EVIDENCE_QUOTE_LENGTH)]);
+    return bounded.flatMap((_, index) => {
+      const position = index % 2 ? bounded.length - 1 - Math.floor(index / 2) : index / 2;
+      return [bounded[position]!];
+    });
+  });
+  for (let index = 0; index < 8 && excerpts.size < 8; index++) {
+    for (const source of options) {
+      const excerpt = source[index]?.trim();
+      if (excerpt) excerpts.add(excerpt);
+      if (excerpts.size === 8) break;
+    }
+  }
+  return Object.fromEntries([...excerpts].map((text, index) => [`q${index + 1}`, text]));
+}
+
+export function ollamaOutcomeTurn(exchangeId: string, draft: OllamaOutcomeDraft, evidence: Record<string, string>) {
+  const evidenceQuote = draft.decision === "propose_outcome" && Object.hasOwn(evidence, draft.evidenceId)
+    ? evidence[draft.evidenceId] : undefined;
+  if (draft.decision === "propose_outcome" && !evidenceQuote) throw new Error("Unknown Ollama Automatic outcome evidence.");
+  return modelAgentStructuredTurnSchema.parse({
+    turnId: exchangeId,
+    sessionState: draft.decision === "propose_outcome" ? `Proposed ${draft.outcome} for Gateway validation.` : "Awaiting deliverable clarification.",
+    assistantMessage: null,
+    action: draft.decision === "ask_user" ? {
+      type: "question", messageId: `${exchangeId}:message`, questionSetId: `${exchangeId}:questions`,
+      questions: [{ id: `${exchangeId}:scope`, question: draft.question, reason: draft.reason,
+        required: true, expectedAnswerType: "text" }]
+    } : {
+      type: "action_batch", batch: { calls: [{ externalCallId: `${exchangeId}:call:1`, toolName: PROPOSE_OUTCOME,
+        args: { outcome: draft.outcome, evidenceQuote, artifact: draft.artifact,
+          confirmSkillMethod: draft.confirmSkillMethod } }] }
+    }
+  });
+}
+
 const workspaceTools = new Set<string>(WORKSPACE_OPERATION_TOOL_NAMES);
 const structuralWrites = new Set([
   "vdt.create_draft", "vdt.add_driver", "vdt.add_drivers_batch", "vdt.set_formula", "vdt.set_decomposition_plan",
   "vdt.reparent_branch", "skill.seed_topology", "skill.seed_draft_from_recipe", "excavation.seed_topology"
 ]);
+const ollamaRelationshipDiscoveryTools = new Set(["skill.list", "skill.search", "skill.read"]);
+const ollamaFirstSelectedPlanTools = new Set(["vdt.set_decomposition_plan", "data.list_sources", "tools.describe"]);
 export const LOCAL_MODEL_UPFRONT_TOOLS = new Set([
-  ...workspaceTools, "project.get_current", "vdt.probe_factor", "vdt.read_decomposition_assumptions", "vdt.record_decomposition_assumption",
-  "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.update_node", "vdt.set_formula",
+  ...workspaceTools, PROPOSE_OUTCOME, "project.get_current", "vdt.probe_factor", "vdt.read_decomposition_assumptions", "vdt.record_decomposition_assumption",
+  "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.create_draft", "vdt.update_node", "vdt.set_formula",
   "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch", "vdt.validate", "vdt.calculate",
   "skill.list", "skill.search", "skill.read", "skill.select", "skill.report_gap", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
   ,"vdt.set_decomposition_plan", "vdt.inspect_hierarchy", "vdt.reparent_branch"
 ]);
 const singletonTools = new Set([
   "scenario.save", "scenario.edit", "version.edit", "vdt.record_decomposition_assumption",
-  "run.request_finish", "user.ask", "user.request_approval", "approval.request",
+  PROPOSE_OUTCOME, "run.request_finish", "user.ask", "user.request_approval", "approval.request",
   "tools.describe", "skill.search", "skill.list", "skill.read", "skill.select", "skill.report_gap", "skill.compile_recipe", "skill.seed_topology",
   "vdt.create_draft", "skill.seed_draft_from_recipe", "excavation.seed_topology", "vdt.fill_input_values_batch", "vdt.add_drivers_batch", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs"
   ,"vdt.set_decomposition_plan", "vdt.reparent_branch"
@@ -46,11 +159,16 @@ function nativeSkillChoices(observation?: JsonObject): NativeSkillChoices | unde
     ? observation.discoveredSkillIds.filter((id): id is string => typeof id === "string") : [];
   const scopedIds = observation?.readinessPurpose === "structural_model" && !resolution.pinnedSkillId
     ? new Set(resolution.searchCandidateIds ?? []) : undefined;
+  const unreadScopedIds = scopedIds && new Set(resolution.unreadScopedCandidateIds
+    ?? [...scopedIds].filter(id => !readIds.has(id)));
   const readableIds = resolution.pinnedSkillId
-    ? (resolution.selectedSkillId ? [] : [resolution.pinnedSkillId])
-    : discoveredIds.filter((id) => !readIds.has(id) && (!scopedIds || scopedIds.has(id)));
-  const selectableReads = resolution.pinnedSkillId ? [] : resolution.readReceipts
-    .filter(({ skillId }) => skillId !== resolution.selectedSkillId && (!scopedIds || scopedIds.has(skillId)));
+    ? (resolution.selectedSkillId || resolution.pinAwaitingConfirmation ? [] : [resolution.pinnedSkillId])
+    : scopedIds && resolution.unreadScopedCandidateIds
+      ? resolution.unreadScopedCandidateIds.filter(id => scopedIds.has(id))
+      : discoveredIds.filter(id => unreadScopedIds ? unreadScopedIds.has(id) : !readIds.has(id));
+  const selectableReads = resolution.readReceipts
+    .filter(({ skillId }) => skillId !== resolution.selectedSkillId && (!scopedIds || scopedIds.has(skillId) && !unreadScopedIds?.has(skillId))
+      && (!resolution.pinnedSkillId || resolution.pinAwaitingConfirmation && resolution.pinnedSkillId === skillId));
   return { resolution, readableIds, selectableReads };
 }
 
@@ -66,14 +184,17 @@ export class LocalModelOutputSchema {
   private initialized = false;
   private finishReceiptId: string | undefined;
   private callableNames: string[] | undefined;
+  private readonly mutatingNames = new Set<string>();
   private readonly datasets = new Map<string, Map<string,string[]>>();
   private sourcesListed = false;
   private readonly verification = new LocalModelVerification();
 
+  admits(name: string): boolean { return this.admittedNames.has(name); }
   availableToolNames(): string[] { return this.callableNames ?? [...this.tools.keys()]; }
   verificationProgress(): LocalModelVerificationProgress | undefined { return this.verification.progress(); }
 
-  forPrompt(schema: unknown, prompt: string, workingContext?: unknown): unknown {
+  forPrompt(schema: unknown, prompt: string, workingContext?: unknown,
+    stage?: "plan_correction" | "skill_discovery" | "first_selected_plan"): unknown {
     let input: unknown;
     try { input = JSON.parse(prompt); } catch { /* Ordinary provider calls have no tool catalog. */ }
     if (isObject(input) && isObject(input.delta)) this.observe(input.delta);
@@ -86,15 +207,29 @@ export class LocalModelOutputSchema {
     const existingWorkspace = observation?.constructingTree === false && this.mode !== "deepen_node";
     const nextDeliveryTool = existingWorkspace && isObject(observation?.namedWorkbookDelivery)
       ? observation.namedWorkbookDelivery.nextTool : undefined;
-    const currentResults = isObject(input) && isObject(input.delta) && Array.isArray(input.delta.results) ? input.delta.results : [];
+    const delta = isObject(input) && isObject(input.delta) ? input.delta : undefined;
+    const currentResults = Array.isArray(delta?.results) ? delta.results : [];
     const deliveryTool = typeof nextDeliveryTool === "string" && this.tools.has(nextDeliveryTool)
       && !currentResults.some(result => isObject(result) && result.toolName === nextDeliveryTool && result.status === "failed")
       ? nextDeliveryTool : undefined;
     const awaitingSkillResolution = skills
       ? !skills.resolution.selectedSkillId && !skills.resolution.gapReported
       : buildingStructure && observation.hasReadSkill === false;
-    const emptyScopedSearch = observation?.readinessPurpose === "structural_model" && awaitingSkillResolution
-      && skills?.resolution.gapAvailable === true && skills.resolution.searchCandidateIds?.length === 0;
+    const structuralDiscovery = observation?.readinessPurpose === "structural_model" && awaitingSkillResolution
+      && skills && !skills.resolution.pinnedSkillId ? skills : undefined;
+    const completeCatalog = structuralDiscovery?.resolution.catalogBrowsed === true
+      && structuralDiscovery.resolution.nextCatalogOffset === undefined;
+    const searched = structuralDiscovery?.resolution.searchCandidateIds !== undefined;
+    const structuralGapAvailable = completeCatalog && searched && observation?.skillMethodConfirmationRequired !== true
+      && structuralDiscovery.resolution.gapAvailable
+      && (structuralDiscovery.resolution.unreadScopedCandidateIds
+        ?? structuralDiscovery.resolution.searchCandidateIds?.filter(id =>
+          !structuralDiscovery.selectableReads.some(receipt => receipt.skillId === id)))?.length === 0;
+    const emptyScopedSearch = structuralGapAvailable && structuralDiscovery.resolution.searchCandidateIds?.length === 0;
+    const scopedReadResults = delta?.type === "checkpoint_inputs" && isObject(delta.checkpointDelta)
+      && Array.isArray(delta.checkpointDelta.results) ? delta.checkpointDelta.results : currentResults;
+    const pendingScopedRead = completeCatalog && searched && structuralDiscovery.readableIds.length > 0 && this.tools.has("skill.read");
+    const attemptedScopedRead = scopedReadResults.some(result => isObject(result) && result.toolName === "skill.read");
     const topologies = Array.isArray(observation?.readTopologyDefinitions)
       ? observation.readTopologyDefinitions.filter((entry) =>
         !skills || Boolean(skills.resolution.selectedSkillId) && isObject(entry) && entry.skillId === skills.resolution.selectedSkillId)
@@ -104,8 +239,18 @@ export class LocalModelOutputSchema {
       ? this.verification.progress() : undefined;
     const eligible = [...this.tools].filter(([name]) => {
       if (this.finishReceiptId) return false;
+      if (observation?.outcomeAdmissionPending === true) return name === PROPOSE_OUTCOME;
+      if (name === PROPOSE_OUTCOME) return false;
+      if (observation?.readinessPurpose === "answer"
+        && (this.mutatingNames.has(name) || ["approval.request", "user.request_approval"].includes(name))) return false;
       if (deliveryTool) return name === deliveryTool;
+      if (completeCatalog && !searched) return name === "skill.search";
+      if (pendingScopedRead) return name === "skill.read" || (attemptedScopedRead && name === "skill.search");
       if (emptyScopedSearch) return name === "skill.report_gap";
+      if (structuralGapAvailable && structuralDiscovery.selectableReads.length > 0
+        && this.tools.has("skill.select") && this.tools.has("skill.report_gap")) {
+        return name === "skill.select" || name === "skill.report_gap";
+      }
       if (observation?.readinessPurpose === "structural_model" && skills?.resolution.gapReported && name.startsWith("skill.")) return false;
       if (this.lazy && !this.describedNames.has(name)) {
         if (existingWorkspace && structuralWrites.has(name)) return false;
@@ -129,10 +274,10 @@ export class LocalModelOutputSchema {
       if (skills) {
         const { catalogBrowsed, nextCatalogOffset, gapAvailable, pinnedSkillId, selectedSkillId } = skills.resolution;
         if (awaitingSkillResolution) {
-          if (pinnedSkillId) return name === "skill.read";
+          if (pinnedSkillId) return skills.resolution.pinAwaitingConfirmation ? name === "skill.select" : name === "skill.read";
           if (!catalogBrowsed) return name === "skill.list";
           return (name === "skill.list" && nextCatalogOffset !== undefined)
-            || (name === "skill.report_gap" && gapAvailable) || name === "skill.search"
+            || (name === "skill.report_gap" && (structuralDiscovery ? structuralGapAvailable : gapAvailable)) || name === "skill.search"
             || (name === "skill.read" && skills.readableIds.length > 0)
             || (name === "skill.select" && skills.selectableReads.length > 0);
         }
@@ -158,7 +303,10 @@ export class LocalModelOutputSchema {
       if (name === "vdt.fill_input_values_batch" && observation?.unfilledInputCount === 0) return false;
       return observation?.writableInputCount !== 0 || !["vdt.fill_input_values_batch", "excavation.write_input_value"].includes(name);
     });
-    this.callableNames = eligible.map(([name]) => name);
+    const offered = stage === "plan_correction" ? eligible.filter(([name]) => name === "vdt.set_decomposition_plan")
+      : stage === "skill_discovery" ? eligible.filter(([name]) => ollamaRelationshipDiscoveryTools.has(name))
+      : stage === "first_selected_plan" ? eligible.filter(([name]) => ollamaFirstSelectedPlanTools.has(name)) : eligible;
+    this.callableNames = offered.map(([name]) => name);
     const copy = structuredClone(schema);
     if (!isObject(copy) || !isObject(copy.properties)) return copy;
     const exchangeId = isObject(input) && typeof input.exchangeId === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(input.exchangeId)
@@ -180,7 +328,7 @@ export class LocalModelOutputSchema {
         if (exchangeId && isObject(option) && isObject(option.properties) && isObject(option.properties.messageId)) option.properties.messageId.const = `${exchangeId}:opening`;
       }
     }
-    if (existingWorkspace || (isObject(input) && isObject(input.delta) && input.delta.type !== "initial_context")) {
+    if (observation?.outcomeAdmissionPending === true || existingWorkspace || (isObject(input) && isObject(input.delta) && input.delta.type !== "initial_context")) {
       copy.properties.assistantMessage = { type: "null" };
     }
     const action = copy.properties.action;
@@ -188,15 +336,15 @@ export class LocalModelOutputSchema {
     action.anyOf = action.anyOf.flatMap((alternative) => {
       if (!isObject(alternative) || !isObject(alternative.properties)) return [alternative];
       const kind = isObject(alternative.properties.type) ? alternative.properties.type.const : undefined;
+      if (stage === "skill_discovery" && kind !== "action_batch") return [];
+      if ((stage === "plan_correction" || stage === "first_selected_plan") && kind !== "action_batch" && kind !== "question") return [];
       if (this.initialized && kind === "final" && !this.finishReceiptId) return [];
       if (this.finishReceiptId && kind !== "final") return [];
       if (this.finishReceiptId && isObject(alternative.properties.finishReceiptId)) alternative.properties.finishReceiptId.const = this.finishReceiptId;
       // Run the already authorized read-only checks before deciding whether
       // business clarification is needed. Once checked, real questions remain
       // available; calculability alone does not establish business completeness.
-      if (kind === "question" && (deliveryTool || emptyScopedSearch || verification?.pending.length)) return [];
-      if (kind === "question" && awaitingSkillResolution && observation?.readinessPurpose !== "structural_model" && isObject(input) && isObject(input.delta)
-        && (input.delta.type !== "initial_context" || observation?.canClarifyBeforeDiscovery === false)) return [];
+      if (kind === "question" && (deliveryTool || verification?.pending.length)) return [];
       if (exchangeId && isObject(alternative.properties.messageId)) alternative.properties.messageId.const = `${exchangeId}:message`;
       if (exchangeId && isObject(alternative.properties.questionSetId)) alternative.properties.questionSetId.const = `${exchangeId}:questions`;
       if (isObject(alternative.properties.text)) alternative.properties.text.maxLength = 1_000;
@@ -210,7 +358,7 @@ export class LocalModelOutputSchema {
       const properties = call.properties as JsonObject;
       const variants: JsonObject[] = [];
       for (const singleton of [false, true]) {
-        const selected = eligible.filter(([name]) => singletonTools.has(name) === singleton);
+        const selected = offered.filter(([name]) => singletonTools.has(name) === singleton);
         if (!selected.length) continue;
         const option = structuredClone(alternative);
         const optionBatch = (option.properties as JsonObject).batch as JsonObject;
@@ -261,6 +409,7 @@ export class LocalModelOutputSchema {
         if (isObject(tool) && typeof tool.name === "string" && isObject(tool.inputJsonSchema)) {
           if (tool.name === "vdt.create_draft" && isObject(delta.context.brief) && delta.context.brief.mode !== "generate_vdt") continue;
           this.admittedNames.add(tool.name);
+          if (tool.mutatesProject === true) this.mutatingNames.add(tool.name);
           if (!this.lazy || LOCAL_MODEL_UPFRONT_TOOLS.has(tool.name)) {
             this.tools.set(tool.name, structuredClone(tool.inputJsonSchema));
           }
@@ -484,6 +633,15 @@ export function groundLiteralValues(name: string, schema: JsonObject, observatio
 /** Ground only existing-target fields. New node IDs remain agent-authored.
  * An incomplete graph projection must never become an exhaustive allowlist. */
 export function groundExistingIds(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
+  if (name === "scenario.compare" && observation?.scenariosTruncated === false && Array.isArray(observation.scenarios)
+    && observation.scenarios.length && isObject(schema.properties) && isObject(schema.properties.scenarioId)) {
+    const ids = observation.scenarios.map(scenario => isObject(scenario) ? scenario.id : undefined);
+    if (ids.every(id => typeof id === "string" && id.length > 0)) {
+      return { ...schema, properties: {
+        ...schema.properties, scenarioId: { ...schema.properties.scenarioId, enum: ids }
+      } };
+    }
+  }
   const restoreVersionId = observation?.requestedRestoreVersionId;
   const namedDelivery = observation?.namedWorkbookDelivery;
   const requestedName = isObject(namedDelivery) ? namedDelivery.versionName : undefined;

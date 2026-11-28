@@ -122,6 +122,7 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
   const assumptions = project.graph.nodes.filter((node) => ["root_kpi", "calculated"].includes(node.type) && node.assumptions?.length);
   const columns = ["id", "name", "type", "unit", "formula", "baselineValue", "value", "valueStatus"] as const;
   const limit = 80;
+  const scenarioLimit = 12;
   const parents = new Set(project.graph.edges.map((edge) => edge.sourceNodeId));
   const inputLeafIds = project.graph.nodes.filter((node) => node.id !== project.rootNodeId
     && !["root_kpi", "calculated"].includes(node.type) && !node.formula?.trim() && !parents.has(node.id)).map((node) => node.id);
@@ -155,9 +156,10 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
     projectReadyForFinish: purpose === "answer" || projectReadyForFinish,
     rootHasDriverReferences: derivedRoot,
     ...(!requireDerivedRoot ? {
-      scenarios: project.scenarios.slice(0, 12).map(({ id, name, isMain, overrides }) => ({
+      scenarios: project.scenarios.slice(0, scenarioLimit).map(({ id, name, isMain, overrides }) => ({
         id, name, isMain, overrideCount: overrides.length
       })),
+      scenariosTruncated: project.scenarios.length > scenarioLimit,
       versions: listVersionOperations(project).slice(0, 12)
     } : {}),
     writableInputCount: inputLeafIds.length,

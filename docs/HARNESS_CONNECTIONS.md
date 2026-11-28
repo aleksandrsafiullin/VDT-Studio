@@ -117,6 +117,23 @@ are the integration references. Current official CLI documentation supersedes
 older model fallbacks, text-output adapters and permissive tool flags. VDT keeps
 its own bounded lifecycle, checkpoint and denied-native-tools requirements.
 
+## Local model reasoning
+
+New local model configurations use **Fast**. The host reads the selected
+model's advertised options. Fast uses explicit Off when available, then the
+lowest known advertised level, then Provider default when the metadata gives
+no usable level. Previous settings and explicit Default, Off, On and named
+choices remain available where supported. Missing thinking metadata does not
+create a control in the picker.
+
+The local agent binds the effective value. Bounded tasks and file analysis
+carry the selected value to the managed runner. The desktop and development
+connection diagnostics carry it to the same runner. Ollama receives its
+native `think` field and compatible local adapters receive an advertised
+`reasoning_effort`. The response trace stays out of user-visible progress
+and output. These controls do not certify an offline runtime.
+[Ollama thinking controls](https://docs.ollama.com/capabilities/thinking)
+
 ## Suggested KPI model and reasoning
 
 Settings → Execution mode → **Suggested KPI** has independent **Model** and
@@ -133,8 +150,9 @@ clears the previous host's model/reasoning catalog. Pairing tokens are sent only
 after loopback runner validation, without redirects.
 
 CLI suggestions start with **Provider default** for each model without a saved
-reasoning choice. API and local HTTP suggestions start **Off**. These defaults
-are independent of chat. A saved **Off** requests disablement, and unsupported
+reasoning choice. API suggestions and older local preferences default **Off**.
+New local selections use **Fast**. These defaults are independent of chat.
+A saved **Off** requests disablement, and unsupported
 settings receive an explanation. The development web host allows up to 12
 seconds to verify CLI metadata. Switching model or connection cancels any
 superseded browser metadata check.

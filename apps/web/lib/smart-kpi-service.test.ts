@@ -8,11 +8,13 @@ import { POST as generic } from "../app/api/ai/run-task/route";
 import { POST as development } from "../app/api/ai/dev-runtime/route";
 import { POST as cancellation } from "../app/api/ai/suggestions/cancel/route";
 import { POST as execution } from "../app/api/ai/suggestions/execution/route";
+import * as pinnedProvider from "./pinned-provider-fetch";
+import * as providerSecurity from "./provider-target-security";
 import { readAiRouteBody, SMART_HTTP_BODY_BYTES } from "./ai-route-body";
 
 const empty = { status: "empty", rationale: "No suitable immediate children.", limitations: [], groups: [] };
 async function input() { return buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: `qa_${crypto.randomUUID()}`, vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" } })); }
-afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Smart preparation service authority and deadlines", () => {
   it.each([[401, undefined, "PROVIDER_AUTH"], [429, "insufficient_quota", "PROVIDER_QUOTA"], [429, "rate_limit_exceeded", "PROVIDER_RATE_LIMIT"], [404, "model_not_found", "PROVIDER_MODEL_UNAVAILABLE"], [400, "invalid_json_schema", "PROVIDER_REQUEST_REJECTED"]] as const)("classifies provider HTTP %s/%s without exposing upstream data", async (status, upstreamCode, code) => {
@@ -34,6 +36,36 @@ describe("Smart preparation service authority and deadlines", () => {
     await expect(prepareSmartKpiResponse({ input: data, providerId: "local_runner", providerConfig: { backendId: "codex_subscription", timeoutMs: 15 }, timeoutMs: 15 }, new AbortController().signal,
       "http://localhost:3000", { provider: async () => ({ completeStructured }) as unknown as AiProvider })).rejects.toMatchObject({ code: "TIMEOUT" });
     expect(Date.now() - started).toBeLessThan(500); expect(completeStructured).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["apple_foundation_models", undefined, 80_000, 30_000],
+    ["apple_foundation_models", undefined, 18_000, 18_000],
+    ["openai_compatible", undefined, 80_000, 15_000],
+    ["local_runner", { backendId: "codex_subscription" }, 80_000, 30_000]
+  ] as const)("caps %s Smart preparation at its own deadline", async (providerId, providerConfig, timeoutMs, duration) => {
+    const data = await input();
+    vi.useFakeTimers();
+    let native!: AbortSignal, finish!: (value: unknown) => void, announce!: () => void;
+    const started = new Promise<void>(resolve => { announce = resolve; });
+    const completeStructured = vi.fn(async ({ signal }: { signal: AbortSignal }) => new Promise(resolve => {
+      native = signal;
+      finish = resolve;
+      announce();
+    }));
+    const pending = prepareSmartKpiResponse({ input: data, providerId, timeoutMs,
+      ...(providerConfig ? { providerConfig } : {}) }, new AbortController().signal, "http://localhost:3000", { provider: async request => {
+      expect(request.timeoutMs).toBe(duration);
+      return { completeStructured } as unknown as AiProvider;
+    } });
+    void pending.catch(() => {});
+    await started;
+    await vi.advanceTimersByTimeAsync(duration - 1);
+    expect(native.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(native.aborted).toBe(true);
+    finish(empty);
+    await expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(completeStructured).toHaveBeenCalledTimes(1);
   });
   it("waits owned cancellation and preserves unconfirmed cleanup classification", async () => {
     const controller = new AbortController(); let acknowledge!: (error: Error) => void;
@@ -107,6 +139,23 @@ describe("all Smart HTTP entries admit requests before trusted execution", () =>
       expect((await route(request)).status).toBe(413); expect(cancelled).toBe(true);
     });
   }
+  it("rejects a forged Local mode before reaching model capabilities or inference", async () => {
+    const target = vi.spyOn(providerSecurity, "resolveProviderTarget");
+    const invoke = vi.spyOn(pinnedProvider, "fetchPinnedProvider");
+    const data = await input();
+    const expectedExecution = { mode: "local", profileVersion: 1, providerId: "openai_compatible", modelId: "gpt-5-mini", modelRevision: null };
+    for (const [route, task] of [[suggestions, {}], [generic, { taskType: "suggest_incoming_kpis" }]] as const) {
+      const result = await route(new Request("http://localhost:3000/api/ai/test", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...task, input: data, expectedExecution, providerId: "openai_compatible",
+          providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini", apiKey: "test-key", modelReasoning: "low" } })
+      }));
+      expect(result.status).toBe(route === suggestions ? 422 : 400);
+    }
+    expect(target).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("unknown cancellation IDs never acknowledge cleanup or reveal other preparation metadata", async () => {
     const response = await cancellation(new Request("http://localhost:3000/api/ai/suggestions/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId: crypto.randomUUID() }) }));
     expect(response.status).toBe(404); const payload = await response.json(); expect(payload.cleanupConfirmed).not.toBe(true); expect(payload).toMatchObject({ error: { code: "RUN_NOT_FOUND" } });

@@ -4,6 +4,12 @@ export const agentQuestionSchema = z.object({
   id: z.string().min(1).max(120),
   question: z.string().min(1).max(500),
   reason: z.string().min(1).max(600),
+  decisionProposal: z.object({
+    topic: z.string().trim().min(1).max(64),
+    value: z.string().trim().min(1).max(120),
+    evidenceQuote: z.string().trim().min(1).max(400),
+    language: z.enum(["en", "ru"])
+  }).strict().nullish(),
   required: z.boolean(),
   expectedAnswerType: z.enum(["text", "number", "single_choice", "multi_choice"]).optional(),
   answerKind: z.enum(["text", "number", "single_choice", "multi_choice", "field_group"]).optional(),

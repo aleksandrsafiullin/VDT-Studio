@@ -5,7 +5,7 @@ use std::{
     io::{self, Read},
     net::{Ipv4Addr, TcpListener},
     os::{
-        fd::{AsRawFd, OwnedFd},
+        fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::{fs::DirBuilderExt, net::UnixStream, process::CommandExt},
     },
     path::{Path, PathBuf},
@@ -81,7 +81,13 @@ pub(crate) fn setup(
     })?;
     let (mut control, child_control) = UnixStream::pair()?;
     control.set_read_timeout(Some(START_TIMEOUT))?;
-    let listener_fd = listener.as_raw_fd();
+    let (speech, child_speech) = UnixStream::pair()?;
+    // Reserve both sources above the protocol descriptors so dup2 cannot
+    // overwrite the other source during an unusually early launch.
+    let child_listener = inherited_fd(&listener)?;
+    let child_speech = inherited_fd(&child_speech)?;
+    let listener_fd = child_listener.as_raw_fd();
+    let speech_fd = child_speech.as_raw_fd();
     let mut command = Command::new(&node);
     command
         .arg(resource_dir.join("packaged-web.cjs"))
@@ -96,16 +102,19 @@ pub(crate) fn setup(
         .env("VDT_APP_MODE", "desktop")
         .env("NODE_ENV", "production")
         .env("NEXT_TELEMETRY_DISABLED", "1")
+        .env("VDT_PACKAGED_SPEECH_FD", "4")
         .env_remove("NODE_OPTIONS")
         .env_remove("NODE_PATH")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(OwnedFd::from(child_control)))
         .stderr(Stdio::inherit());
-    // The listener stays open in this host. Expose a copy as fd 3 to Node;
-    // only async-signal-safe syscalls run between fork and exec.
+    #[cfg(target_arch = "aarch64")]
+    crate::apple_helpers::configure(&mut command, resource_dir);
+    // Expose copies of the reserved listener and private speech socket.
+    // Only async-signal-safe syscalls run between fork and exec.
     unsafe {
         command.pre_exec(move || {
-            if libc::dup2(listener_fd, 3) == -1 || libc::fcntl(3, libc::F_SETFD, 0) == -1 {
+            if libc::dup2(listener_fd, 3) == -1 || libc::dup2(speech_fd, 4) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -115,28 +124,54 @@ pub(crate) fn setup(
         child: command.spawn()?,
     };
     drop(command);
+    drop(child_listener);
+    drop(child_speech);
     let mut session = [0; 64];
     control.read_exact(&mut session)?;
     if !session.iter().all(u8::is_ascii_hexdigit) {
         return Err("The packaged web server returned an invalid startup frame.".into());
     }
+    app.manage(crate::packaged_speech::PackagedSpeech::default());
+    let speech_app = app.handle().clone();
+    thread::Builder::new().name("vdt-packaged-speech".into()).spawn(move || {
+        let speech_state = speech_app.state::<crate::packaged_speech::PackagedSpeech>();
+        let runtime = speech_app.state::<crate::sidecar_host::DesktopRuntime>();
+        let _ = speech_state.serve(speech, |request| runtime.speech(request).map_err(|error| error.to_string()));
+    })?;
     let origin = Url::parse(&format!("http://127.0.0.1:{WEB_PORT}"))?;
     let url = origin.join(&format!("/__vdt_start/{}", std::str::from_utf8(&session)?))?;
     let mut config = app.config().app.windows[0].clone();
     config.url = WebviewUrl::External(url);
     let expected_origin = origin.origin();
     let mut window = WebviewWindowBuilder::from_config(app, &config)?
-        .on_navigation(move |url| url.origin() == expected_origin)
+        .on_navigation(move |url| {
+            #[cfg(all(target_os = "macos", not(debug_assertions), feature = "app-intents-qualification"))]
+            crate::app_intents::invalidate_window();
+            url.origin() == expected_origin
+        })
         .on_new_window(|_, _| NewWindowResponse::Deny);
     if let Some(profile) = webkit_profile()? {
         window = window.data_store_identifier(profile);
     }
-    window.build()?;
+    let _webview = window.build()?;
+    #[cfg(all(target_os = "macos", not(debug_assertions), feature = "app-intents-qualification"))]
+    _webview.on_window_event(|event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            crate::app_intents::invalidate_window();
+        }
+    });
     app.manage(PackagedWeb {
         _listener: listener,
         process: Mutex::new(Some(process)),
     });
     Ok(())
+}
+
+fn inherited_fd(source: &impl AsRawFd) -> io::Result<OwnedFd> {
+    let duplicated = unsafe { libc::fcntl(source.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
+    if duplicated == -1 { return Err(io::Error::last_os_error()); }
+    // fcntl returned a new, independently owned descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
 }
 
 fn runtime_path(node: &Path) -> io::Result<OsString> {

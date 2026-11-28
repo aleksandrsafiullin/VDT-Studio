@@ -1,5 +1,8 @@
+import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import { modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
 import { describe, expect, it } from "vitest";
+import { LocalModelKnowledge } from "./local-model-knowledge";
+import { localModelWorkingContext } from "./local-model-context";
 import { toProviderJsonSchema } from "./provider-json-schema";
 import { groundExistingIds, LocalModelOutputSchema } from "./local-model-output-schema";
 
@@ -32,12 +35,68 @@ describe("native local tool argument constraints", () => {
     const observation = { constructingTree: true, needsStructure: true, readinessPurpose: "structural_model",
       discoveredSkillIds: ["catalog_only", "scoped"] };
     expect(names(context.forPrompt(envelope, prompt, { ...observation, skillResolution: resolution })))
-      .toEqual(["skill.report_gap", "skill.search"]);
+      .toEqual(["skill.search"]);
     expect(names(context.forPrompt(envelope, prompt, { ...observation, skillResolution: { ...resolution, searchCandidateIds: [] } })))
       .toEqual(["skill.report_gap"]);
     const scoped = context.forPrompt(envelope, prompt, { ...observation, skillResolution: { ...resolution, searchCandidateIds: ["scoped"] } });
+    expect(names(scoped)).toEqual(["skill.read"]);
+    expect(scoped).toMatchObject({ properties: { action: { anyOf: expect.arrayContaining([
+      expect.objectContaining({ properties: expect.objectContaining({ type: { type: "string", const: "question" } }) })
+    ]) } } });
     const read = allCalls(scoped).flatMap(batch => batch.items.anyOf).find(tool => tool.properties.toolName.const === "skill.read");
     expect(read?.properties.args).toMatchObject({ properties: { skillId: { enum: ["scoped"] } } });
+  });
+
+  it.each(["explicit", "automatic"] as const)("requires successful current scoped discovery and exact reads before a structural gap (%s)", selection => {
+    const context = new LocalModelOutputSchema();
+    const knowledge = new LocalModelKnowledge();
+    const searchNames = ["skill.list", "skill.read", "skill.search", "skill.select", "skill.report_gap", "run.propose_outcome"];
+    const tools = searchNames.map(name => ({ name, inputJsonSchema: { type: "object", properties: { skillId: { type: "string" } } } }));
+    const brief = { skillResolution: "agent_semantic", ...(selection === "explicit"
+      ? { outcome: "structural_model" } : { outcomeSelection: "automatic" }) };
+    const format = (delta: object, extra = {}) => {
+      const prompt = JSON.stringify({ delta });
+      knowledge.observePrompt(prompt);
+      return names(context.forPrompt(envelope, prompt, { constructingTree: true, needsStructure: true,
+        readinessPurpose: "structural_model", discoveredSkillIds: knowledge.discoveredSkillIds(), skillResolution: knowledge.skillResolution(), ...extra }));
+    };
+    let call = 0;
+    const succeeded = (toolName: string, output: object, status = "succeeded", resultCode = "OK", identified = true) => format({
+      type: "tool_results", results: [{ toolName, status, resultCode, ...(identified ? { externalCallId: `call-${++call}` } : {}), payload: { output } }]
+    });
+    const skill = { id: "current.measurement_method", version: 2, contentHash: `sha256:${"e".repeat(64)}` };
+    expect(format({ type: "initial_context", context: { brief, tools } })).toEqual(["skill.list"]);
+    if (selection === "automatic") succeeded("run.propose_outcome", { outcome: "structural_model" });
+    expect(succeeded("skill.list", { skills: [skill], nextOffset: 16 })).toEqual(["skill.list", "skill.search"]);
+    expect(succeeded("skill.list", { skills: [], nextOffset: null })).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [] }, "failed")).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [] }, "succeeded", "NOT_OK")).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [] }, "succeeded", "OK", false)).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [skill] }, "succeeded", "OK", false)).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [{ id: skill.id }] })).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [skill] })).toEqual(["skill.read"]);
+    expect(succeeded("skill.search", { candidates: [] })).toEqual(["skill.read"]);
+    expect(succeeded("skill.read", { ...skill, version: 1, readReceiptId: "old-read" })).toEqual(["skill.read", "skill.search"]);
+    const failedRead = { toolName: "skill.read", status: "failed", resultCode: "SKILL_NOT_FOUND", externalCallId: "failed-read",
+      payload: { error: { code: "SKILL_NOT_FOUND" } } };
+    expect(format({ type: "checkpoint_inputs", inputs: [], checkpointDelta: { type: "tool_results", results: [failedRead] } }))
+      .toEqual(["skill.read", "skill.search"]);
+    expect(succeeded("skill.search", { candidates: [skill] })).toEqual(["skill.read"]);
+    expect(succeeded("skill.read", {})).toEqual(["skill.read", "skill.search"]);
+    expect(format({ type: "checkpoint_inputs", inputs: [], checkpointDelta: { type: "tool_results", results: [{
+      toolName: "skill.read", status: "succeeded", resultCode: "OK", externalCallId: "misdirected-read",
+      payload: { output: { ...skill, id: "other.method", readReceiptId: "unrelated-read" } }
+    }] } })).toEqual(["skill.read", "skill.search"]);
+    expect(succeeded("skill.read", { ...skill, readReceiptId: "exact-read" })).toEqual(["skill.report_gap", "skill.select"]);
+    const nextCandidate = { ...skill, id: "other.current_method" };
+    expect(succeeded("skill.search", { candidates: [skill, nextCandidate] })).toEqual(["skill.read"]);
+    expect(succeeded("skill.read", { ...skill, readReceiptId: "repeat-read" })).toEqual(["skill.read", "skill.search"]);
+    expect(succeeded("skill.read", { ...nextCandidate, readReceiptId: "second-exact-read" })).toEqual(["skill.report_gap", "skill.select"]);
+    expect(format({ type: "human_inputs", inputs: [{ type: "user_instruction", text: "Change the measurement boundary." }] }))
+      .toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [] }, "replayed")).toEqual(["skill.search"]);
+    expect(succeeded("skill.search", { candidates: [] })).toEqual(["skill.report_gap"]);
+    expect(format({ type: "tool_results", results: [] }, { skillMethodConfirmationRequired: true })).toEqual(["skill.search"]);
   });
 
   it("narrows the version command to restore for an explicitly selected saved ID", () => {
@@ -97,6 +156,22 @@ describe("native local tool argument constraints", () => {
     });
     expect(groundExistingIds("export.excel", schema)).toBe(schema);
     expect(groundExistingIds("scenario.compare", schema, scope)).toBe(schema);
+  });
+
+  it("grounds exact comparison IDs only when every scenario is present", () => {
+    const comparison = { type: "object", properties: { scenarioId: { type: "string" } }, required: ["scenarioId"], additionalProperties: false };
+    const baseline = { ...productionVolumeProject.scenarios[0]!, id: "baseline" };
+    const recovery = { ...baseline, id: `scenario_${"ab".repeat(32)}`, name: "Recovery", isMain: false };
+    const complete = localModelWorkingContext({ ...productionVolumeProject, scenarios: [baseline, recovery] }, 7);
+    expect(groundExistingIds("scenario.compare", comparison, complete)).toEqual({
+      ...comparison, properties: { scenarioId: { type: "string", enum: ["baseline", recovery.id] } }
+    });
+    const nameOnly = { ...comparison, properties: { scenarioName: { type: "string" } }, required: ["scenarioName"] };
+    expect(groundExistingIds("scenario.compare", nameOnly, complete)).toStrictEqual(nameOnly);
+    const scenarios = Array.from({ length: 13 }, (_, index) => ({ ...recovery, id: `scenario_${index}` }));
+    const truncated = localModelWorkingContext({ ...productionVolumeProject, scenarios }, 7);
+    expect(truncated).toMatchObject({ scenarios: Array.from({ length: 12 }, (_, index) => expect.objectContaining({ id: `scenario_${index}` })), scenariosTruncated: true });
+    expect(groundExistingIds("scenario.compare", comparison, truncated)).toStrictEqual(comparison);
   });
 
   it("grounds dataset, table and column identities only in successful source observations", () => {
@@ -263,16 +338,16 @@ describe("native local tool argument constraints", () => {
     expect(native.items.anyOf[0]!.properties.args).toMatchObject({ properties: { skillId: { enum: ["actual.first", "actual.second"] } } });
   });
 
-  it("allows initial goal clarification but reads discovered guidance before asking for construction choices", () => {
+  it("allows a material scope question before or during Skill discovery for structural and numerical outcomes", () => {
     const context = new LocalModelOutputSchema();
     const input = { delta: { type: "initial_context", context: { tools: ["skill.search", "skill.read"].map((name) => ({ name, inputJsonSchema: { type: "object" } })) } } };
     const observation = { constructingTree: true, needsStructure: true, hasReadSkill: false, discoveredSkillIds: ["actual.skill"] };
     const kinds = (value: unknown) => (value as { properties: { action: { anyOf: Array<{ properties: { type: { const: string } } }> } } }).properties.action.anyOf.map((option) => option.properties.type.const);
     expect(kinds(context.forPrompt(envelope, JSON.stringify(input), observation))).toContain("question");
-    expect(kinds(context.forPrompt(envelope, JSON.stringify(input), { ...observation, canClarifyBeforeDiscovery: false }))).not.toContain("question");
+    expect(kinds(context.forPrompt(envelope, JSON.stringify(input), { ...observation, readinessPurpose: "calculated_baseline" }))).toContain("question");
     const later = JSON.stringify({ delta: { type: "tool_results", results: [] } });
-    expect(kinds(context.forPrompt(envelope, later, observation))).not.toContain("question");
-    expect(kinds(context.forPrompt(envelope, later, { ...observation, readinessPurpose: "structural_model", canClarifyBeforeDiscovery: false }))).toContain("question");
+    expect(kinds(context.forPrompt(envelope, later, observation))).toContain("question");
+    expect(kinds(context.forPrompt(envelope, later, { ...observation, readinessPurpose: "structural_model" }))).toContain("question");
     expect(kinds(context.forPrompt(envelope, later, { ...observation, hasReadSkill: true }))).toContain("question");
     expect(kinds(context.forPrompt(envelope, later, { ...observation, constructingTree: false }))).toContain("question");
   });

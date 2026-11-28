@@ -79,7 +79,7 @@ describe("confirmed local model read knowledge", () => {
     observe(paged, [result("skill.search", { candidates: [] }, "failed")]);
     expect(paged.skillResolution()?.gapAvailable).toBe(false);
     observe(paged, [result("skill.search", { candidates: [] })]);
-    expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: 16, gapAvailable: true });
+    expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: 16, gapAvailable: false });
     const other = { ...skill, id: "actual.other" };
     observe(paged, [result("skill.search", { candidates: [skill] }), result("skill.search", { candidates: [other] })]);
     expect(paged.skillResolution()?.gapAvailable).toBe(false);
@@ -87,7 +87,7 @@ describe("confirmed local model read knowledge", () => {
     expect(paged.skillResolution()?.gapAvailable).toBe(false);
     expect(paged.discoveredSkillIds()).toContain(other.id);
     observe(paged, [result("skill.read", { ...other, readReceiptId: "receipt-other" })]);
-    expect(paged.skillResolution()?.gapAvailable).toBe(true);
+    expect(paged.skillResolution()?.gapAvailable).toBe(false);
     observe(paged, [result("skill.list", { skills: [], nextOffset: null }), { ...firstPage, status: "replayed" }]);
     expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: undefined, gapAvailable: true });
     const pinned = start(skill);
@@ -95,6 +95,56 @@ describe("confirmed local model read knowledge", () => {
     expect(pinned.skillResolution()).toMatchObject({ pinnedSkillId: skill.id, selectedSkillId: undefined });
     observe(pinned, [result("skill.read", read)]);
     expect(pinned.skillResolution()).toMatchObject({ pinnedSkillId: skill.id, selectedSkillId: skill.id, gapReported: false });
+  });
+
+  it("keeps exact structural search evidence current without resetting it on method decisions or duplicate scope inputs", () => {
+    const knowledge = new LocalModelKnowledge();
+    const scope = (input: object, exchangeId: string) => knowledge.observePrompt(JSON.stringify({
+      exchangeId, delta: { type: "human_inputs", inputs: [input] }
+    }));
+    const receipt = (toolName: string, output: unknown, status = "succeeded", externalCallId = toolName) =>
+      ({ ...result(toolName, output, status), externalCallId, resultCode: "OK" });
+    const names = ["skill.list", "skill.search", "skill.read", "skill.select", "skill.report_gap"];
+    const card = { id: "actual.scope", version: 2, contentHash: `sha256:${"b".repeat(64)}` };
+    const read = { ...card, readReceiptId: "receipt-scope" };
+    const search = receipt("skill.search", { candidates: [card] }, "succeeded", "first-search");
+    const gap = receipt("skill.report_gap", { outcome: "no_applicable_skill" });
+    knowledge.observePrompt(JSON.stringify({ delta: { type: "initial_context", context: {
+      brief: { outcome: "structural_model", skillResolution: "agent_semantic" }, tools: names.map(name => ({ name }))
+    } } }));
+    observe(knowledge, [receipt("skill.list", { skills: [card], nextOffset: null }), gap]);
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: false, gapReported: false });
+    observe(knowledge, [search, receipt("skill.read", read), receipt("skill.select", { proposedSkill: read,
+      questions: [{ id: "method-question" }] }, "waiting_user")]);
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: true, searchCandidateIds: [card.id], unreadScopedCandidateIds: [] });
+    scope({ type: "user_answer", questionSetId: "selection", answers: {
+      structuredAnswers: [{ questionId: "method-question", selectedOptionIds: ["accept_method"] }]
+    } }, "method-exchange");
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: true, searchCandidateIds: [card.id] });
+    const instruction = { type: "user_instruction", text: "Measure only the finished output." };
+    scope(instruction, "first-instruction");
+    expect(knowledge.latestScopeInstruction()).toBe(instruction.text);
+    observe(knowledge, [search, gap]);
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: false, gapReported: false });
+    expect(knowledge.skillResolution()).not.toHaveProperty("searchCandidateIds");
+    observe(knowledge, [{ ...search, externalCallId: "second-search" }]);
+    scope(instruction, "first-instruction");
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: true, searchCandidateIds: [card.id] });
+    scope(instruction, "new-instruction-same-wording");
+    expect(knowledge.skillResolution()?.gapAvailable).toBe(false);
+    observe(knowledge, [{ ...search, externalCallId: "third-search" }]);
+    scope({ type: "user_answer", questionSetId: "scope-question", answers: { boundary: "Include reworked units." } }, "scope-answer");
+    observe(knowledge, [gap]);
+    expect(knowledge.skillResolution()).toMatchObject({ gapAvailable: false, gapReported: false });
+    observe(knowledge, [{ ...search, externalCallId: "fourth-search" }]);
+    const rejected = { ...receipt("skill.report_gap", {}, "failed"), resultCode: "SKILL_CATALOG_REVIEW_REQUIRED",
+      payload: { error: { code: "SKILL_CATALOG_REVIEW_REQUIRED", message: "Review the current scope." } } };
+    observe(knowledge, [{ ...rejected, resultCode: "SKILL_METHOD_CONFIRMATION_REQUIRED" }]);
+    expect(knowledge.skillResolution()?.gapAvailable).toBe(true);
+    observe(knowledge, [rejected]);
+    expect(knowledge.skillResolution()?.gapAvailable).toBe(false);
+    observe(knowledge, [{ ...search, externalCallId: "fifth-search" }, rejected]);
+    expect(knowledge.skillResolution()?.gapAvailable).toBe(true);
   });
 
   it("does not turn a truncated literal projection into an exhaustive source allowlist", () => {

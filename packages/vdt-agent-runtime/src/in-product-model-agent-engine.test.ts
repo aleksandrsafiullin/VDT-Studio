@@ -513,6 +513,52 @@ describe("StructuredInProductModelAgentEngine", () => {
     });
   });
 
+  it.each(["outcome", "question", "question tool"] as const)("classifies accepted steering before dispatching an in-flight %s", async kind => {
+    let start!: () => void;
+    const started = new Promise<void>(resolve => { start = resolve; });
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const instruction = { type: "user_instruction", text: "I only need an explanation now." } as const;
+    const outcome = (id: string, purpose: string, evidenceQuote: string) => turn(id, {
+      type: "action_batch", batch: { calls: [{
+        externalCallId: id, toolName: "run.propose_outcome", args: { outcome: purpose, evidenceQuote }
+      }] }
+    }, { messageId: id, text: evidenceQuote });
+    const questions = [{
+      id: "scope", question: "Should I build a tree?", reason: "The deliverable is open.", required: true, expectedAnswerType: "text"
+    }];
+    const transport = new QueueTransport([
+      async () => {
+        start();
+        await pending;
+        if (kind === "outcome") return outcome("old-scope", "structural_model", "Build an editable tree.");
+        if (kind === "question") return turn("old-scope", { type: "question", messageId: "old-scope",
+          questionSetId: "old-set", questions });
+        return turn("old-scope", { type: "action_batch", batch: { calls: [{
+          externalCallId: "old-scope", toolName: "user.ask", args: { questions }
+        }] } }, { messageId: "old-scope", text: "I have a question." });
+      },
+      outcome("current-scope", "answer", instruction.text),
+      turn("final", { type: "final", messageId: "final", finishReceiptId: "finish", text: "Here is the explanation." })
+    ]);
+    const calls: VdtGatewayToolCall[] = [];
+    const session = await makeEngine(transport).openSession({ binding, initialContext: {}, initialContextHash: HASH_A },
+      host(async call => {
+        calls.push(call);
+        return result(call, "succeeded", "OK", {});
+      }));
+    const collecting = collect(session.events());
+    await started;
+    await session.submit(instruction);
+    finish();
+    const events = await collecting;
+
+    expect(transport.requests[1]?.delta).toEqual({ type: "human_inputs", inputs: [instruction] });
+    expect(calls.map(call => call.externalCallId)).toEqual(["current-scope"]);
+    expect(events).not.toContainEqual(expect.objectContaining({ messageId: "old-scope" }));
+    expect(events.at(-1)).toMatchObject({ type: "final", text: "Here is the explanation." });
+  });
+
   it("uses the persisted binding resolver for checkpoint recovery", async () => {
     const checkpoint: AgentEngineCheckpoint = {
       schemaVersion: 2,

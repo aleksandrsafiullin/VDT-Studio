@@ -14,6 +14,28 @@ export interface LocalModelReasoningCapabilities {
   defaultValue?: HarnessReasoningValue | undefined;
   source: "provider";
 }
+
+/** VDT preference. Resolve this against the selected model before dispatch. */
+export const FAST_LOCAL_REASONING = "vdt-fast";
+const LOCAL_OFF_VALUES = [false, "none", "off", "disabled"] as const;
+const LOCAL_REASONING_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+export function resolveLocalReasoning(
+  capabilities: Pick<LocalModelReasoningCapabilities, "values"> | undefined,
+  preference: HarnessReasoningValue | undefined
+): { supported: boolean; value?: HarnessReasoningValue } {
+  if (preference === undefined) return { supported: true };
+  const values = capabilities?.values ?? [];
+  const off = LOCAL_OFF_VALUES.find(value => values.includes(value));
+  if (preference === FAST_LOCAL_REASONING) {
+    const named = LOCAL_REASONING_ORDER.find(value => values.includes(value));
+    const only = values.length === 1 ? values[0] : undefined;
+    const value = off ?? named ?? only;
+    return value === undefined ? { supported: true } : { supported: true, value };
+  }
+  const value = preference === false ? off : values.find(value => value === preference);
+  return value === undefined ? { supported: false } : { supported: true, value };
+}
 /** Shared by host metadata admission and the actual local completion path. */
 export function parseLocalModelReasoningCapabilities(metadata: unknown, backendId: string): LocalModelReasoningCapabilities | undefined {
   const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -25,7 +47,7 @@ export function parseLocalModelReasoningCapabilities(metadata: unknown, backendI
   const reasoning = record(meta.reasoning ?? caps.reasoning);
   const raw = backendId === "ollama" ? thinking.values : meta.supported_reasoning_efforts ?? reasoning.values ?? reasoning.supported_efforts;
   const values = Array.isArray(raw) ? [...new Set(raw.filter(isHarnessReasoningValue))].slice(0, 16)
-    .filter(value => backendId === "ollama" ? typeof value !== "number" : typeof value === "string") : [];
+    .filter(value => value !== FAST_LOCAL_REASONING && (backendId === "ollama" ? typeof value !== "number" : typeof value === "string")) : [];
   if (!values.length) return undefined;
   return { parameter: backendId === "ollama" ? "think" : "reasoning_effort", values, source: "provider", ...(values.includes(thinking.default as HarnessReasoningValue) ? { defaultValue: thinking.default as HarnessReasoningValue } : {}) };
 }

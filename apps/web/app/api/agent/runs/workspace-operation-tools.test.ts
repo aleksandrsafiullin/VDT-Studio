@@ -1,18 +1,20 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import {
   AgentRunStore, AgentSupervisorToolGatewayLedger, InMemoryAgentSupervisorPersistence,
   ToolRegistry, VdtToolGateway, applyPendingMutationProposal, rejectPendingMutationProposal,
-  type AgentCapabilityProfile, type AgentSessionBinding, type AgentToolContext
+  type AgentCapabilityProfile, type AgentSessionBinding, type AgentToolContext, type VdtAgentStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
-import { createExcelWorkbook, EXCEL_MIME_TYPE, VdtBuilderSession, productionVolumeProject } from "@vdt-studio/vdt-core";
+import { createExcelWorkbook, getExcelWorkbookCells, EXCEL_MIME_TYPE, VdtBuilderSession, productionVolumeProject } from "@vdt-studio/vdt-core";
 import { openVdtDatabase } from "@vdt-studio/storage";
 import { describe, expect, it, vi } from "vitest";
 import { createStorageWriteActor } from "../../vdt/storage-write-adapter";
 import { createSqliteAgentRunPersistence } from "./persistence";
-import { namedVersionWorkbookDelivery, registerWorkspaceOperationTools, requestedExcelScenarioId, requestedVersionRestoreId, WORKSPACE_OPERATION_TOOL_NAMES } from "./workspace-operation-tools";
+import { namedVersionWorkbookDelivery, registerWorkspaceOperationTools, requestedExcelScenarioId, requestedVersionRestoreId, verifyRequestedExcelDelivery, WORKSPACE_OPERATION_TOOL_NAMES } from "./workspace-operation-tools";
 import { registerEditorHandoffTools, EDITOR_HANDOFF_TOOL_NAMES } from "./editor-handoff-tools";
+import { describeExcelWorkbook } from "./excel-workbook";
 import { GET as downloadExcel } from "./[runId]/excel-workbook/route";
 
 const now = "2026-11-24T00:00:00.000Z";
@@ -83,9 +85,10 @@ describe("workspace operations at the Gateway", () => {
       });
       const builder = new VdtBuilderSession({ project: database.readVdtRevision(seeded.revision), now: () => now });
       const store = new AgentRunStore({ persistence: createSqliteAgentRunPersistence(database, { actorFactory: () => actor }) });
-      async function openRun(prompt?: string) {
+      async function openRun(prompt?: string, artifactIntent?: VdtAgentStartRequest["artifactIntent"], automatic = false) {
         const head = database.getVdtRevisionHead(vdtId)!;
         const run = store.createRun({
+          ...(automatic ? { outcomeSelection: "automatic", outcome: "answer", artifactIntent } as const : {}),
           providerId: "mock", mode: "continue_project", options: { autoApplyPatches: true },
           input: { project: builder.getProject(), selectedNodeId: downtime, activeScenarioId: initial.scenarios[0]!.id, ...(prompt ? { prompt } : {}) },
           workspace: { projectId, vdtId, expectedRevision: {
@@ -121,7 +124,7 @@ describe("workspace operations at the Gateway", () => {
         };
         const tools = new ToolRegistry();
         registerWorkspaceOperationTools(tools, openDatabase);
-        registerEditorHandoffTools(tools);
+        registerEditorHandoffTools(tools, openDatabase);
         const persistence = new InMemoryAgentSupervisorPersistence();
         await persistence.createBinding(binding);
         const ledger = new AgentSupervisorToolGatewayLedger({ binding, persistence, getRevision: () => builder.getRevision() });
@@ -178,6 +181,69 @@ describe("workspace operations at the Gateway", () => {
       expect(database.getAgentRun(run.runId)?.publicSnapshot?.artifacts).toEqual(store.getSnapshot(run.runId).artifacts);
       expect(store.getSnapshot(run.runId).artifacts).toHaveLength(1);
       expect(delivery()?.nextTool).toBe("run.request_finish");
+
+      // Exercise both sealed Q01 prompts without editing their wording or feeding the oracle to a provider.
+      const requests = JSON.parse(readFileSync(path.resolve("eval/agent-autonomy/workspace-requests.v2.json"), "utf8"));
+      const workbookRequests = requests.cases.find((request: { id: string }) => request.id === "REV-03-workbook");
+      const verify = (id: string) => verifyRequestedExcelDelivery(store.getState(id), builder.getProject(), openDatabase);
+      const replayIssuedWorkbooks: Array<() => Promise<void>> = [];
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("VDT_DATA_DIR", directory);
+      for (const locale of ["en", "ru"]) {
+        const [delivery, discussion] = workbookRequests.variants[locale].turns;
+        const admitted = await openRun(delivery.prompt, { kind: "excel_workbook", scenarioName: "Recovery", scenarioId }, true);
+        const runId = admitted.run.runId;
+        expect(verify(runId)).toMatchObject({ blocker: { code: "EXCEL_REQUESTED_ARTIFACT_MISSING" } });
+        expect(await admitted.call("wrong-target", "export.excel", { scenarioId: initial.scenarios[0]!.id }))
+          .toMatchObject({ resultCode: "EXCEL_SCENARIO_CONFLICT" });
+        const scope = { runId, projectId, vdtId, revisionId, scenarioId };
+        const unissued = describeExcelWorkbook(database, scope);
+        const url = new URL(unissued.downloadUrl, "https://localhost:3000");
+        const params = { params: Promise.resolve({ runId }) };
+        const download = () => downloadExcel(new Request(url, { headers: { origin: url.origin } }), params);
+        expect(await download()).toMatchObject({ status: 404 });
+        const old = describeExcelWorkbook(database, { ...scope, revisionId: comparisonHead });
+        for (const wrong of [old, describeExcelWorkbook(database, { ...scope, scenarioId: initial.scenarios[0]!.id }),
+          { ...unissued, downloadUrl: "/unverified" }]) {
+          store.updateRun(runId, { artifacts: [{ runId, id: wrong.id, type: "excel_workbook", payload: wrong, summary: wrong.filename, createdAt: now }] });
+          expect(verify(runId)).toMatchObject({ blocker: { code: "EXCEL_REQUESTED_ARTIFACT_MISSING" } });
+        }
+        store.updateRun(runId, { artifacts: [] });
+        const submit = { externalCallId: "deliver", toolName: "export.excel", args: {} };
+        const exported = await admitted.gateway.execute(submit);
+        expect(exported).toMatchObject({ status: "succeeded", payload: { projectChanged: false, output: { artifact: unissued } } });
+        expect(await admitted.makeGateway().execute(submit)).toEqual(exported);
+        expect(verify(runId)).toEqual({ artifact: unissued });
+        replayIssuedWorkbooks.push(async () => {
+          expect(verify(runId)).toMatchObject({ blocker: { code: "EXCEL_REQUESTED_ARTIFACT_MISSING" } });
+          expect(await admitted.makeGateway().execute(submit)).toEqual(exported);
+          expect((await download()).status).toBe(200);
+        });
+        const response = await download();
+        expect(response.status).toBe(200);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const savedProject = database.readVdtRevision(database.getVdtRevision(revisionId!)!);
+        expect(bytes).toEqual(createExcelWorkbook(savedProject, scenarioId));
+        const requireCoreDependency = createRequire(createRequire(import.meta.url).resolve("@vdt-studio/vdt-core"));
+        const { unzipSync, strFromU8 } = requireCoreDependency("fflate") as { unzipSync(data: Uint8Array): Record<string, Uint8Array>; strFromU8(data: Uint8Array): string };
+        const sheet = strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]!);
+        const mapping = getExcelWorkbookCells(savedProject, { scenarioId });
+        const rootCells = mapping.tree[savedProject.rootNodeId]!;
+        for (const [address, value] of [[rootCells.baselineCell, 1800], [rootCells.potentialCell, 1820]]) {
+          expect(sheet.match(new RegExp(`<c r="${address}"[^>]*>[\\s\\S]*?<\\/c>`))?.[0]).toContain(`<v>${value}</v>`);
+        }
+        const discuss = await openRun(discussion.prompt, undefined, true);
+        expect(verify(discuss.run.runId)).toBeUndefined();
+      }
+      const historical = await openRun(`Export Recovery from revision ${comparisonHead}.`,
+        { kind: "excel_workbook", scenarioName: "Recovery", revisionId: comparisonHead! }, true);
+      expect(await historical.call("old-pinned", "export.excel")).toMatchObject({
+        status: "succeeded", payload: { output: { artifact: { revisionId: comparisonHead, scenarioId } } }
+      });
+      expect(verify(historical.run.runId)).toMatchObject({ artifact: { revisionId: comparisonHead, scenarioId } });
+      const missingTarget = await openRun("Export Missing.", { kind: "excel_workbook", scenarioName: "Missing" }, true);
+      expect(await missingTarget.call("missing-target", "export.excel"))
+        .toMatchObject({ resultCode: "EXCEL_SCENARIO_UNAVAILABLE" });
 
       const recovery = await openRun(combinedPrompt);
       const newInstruction = { role: "user", kind: "instruction", text: combinedPrompt } as const;
@@ -245,10 +311,10 @@ describe("workspace operations at the Gateway", () => {
       expect(await call("invalid-handoff", "vdt.open_suggested_kpis", { nodeId: initial.rootNodeId }))
         .toMatchObject({ status: "failed", resultCode: "SUGGESTED_KPI_NOT_AVAILABLE" });
       expect(store.getSnapshot(run.runId).artifacts?.filter(item => item.type === "editor_handoff").map(item => item.payload)).toEqual([
-        { action: "suggested_kpis", projectId, vdtId, nodeId: downtime },
-        { action: "project_workspace", projectId, vdtId },
-        { action: "file_import", projectId, vdtId, nodeId: downtime },
-        { action: "vdt_export", projectId, vdtId }
+        { action: "suggested_kpis", projectId, vdtId, revisionId, nodeId: downtime },
+        { action: "project_workspace", projectId, vdtId, revisionId },
+        { action: "file_import", projectId, vdtId, revisionId, nodeId: downtime },
+        { action: "vdt_export", projectId, vdtId, revisionId }
       ]);
       expect(database.getVdtRevisionHead(vdtId)?.activeRevisionId).toBe(revisionId);
 
@@ -271,6 +337,23 @@ describe("workspace operations at the Gateway", () => {
         status: "failed", resultCode: "EXCEL_SAVED_REVISION_REQUIRED"
       });
       expect(store.getSnapshot(run.runId).artifacts?.filter(item => item.type === "excel_workbook")).toHaveLength(1);
+      const savedHead = database.getVdtRevisionHead(vdtId)!;
+      const activeRuntime = database.getProjectRuntimeState(projectId)!;
+      database.commitVdtRevision({
+        projectId, vdtId, actor, project: builder.getProject(),
+        command: {
+          schemaVersion: "revision_commit.v2",
+          expectedActiveRevisionId: savedHead.activeRevisionId,
+          expectedActiveContentIdentity: savedHead.activeContentIdentity,
+          expectedCommitGeneration: savedHead.commitGeneration,
+          expectedRuntimeGeneration: activeRuntime.runtimeGeneration,
+          expectedGenerationVersion: activeRuntime.generationVersion,
+          idempotencyKey: "manual-corrected-head",
+          intent: { source: "user", summary: "Save manual correction", validation: null, calculation: null }
+        }
+      });
+      expect(database.getVdtRevisionHead(vdtId)?.activeRevisionId).not.toBe(revisionId);
+      for (const replay of replayIssuedWorkbooks) await replay();
     } finally {
       vi.unstubAllEnvs();
       database.close();

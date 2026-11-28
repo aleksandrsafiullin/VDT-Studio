@@ -17,6 +17,11 @@ covers GitHub source plus Mac and Windows applications. Both installers from one
 accepted commit are required. The broad release remains on HOLD while native
 storage, installation, recovery and live-provider acceptance are incomplete.
 
+The same Mac packager can seal an engineering preview with both Apple helpers
+and `analyticalDefault: false`. Confirm the installed preview and the shipping
+default in separate runs. The Apple first-launch, offline and physical-audio
+gates remain on HOLD. [Apple qualification ledger](implementation/APPLE_LOCAL_AI_VOICE_EXECUTION_2026-11-25.md)
+
 Source/tag verification retains build and browser artifacts; it no longer
 automatically creates an incomplete CLI-only public release. The manual Desktop
 Package workflow builds validation artifacts for both native platforms and

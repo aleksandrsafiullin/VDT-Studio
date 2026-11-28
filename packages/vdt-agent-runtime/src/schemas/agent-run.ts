@@ -23,6 +23,7 @@ const agentStartRequestCommonShape = {
   priorConversationRunId: safeId().optional(),
   mode: z.enum(["generate_vdt", "continue_project", "deepen_node", "review_project"]),
   outcome: agentOutcomeSchema.optional(),
+  outcomeSelection: z.literal("automatic").optional(),
   input: z.object({
     activeScenarioId: safeId().optional(),
     personalisation: aiPersonalisationSchema.optional(),
@@ -70,6 +71,16 @@ const agentStartRequestCommonShape = {
   }).optional()
 } as const;
 
+export const executionModeSchema = z.enum(["local", "cli_subscription", "api_keys", "legacy"]);
+export const executionExpectationSchema = z.object({
+  mode: executionModeSchema,
+  profileVersion: z.literal(1),
+  providerId: boundedString(120),
+  modelId: boundedString(160),
+  modelRevision: boundedString(160).nullable()
+}).strict();
+export type ExecutionExpectation = z.infer<typeof executionExpectationSchema>;
+
 /**
  * New execution-profile starts cross the public boundary with one opaque,
  * server-managed binding ID. The strict object deliberately rejects client
@@ -77,7 +88,8 @@ const agentStartRequestCommonShape = {
  */
 const executionBindingStartRequestSchema = z.object({
   ...agentStartRequestCommonShape,
-  executionBindingId: safeId(160)
+  executionBindingId: safeId(160),
+  expectedExecution: executionExpectationSchema.optional()
 }).strict();
 
 /**
@@ -117,7 +129,10 @@ const legacyProviderStartRequestSchema = z.object({
 export const agentStartRequestSchema = z.union([
   executionBindingStartRequestSchema,
   legacyProviderStartRequestSchema
-]).refine((request) => !(request.conversationId || request.priorConversationRunId) || Boolean(request.workspace?.vdtId), {
+]).refine((request) => !request.outcomeSelection || (!request.outcome && Boolean(request.input.prompt)), {
+  path: ["outcomeSelection"],
+  message: "Automatic requires an original user prompt and no explicit outcome."
+}).refine((request) => !(request.conversationId || request.priorConversationRunId) || Boolean(request.workspace?.vdtId), {
   path: ["workspace", "vdtId"],
   message: "A conversation requires a stored VDT ID."
 }).refine((request) => !(request.conversationId && request.priorConversationRunId), {

@@ -1,3 +1,4 @@
+import { captureCurrentSkillAuthorRequest } from "@/lib/skill-author-client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { parseFrontmatter } from "@vdt-studio/vdt-agent";
@@ -168,6 +169,32 @@ describe("Skill Author waiting feedback", () => {
     expect(inFlight.preparation).toMatchObject({ providerId: "local_runner", timeoutMs: 300_000 });
     expect(next.execution).toMatchObject({ providerId: "openai_compatible", providerConfig: { model: "api-next-request" } });
     expect(next.preparation).toMatchObject({ providerId: "openai_compatible", timeoutMs: 90_000 });
+  });
+
+  it("fences first-launch Apple expectation before constructing a compatibility request", () => {
+    const executionSettings = { ...DEFAULT_EXECUTION_SETTINGS, analyticalSourceChoice: "untouched" as const };
+    expect(() => captureCurrentSkillAuthorRequest({
+      executionSettings,
+      appleFirstLaunch: { status: "checking", firstLaunchDefaultEnabled: true }
+    }, "settings-panel-target")).toThrow("selected Apple on-device model is unavailable");
+    expect(() => captureCurrentSkillAuthorRequest({
+      executionSettings: { ...executionSettings, analyticalSourceChoice: "apple_manual" },
+      appleFirstLaunch: { status: "inactive", firstLaunchDefaultEnabled: false }
+    }, "settings-panel-target")).toThrow("selected Apple on-device model is unavailable");
+  });
+
+  it("sends the strict Apple identity even when discovery includes additional admission metadata", () => {
+    const identity = { mode: "local", profileVersion: 1, providerId: "apple_foundation_models",
+      modelId: "SystemLanguageModel.default", modelRevision: null } as const;
+    const admission = { ...identity, analyticalTasks: ["bounded_task"], boundary: "on_device" };
+    const captured = captureSkillAuthorRequest(DEFAULT_EXECUTION_SETTINGS, "tree", {
+      bindingId: "apple_native_fixture", executionProfile: "model_agent",
+      backendId: identity.providerId, modelId: identity.modelId, engineId: "in-product-model-agent",
+      engineAdapterId: "apple-native-guided-v1", appleIdentity: { osBuild: "fixture", locale: "en-US" }, admission
+    });
+    expect(captured.execution).toEqual({ providerId: identity.providerId, providerConfig: { bindingId: "apple_native_fixture" } });
+    expect(captured.expectedExecution).toEqual(identity);
+    expect(captured.preparation.timeoutMs).toBe(45_000);
   });
 
   it.each([

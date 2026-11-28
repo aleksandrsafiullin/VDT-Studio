@@ -2,29 +2,42 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { buildChatStarterInput, chatStarterTimeoutMs, validateChatStarterOutput, type ChatStarterOutput } from "@vdt-studio/vdt-core";
+import { appleIsExpected, type AppleFirstLaunchStatus } from "@/lib/apple-first-launch";
 import { createAiExecutionClient } from "@/lib/ai-execution-client";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
 import { resolveSelectedCliReadiness } from "@/lib/cli-readiness";
-import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
+import { hasLocalAiUi, resolveVdtAppMode, type VdtAppMode } from "@/lib/app-mode";
+import type { ExecutionSettings } from "@/lib/execution-mode-catalog";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { selectedCliScanStatus, useVdtStudioStore } from "./vdt-store";
 
+export function resolveSpeculativeChatStarterRequest(
+  settings: ExecutionSettings, mode: VdtAppMode, pairingToken: string | undefined,
+  appleSelected: boolean, appleLaunch?: AppleFirstLaunchStatus
+) {
+  // Apple has one native owner for metadata and generation. Keep it available
+  // for foreground work and never substitute a saved provider in the preview.
+  if (appleSelected || appleIsExpected(settings.analyticalSourceChoice, appleLaunch)) return undefined;
+  const { providerId, providerConfig } = resolveExecutionSettings(settings);
+  if (providerId === "mock" || (providerId === "local_runner" && !hasLocalAiUi(mode))) return undefined;
+  if (settings.executionMode === "byok" && hasByokFieldErrors(validateByokSettings(settings))) return undefined;
+  return { mode, providerId, providerConfig, pairingToken };
+}
+
 export function useChatStarters(vdtId: string | undefined, enabled: boolean) {
   const settings = useVdtStudioStore((state) => state.executionSettings);
+  const appleLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const apple = useVdtStudioStore(state => state.appleNativePreview?.settings === state.executionSettings
+    ? state.appleNativePreview.binding : undefined);
   const pairingToken = useVdtStudioStore((state) => state.runnerPairingToken);
   const detections = useVdtStudioStore((state) => state.cliDetectionAgents);
   const isScanning = useVdtStudioStore((state) => selectedCliScanStatus(state).isScanning);
   const detectionError = useVdtStudioStore((state) => selectedCliScanStatus(state).detectionError);
   const cli = resolveSelectedCliReadiness(settings, detections, { isScanning, detectionError });
   const cliReady = cli?.canExecute ?? true;
-  const request = useMemo(() => {
-    if (!enabled || !vdtId) return undefined;
-    const mode = resolveVdtAppMode();
-    const { providerId, providerConfig } = resolveExecutionSettings(settings);
-    if (providerId === "mock" || (providerId === "local_runner" && !hasLocalAiUi(mode))) return undefined;
-    if (settings.executionMode === "byok" && hasByokFieldErrors(validateByokSettings(settings))) return undefined;
-    return { mode, providerId, providerConfig, pairingToken };
-  }, [enabled, vdtId, settings, pairingToken]);
+  const request = useMemo(() => enabled && vdtId
+    ? resolveSpeculativeChatStarterRequest(settings, resolveVdtAppMode(), pairingToken, Boolean(apple), appleLaunch)
+    : undefined, [enabled, vdtId, settings, pairingToken, apple, appleLaunch]);
   const [result, setResult] = useState<{
     request: NonNullable<typeof request>;
     prompts?: ChatStarterOutput["prompts"];
@@ -46,9 +59,10 @@ export function useChatStarters(vdtId: string | undefined, enabled: boolean) {
       const project = useVdtStudioStore.getState().project;
       const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs + 2_500)]);
       try {
+        const input = buildChatStarterInput(project, document.documentElement.lang || "en");
         const response = await createAiExecutionClient(mode).complete({
           taskType: "suggest_chat_starters",
-          input: buildChatStarterInput(project, document.documentElement.lang || "en"),
+          input,
           providerId,
           providerConfig: { ...config, ...(pairingToken ? { pairingToken } : {}) }
         }, requestSignal);

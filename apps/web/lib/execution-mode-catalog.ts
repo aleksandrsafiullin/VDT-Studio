@@ -1,6 +1,7 @@
 import { BUILTIN_HARNESSES, BUILTIN_HARNESS_IDS, type HarnessDefinition, type HarnessId } from "@vdt-studio/model-bridge/harness-catalog";
 import type { ProxyProvider } from "./provider-target-security";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
+import type { AnalyticalSourceChoice } from "./apple-first-launch";
 import { stripSessionOnlySecrets } from "./session-secrets";
 
 export type ExecutionMode = "local_cli" | "byok";
@@ -99,9 +100,12 @@ export interface LocalRunnerPresetCatalogEntry {
 }
 
 export interface ExecutionSettings {
+  /** First-launch policy is separate from saved provider configuration. */
+  analyticalSourceChoice?: AnalyticalSourceChoice | undefined;
   /** Suggested KPI choices are scoped to this connection and never change chat. */
   smartKpiBySource?: Record<string, SmartKpiModelPreferences> | undefined;
-  modelReasoningBySource?: Record<string, boolean | string | number> | undefined;
+  modelReasoningBySource?: Record<string, boolean | string | number | null> | undefined;
+  localFastDefaultsByModel?: Record<string, true> | undefined;
   executionMode: ExecutionMode;
   selectedCliAgentId?: CliAgentId | undefined;
   localRunnerPresetId?: LocalRunnerPresetId | undefined;

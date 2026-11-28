@@ -112,22 +112,36 @@ function parseWorkbookDataset(input: ParserInput, limits: DataDiscoveryLimits): 
         : undefined;
       const columnFormats: Record<string, string> = {};
       const columnEncodings: NonNullable<DataTable["columnEncodings"]> = {};
+      const xlsxDateColumns: NonNullable<DataTable["xlsxDateColumns"]> = [];
       const sourceDataRows = sourceRows.slice(hasHeader ? 1 : 0);
       for (const [columnIndex, column] of columns.entries()) {
         let durationCells = 0;
         let otherCells = 0;
         let dateCells = 0;
+        let unambiguousDateCells = 0;
         for (const row of sourceDataRows) {
           const cell = sheet[XLSX.utils.encode_cell({ r: sheetRange.s.r + row.matrixRowIndex, c: sheetRange.s.c + columnIndex })] as XLSX.CellObject | undefined;
           if (!cell || cell.v === undefined || cell.v === null || cell.v === "") continue;
           if (!columnFormats[column] && cell.z) columnFormats[column] = String(cell.z);
-          const encoding = typeof cell.v === "number" ? excelCellEncoding(String(cell.z ?? "General")) : "numeric";
+          const format = String(cell.z ?? "General");
+          const encoding = typeof cell.v === "number" ? excelCellEncoding(format) : "numeric";
           if (encoding === "duration_days") durationCells += 1;
-          else if (encoding === "datetime") dateCells += 1;
-          else otherCells += 1;
+          else if (encoding === "datetime") {
+            dateCells += 1;
+            // A conditional or multi-section format may display this value as
+            // an ordinary number even if another section contains date tokens.
+            if (workbook.bookType === "xlsx" && !/[;]|\[[<>=]/u.test(format) && XLSX.SSF.is_date(format) === true) {
+              unambiguousDateCells += 1;
+            }
+          } else otherCells += 1;
         }
-        if (dateCells > 0) columnEncodings[column] = "excel_datetime";
-        else if (durationCells > 0) columnEncodings[column] = otherCells > 0 ? "mixed_excel_duration" : "excel_duration_days";
+        if (dateCells > 0) {
+          columnEncodings[column] = "excel_datetime";
+          if (workbook.bookType === "xlsx") {
+            const uniform = unambiguousDateCells === dateCells && durationCells === 0 && otherCells === 0;
+            xlsxDateColumns.push([column, uniform ? "excel_serial" : "ambiguous_excel_dates"]);
+          }
+        } else if (durationCells > 0) columnEncodings[column] = otherCells > 0 ? "mixed_excel_duration" : "excel_duration_days";
       }
       if (dataRows.length > limits.maxRows) {
         warnings.push(warning("warning", "data_discovery_validation_failed", `Rows in "${sheetName}" were sampled at ${limits.maxRows} rows.`));
@@ -144,6 +158,7 @@ function parseWorkbookDataset(input: ParserInput, limits: DataDiscoveryLimits): 
         layoutIssue,
         columnFormats,
         columnEncodings,
+        ...(xlsxDateColumns.length ? { xlsxDateColumns } : {}),
         numericColumns: columns.filter((_, columnIndex) => {
           const cells = sourceDataRows.map((row) => matrix[row.matrixRowIndex]?.[columnIndex]);
           return cells.some((cell) => typeof cell === "number") && cells.every((cell) => cell === "" || cell === undefined || typeof cell === "number");

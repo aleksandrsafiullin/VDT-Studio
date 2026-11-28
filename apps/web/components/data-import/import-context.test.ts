@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { productionVolumeProject, type VdtProject } from "@vdt-studio/vdt-core";
-import { captureFileImportTarget, fileImportContextError } from "./import-context";
+import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
+
+import { captureFileImportAnalysisExecution, captureFileImportTarget, fileImportContextError } from "./import-context";
 
 function fixture(): VdtProject {
   const project = structuredClone(productionVolumeProject);
@@ -57,5 +59,27 @@ describe("file import target identity", () => {
     project.graph.nodes[0]!.position = { x: 40, y: 90 };
     project.graph.nodes[0]!.updatedAt = "2026-10-16T12:00:00Z";
     expect(fileImportContextError(context, project, workspace)).toBeUndefined();
+  });
+});
+
+describe("file analysis execution fence", () => {
+  it("preserves exact admitted Apple request and rejects changes during upload or response", () => {
+    const executionSettings = { ...DEFAULT_EXECUTION_SETTINGS, analyticalSourceChoice: "apple_manual" } as const;
+    const admission = { mode: "local", profileVersion: 1, providerId: "apple_foundation_models",
+      modelId: "SystemLanguageModel.default", modelRevision: null } as const;
+    const binding = { bindingId: "first", backendId: admission.providerId, modelId: admission.modelId, admission,
+      executionProfile: "model_agent", engineId: "fixture", engineAdapterId: "fixture",
+      appleIdentity: { locale: "en-US", osBuild: "fixture" } } as const;
+    const state = { executionSettings, appleNativePreview: { settings: executionSettings, binding } };
+    const captured = captureFileImportAnalysisExecution(state);
+    expect(captured.request).toEqual({ providerId: admission.providerId,
+      providerConfig: { bindingId: "first" }, expectedExecution: admission });
+    expect(() => captured.assertCurrent(state)).not.toThrow();
+    const switched = { ...state, executionSettings: { ...executionSettings, analyticalSourceChoice: "manual" as const } };
+    expect(() => captured.assertCurrent(switched)).toThrow("AI selection changed");
+    expect(() => captured.assertCurrent({ ...state, appleNativePreview: { settings: executionSettings,
+      binding: { ...binding, bindingId: "replacement" } } })).toThrow("AI selection changed");
+    expect(() => captureFileImportAnalysisExecution({ ...state, appleNativePreview: { settings: executionSettings,
+      binding: { ...binding, admission: undefined } } })).toThrow("Reconnect the Apple");
   });
 });

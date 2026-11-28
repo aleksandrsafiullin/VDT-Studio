@@ -60,6 +60,20 @@ describe("generate VDT API route", () => {
     expect(body).not.toHaveProperty("max_tokens");
   });
 
+  it.each(["connection_test", "list_models"])("denies a verified-local claim before the legacy %s probe", async operation => {
+    const fetcher = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetcher);
+    const response = await POST(jsonRequest({
+      operation,
+      providerId: "openai_compatible",
+      providerConfig: { apiKey: "test-key", model: "provider-owned-model", modelReasoning: "high" },
+      expectedExecution: { mode: "local", providerId: "ollama", modelId: "provider-owned-model" }
+    }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "LOCAL_ROUTE_UNVERIFIED" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("tests the exact selected API reasoning instead of silently using its default", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) => String(url).includes("/models/")
       ? Response.json({ supported_reasoning_efforts: ["low", "high"] })
@@ -410,7 +424,8 @@ describe("generate VDT API route", () => {
           runnerUrl: "http://127.0.0.1:8765",
           backendId: "ollama",
           pairingToken: "session-token",
-          model: "qwen3"
+          model: "qwen3",
+          modelReasoning: false
         }
       })
     );
@@ -421,7 +436,8 @@ describe("generate VDT API route", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8765/v1/completions",
       expect.objectContaining({
-        method: "POST"
+        method: "POST",
+        body: expect.stringContaining('"modelReasoning":false')
       })
     );
   });

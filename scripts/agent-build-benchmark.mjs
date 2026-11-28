@@ -369,6 +369,18 @@ export function validateBenchmarkRecord(record) {
       || record.execution.toolCatalogHash !== null) {
       fail("Legacy request-echo identity is restricted to the Model Agent micro-CLI compatibility baseline.");
     }
+  } else if (record.provenance.executionIdentitySource === "local_compatibility_binding") {
+    if (record.provenance.transportMode !== "local_compatibility_baseline"
+      || record.execution.profile !== "model_agent"
+      || record.execution.backend !== "ollama"
+      || record.execution.adapter !== "local-http-structured-turn-v1"
+      || record.execution.protocolVersion === null
+      || record.execution.qualificationStatus !== "unverified"
+      || record.execution.capabilityEvidenceHash !== null
+      || record.execution.capabilityProfileHash === null
+      || record.execution.toolCatalogHash === null) {
+      fail("Local compatibility metrics require an unverified Ollama Model Agent runtime binding.");
+    }
   } else if (record.provenance.executionIdentitySource === "runtime_binding_evidence") {
     if (record.execution.protocolVersion === null
       || record.execution.capabilityEvidenceHash === null
@@ -762,12 +774,15 @@ function resolveExecutionIdentity(snapshot, declared, transportMode) {
   const toolCatalogHash = summary.toolCatalogHash ?? null;
   const toolIsolation = summary.toolIsolation ?? null;
   const qualificationStatus = summary.qualificationStatus ?? null;
+  const localCompatibilityBaseline = transportMode === "local_compatibility_baseline"
+    && qualificationStatus === "unverified"
+    && capabilityEvidenceHash === null;
   if (typeof protocolVersion !== "string"
-    || !/^sha256:[a-f0-9]{64}$/u.test(capabilityEvidenceHash)
+    || (!localCompatibilityBaseline && !/^sha256:[a-f0-9]{64}$/u.test(capabilityEvidenceHash))
     || !/^sha256:[a-f0-9]{64}$/u.test(capabilityProfileHash)
     || !/^sha256:[a-f0-9]{64}$/u.test(toolCatalogHash)
     || !["unverified", "permission_only", "hard_verified"].includes(toolIsolation)
-    || qualificationStatus !== "qualified") {
+    || (!localCompatibilityBaseline && qualificationStatus !== "qualified")) {
     fail("Target benchmark identity requires qualified server-binding executionSummary evidence, including protocol, capability profile, tool isolation, and tool catalog hashes.");
   }
   if (summary.executionProfile === "external_cli_agent") {
@@ -798,7 +813,7 @@ function resolveExecutionIdentity(snapshot, declared, transportMode) {
   }
   return {
     execution: authoritative,
-    source: "runtime_binding_evidence"
+    source: localCompatibilityBaseline ? "local_compatibility_binding" : "runtime_binding_evidence"
   };
 }
 

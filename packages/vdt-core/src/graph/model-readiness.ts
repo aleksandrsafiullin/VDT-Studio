@@ -4,9 +4,12 @@ import { extractFormulaReferences } from "../formula/evaluator";
 import type { GraphCalculationResult, ValidationResult, VdtProject, VdtWarning } from "../types";
 import { inspectDecompositionHierarchy, getDecompositionContextGroupIds } from "./decomposition";
 import { validateGraph } from "./validation";
+import { hasTypedDecompositionRelationship, readDecompositionAssumptions } from "../operations/decomposition-assumption";
+import { verifyDecompositionRelationship, type DecompositionRelationshipVerification } from "../operations/factor-probe";
 import { readNodeBaselineValue } from "../utils";
 
 export const WORKSPACE_MODEL_READINESS_POLICY_VERSION = "workspace-v1";
+const relationshipLimit = 24;
 export type ModelReadinessPurpose = "structural_model" | "calculated_baseline";
 
 export interface ModelReadinessOptions {
@@ -36,6 +39,7 @@ export interface ModelReadinessResult {
   issues: ModelReadinessIssue[];
   calculation?: GraphCalculationResult;
   hierarchy?: ReturnType<typeof inspectDecompositionHierarchy>;
+  relationshipChecks?: Array<{ nodeId: string; result: DecompositionRelationshipVerification }>;
 }
 
 function graphIssue(issue: VdtWarning): ModelReadinessIssue {
@@ -108,10 +112,41 @@ export function evaluateModelReadiness(project: VdtProject, options: ModelReadin
     }));
   }
 
+  const relationshipChecks: NonNullable<ModelReadinessResult["relationshipChecks"]> = [];
+  let typedRelationshipCount = 0;
+  let measuredCalculation: GraphCalculationResult | undefined;
+  for (const node of nodes) {
+    if (node.status === "rejected") continue;
+    const typedCount = (node.assumptions ?? []).filter(hasTypedDecompositionRelationship).length;
+    if (typedCount === 0) continue;
+    if (++typedRelationshipCount > relationshipLimit) {
+      const issue = modelIssue("RELATIONSHIP_LIMIT", "The model exceeds the typed relationship verification limit.", { nodeId: node.id });
+      validation.errors.push(issue);
+      issues.push(issue);
+      break;
+    }
+    const typed = readDecompositionAssumptions(node).filter(assumption => assumption.relationship);
+    const relationship = typed[0]?.relationship;
+    if (relationship && validation.valid) measuredCalculation ??= calculateGraph(project);
+    const result: DecompositionRelationshipVerification = typedCount === 1 && relationship
+      ? verifyDecompositionRelationship(node, relationship, byId, measuredCalculation?.values)
+      : { status: "unverified", reason: "Record one valid, confirmed typed relationship for this KPI." };
+    relationshipChecks.push({ nodeId: node.id, result });
+    if (result.status === "passed") continue;
+    const code = result.status === "mismatch" ? "RELATIONSHIP_FORMULA_MISMATCH" : "RELATIONSHIP_UNVERIFIED";
+    const detail = result.status === "mismatch"
+      ? `Inputs ${result.inputs.join(" and ")} require ${result.expected} ${relationship!.unit}, but the formula gives ${result.actual}.`
+      : result.reason;
+    const issue = modelIssue(code, `${node.name}: ${detail}`, { nodeId: node.id });
+    validation.errors.push(issue);
+    issues.push(issue);
+  }
+  if (typedRelationshipCount) validation.valid = validation.errors.length === 0;
+
   let calculation: GraphCalculationResult | undefined;
   const supported = policyVersion === WORKSPACE_MODEL_READINESS_POLICY_VERSION;
   if (purpose === "calculated_baseline" && supported && validation.valid) {
-    calculation = calculateGraph(project);
+    calculation = measuredCalculation ?? calculateGraph(project);
     const reportedInputs = new Set(missingInputs.map(input => input.nodeId));
     for (const issue of [...calculation.errors, ...calculation.warnings]) {
       if (issue.type === "missing_value" && issue.nodeId && reportedInputs.has(issue.nodeId)) continue;
@@ -126,6 +161,7 @@ export function evaluateModelReadiness(project: VdtProject, options: ModelReadin
     accepted: !issues.some(issue => issue.severity === "error"),
     purpose, policyVersion, validation, missingInputs, issues,
     ...(hierarchy ? { hierarchy } : {}),
+    ...(relationshipChecks.length ? { relationshipChecks } : {}),
     ...(calculation ? { calculation } : {})
   };
 }

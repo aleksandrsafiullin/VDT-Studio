@@ -169,6 +169,7 @@ export function publicManifest(manifest: BackendManifest) {
     taskTypes: manifest.taskTypes,
     schemaIds: manifest.schemaIds,
     modelSelection: manifest.modelSelection,
+    ...(manifest.kind === "local_http" && { processingBoundary: "unverified" as const }),
     safety: {
       toolsDisabled: manifest.safety.toolsDisabled,
       requiresOsSandbox: manifest.safety.requiresOsSandbox,

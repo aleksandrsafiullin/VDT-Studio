@@ -205,7 +205,24 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
       engineId: "cursor-resume-checkpoint",
       engineAdapterId: "cursor-resume-checkpoint-v1",
       backendId: "cursor_subscription",
-      modelId: "cursor-grok-4.6-medium"
+      modelId: "cursor-grok-4.6-medium",
+      admission: {
+        profileVersion: 1,
+        mode: "cli_subscription",
+        providerId: "cursor_subscription",
+        modelId: "cursor-grok-4.6-medium",
+        modelRevision: null,
+        runtimeProfileVersion: null,
+        reasoning: null,
+        boundary: "provider_service",
+        analyticalTasks: ["agent_run"],
+        speech: { stt: null, tts: null, realtime: null },
+        credential: { kind: "subscription", reference: "cursor_session_canary" },
+        consent: "explicit_connection",
+        scope: "bound_run",
+        research: true,
+        delegation: false
+      }
     });
     expect(runtime.externalAgentEngineForBinding("cursor_session_canary")?.capability).toMatchObject({
       executionProfile: "external_cli_agent",

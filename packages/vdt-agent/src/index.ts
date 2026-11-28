@@ -1096,7 +1096,7 @@ function buildSelectionReason(skill: VdtSkill, classification: VdtClassification
 }
 
 function createSkillExcerpt(skill: VdtSkill, maxChars: number): string {
-  const sections = ["When To Use", "Decomposition Pattern", "Formula Templates", "Required Inputs", "Warnings And Edge Cases"];
+  const sections = ["When To Use", "Scope Boundary", "Decomposition Pattern", "Formula Templates", "Required Inputs", "Warnings And Edge Cases"];
   const selected = sections
     .map((section) => extractMarkdownSection(skill.body, section))
     .filter(Boolean)
@@ -1106,7 +1106,7 @@ function createSkillExcerpt(skill: VdtSkill, maxChars: number): string {
 }
 
 function extractMarkdownSection(markdown: string, title: string): string {
-  const pattern = new RegExp(`(^|\\n)## ${escapeRegExp(title)}\\n([\\s\\S]*?)(?=\\n## |$)`);
+  const pattern = new RegExp(`(^|\\n)## ${escapeRegExp(title)}\\n([\\s\\S]*?)(?=\\n## |$)`, "i");
   return pattern.exec(markdown)?.[0].trim() ?? "";
 }
 

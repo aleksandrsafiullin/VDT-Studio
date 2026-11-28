@@ -172,8 +172,8 @@ impl DesktopRuntime {
         self.request("detect_clis", payload, None)
     }
 
-    pub fn test_backend(&self, backend_id: &str) -> Result<Value, RuntimeError> {
-        self.request("test_backend", json!({ "backendId": backend_id }), None)
+    pub fn test_backend(&self, payload: Value) -> Result<Value, RuntimeError> {
+        self.request("test_backend", payload, None)
     }
 
     pub fn list_models(&self, backend_id: &str) -> Result<Vec<String>, RuntimeError> {
@@ -397,6 +397,10 @@ impl SidecarProcess {
                 .env("PATH", &bundled.path)
                 .env_remove("NODE_OPTIONS")
                 .env_remove("NODE_PATH");
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        if let (Some(_), Some(resources)) = (bundled, resource_dir.as_deref()) {
+            crate::apple_helpers::configure(&mut command, resources);
         }
         let mut child = command
             .stdin(Stdio::piped())

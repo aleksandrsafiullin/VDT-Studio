@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput } from "@/components/ui/field";
+import { appleIsExpected, appleRecoveryMessage, isAppleAnalyticalChoice } from "@/lib/apple-first-launch";
+import { readAppleLaunchAvailability, runAppleInferenceDiagnostic, type AppleDiagnosticReceipt } from "@/lib/apple-native-client";
+import type { PublicAgentExecutionBindingSummary } from "@/lib/agent-client";
+import { resolveVdtAppMode } from "@/lib/app-mode";
 import { createAiExecutionClient } from "@/lib/ai-execution-client";
 import { getLocalRunnerPreset, LOCAL_RUNNER_PRESET_CATALOG, type LocalHttpModelBackendId, type LocalModelPresetId, type LocalRunnerPresetCatalogEntry } from "@/lib/execution-mode-catalog";
 import { useVdtStudioStore } from "./vdt-store";
@@ -173,10 +177,113 @@ export function LocalModelCards({
   );
 }
 
+type AppleDiagnosticStatus =
+  | { kind: "running" }
+  | { kind: "finished"; receipt: AppleDiagnosticReceipt }
+  | { kind: "message"; message: string };
+
+function AppleInferenceDiagnostic({ binding }: { binding: PublicAgentExecutionBindingSummary }) {
+  const currentRequest = useRef<AbortController | null>(null);
+  const [status, setStatus] = useState<AppleDiagnosticStatus>();
+  useEffect(() => {
+    const abort = () => {
+      currentRequest.current?.abort();
+      currentRequest.current = null;
+    };
+    const resetForLanguageChange = () => {
+      abort();
+      setStatus(undefined);
+    };
+    window.addEventListener("languagechange", resetForLanguageChange);
+    return () => {
+      window.removeEventListener("languagechange", resetForLanguageChange);
+      abort();
+    };
+  }, []);
+
+  async function run() {
+    if (currentRequest.current) return;
+    const locale = navigator.language;
+    const isCurrentBinding = () => {
+      const state = useVdtStudioStore.getState();
+      return navigator.language === locale && state.appleFirstLaunch?.status === "ready"
+        && isAppleAnalyticalChoice(state.executionSettings.analyticalSourceChoice)
+        && state.appleNativePreview?.settings === state.executionSettings
+        && state.appleNativePreview.binding.bindingId === binding.bindingId;
+    };
+    if (!isCurrentBinding() || binding.appleIdentity?.locale !== locale) {
+      setStatus({ kind: "message", message: "The selected Apple model could not be verified for this language. Reopen VDT Studio and retry." });
+      return;
+    }
+    const controller = new AbortController();
+    currentRequest.current = controller;
+    const deadline = AbortSignal.timeout(22_000);
+    setStatus({ kind: "running" });
+    try {
+      const receipt = await runAppleInferenceDiagnostic(binding, locale, AbortSignal.any([controller.signal, deadline]));
+      if (currentRequest.current !== controller) return;
+      if (isCurrentBinding() && !deadline.aborted) setStatus({ kind: "finished", receipt });
+      else setStatus({ kind: "message", message: "The Apple inference result expired. Run the test again." });
+    } catch (error) {
+      if (currentRequest.current !== controller) return;
+      const message = deadline.aborted ? "The Apple inference test timed out. Try again."
+        : error instanceof Error ? error.message : "The Apple inference test could not be completed.";
+      setStatus(isCurrentBinding() ? { kind: "message", message } : undefined);
+    } finally {
+      if (currentRequest.current === controller) currentRequest.current = null;
+    }
+  }
+
+  function cancel() {
+    currentRequest.current?.abort();
+    currentRequest.current = null;
+    setStatus({ kind: "message", message: "The Apple inference test was cancelled." });
+  }
+
+  return (
+    <div className="space-y-2 border-t border-line pt-2">
+      <p className="text-xs text-muted">Run a small on-device calculation using sample data.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" onClick={() => void run()} disabled={status?.kind === "running"}>
+          Run inference test
+        </Button>
+        {status?.kind === "running" && <Button size="sm" variant="secondary" onClick={cancel}>Cancel inference test</Button>}
+      </div>
+      <div role="status" aria-live="polite" className="break-words text-xs text-muted">
+        {status?.kind === "running" && "Running the Apple inference test…"}
+        {status?.kind === "message" && status.message}
+        {status?.kind === "finished" && (
+          <>
+            <p>Apple inference verified. {status.receipt.result.value.toLocaleString(status.receipt.locale)} {status.receipt.result.unit}.</p>
+            <p>{status.receipt.identity.model} · {status.receipt.identity.profile} · macOS build {status.receipt.identity.osBuild} · {status.receipt.locale}</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LocalModelSettings() {
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const setLocalRunnerPreset = useVdtStudioStore((state) => state.setLocalRunnerPreset);
   const setExecutionSettingsField = useVdtStudioStore((state) => state.setExecutionSettingsField);
+  const appleFirstLaunch = useVdtStudioStore(state => state.appleFirstLaunch);
+  const appleNativePreview = useVdtStudioStore(state => state.appleNativePreview);
+  const refreshApple = useVdtStudioStore(state => state.refreshAppleAnalyticalDefault);
+  const appleExpected = appleIsExpected(executionSettings.analyticalSourceChoice, appleFirstLaunch);
+  const appleChosen = isAppleAnalyticalChoice(executionSettings.analyticalSourceChoice);
+  const appleSelectionPending = appleFirstLaunch?.status === "checking" && appleFirstLaunch.selectManually === true;
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    if (resolveVdtAppMode() !== "desktop") return;
+    const controller = new AbortController();
+    void readAppleLaunchAvailability(controller.signal)
+      .then(result => { if (!controller.signal.aborted) setAppleAvailable(result.enabled); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
+  const explicitlyRestoreApple = appleAvailable && executionSettings.analyticalSourceChoice === "apple_default"
+    && appleFirstLaunch?.status === "unavailable" && !appleFirstLaunch.firstLaunchDefaultEnabled;
   const [modelsByBackend, setModelsByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string[]>>>({});
   const [loadingByBackend, setLoadingByBackend] = useState<Partial<Record<LocalHttpModelBackendId, boolean>>>({});
   const [errorsByBackend, setErrorsByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string | undefined>>>({});
@@ -197,28 +304,48 @@ export function LocalModelSettings() {
   }, []);
 
   useEffect(() => {
-    if (!backendId || !selectedPreset) return;
+    if (appleExpected || !backendId || !selectedPreset) return;
     if (modelsByBackend[backendId] === undefined && !loadingByBackend[backendId] && errorsByBackend[backendId] === undefined) {
       void refreshModels(backendId);
     }
+    if (appleSelectionPending) return;
     const models = modelsByBackend[backendId] ?? [];
     const model = executionSettings.localModel?.trim();
     if (models[0] && (!model || (model === selectedPreset.model && !models.includes(model)))) {
       setExecutionSettingsField("localModel", models[0]);
     }
-  }, [backendId, selectedPreset, modelsByBackend, loadingByBackend, errorsByBackend, executionSettings.localModel, refreshModels, setExecutionSettingsField]);
+  }, [appleExpected, appleSelectionPending, backendId, selectedPreset, modelsByBackend, loadingByBackend, errorsByBackend, executionSettings.localModel, refreshModels, setExecutionSettingsField]);
 
   return (
     <section className="space-y-4" data-testid="local-model-settings" aria-labelledby="local-model-settings-title">
       <div>
         <h3 id="local-model-settings-title" className="text-sm font-semibold text-ink">Local models</h3>
-        <p className="mt-1 text-xs leading-5 text-muted">Run models on this computer with Ollama, LM Studio or vLLM. Keep your selected model server running.</p>
+        <p className="mt-1 text-xs leading-5 text-muted">Use Apple on-device analytics when available, or connect to Ollama, LM Studio or vLLM on this computer.</p>
       </div>
-      <div className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-50 px-4 py-3 text-xs" data-testid="local-model-active-selection">
+      {(appleAvailable || appleExpected) && (
+        <article data-testid="apple-local-model" className="space-y-2 rounded-lg border border-line p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold">Apple on-device</span>
+            <Button size="sm" variant={appleChosen ? "primary" : "secondary"} onClick={() => void refreshApple({ selectManually: !appleChosen || explicitlyRestoreApple })}
+              disabled={appleFirstLaunch?.status === "checking" || appleChosen && appleFirstLaunch?.status === "ready"
+                || !appleAvailable && !appleChosen}>
+              {explicitlyRestoreApple ? "Select explicitly" : appleChosen
+                ? appleFirstLaunch?.status === "ready" ? "Selected" : "Check availability"
+                : "Select"}
+            </Button>
+          </div>
+          {appleFirstLaunch?.status === "checking" ? <p role="status" className="text-xs text-muted">Checking Apple model availability…</p>
+            : appleFirstLaunch?.status === "unavailable" ? <p role="status" className="text-xs text-amber-800">{appleRecoveryMessage(appleFirstLaunch)}</p>
+            : appleChosen ? <p className="text-xs text-muted">Uses the model verified by this desktop for new requests.</p> : null}
+          {appleAvailable && appleChosen && appleFirstLaunch?.status === "ready" && appleNativePreview?.settings === executionSettings
+            && <AppleInferenceDiagnostic key={appleNativePreview.binding.bindingId} binding={appleNativePreview.binding} />}
+        </article>
+      )}
+      {!appleExpected && <div className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-50 px-4 py-3 text-xs" data-testid="local-model-active-selection">
         <span className="font-semibold text-ink">{selectedPreset?.label ?? "Choose a model server"}</span>
         <span className="break-all text-muted">{executionSettings.localModel || "Choose a model"}</span>
-      </div>
-      <LocalModelCards selectedPresetId={selectedPreset?.id} selectedModel={executionSettings.localModel}
+      </div>}
+      <LocalModelCards selectedPresetId={appleExpected ? undefined : selectedPreset?.id} selectedModel={executionSettings.localModel}
         modelsByBackend={modelsByBackend} isLoadingModelsByBackend={loadingByBackend} modelListErrorByBackend={errorsByBackend}
         onSelectPreset={(id) => setLocalRunnerPreset(id as LocalModelPresetId)}
         onSelectModel={(model) => setExecutionSettingsField("localModel", model)} onRefreshModels={refreshModels} />

@@ -124,7 +124,7 @@ async function serve() {
   child = spawn(process.execPath, [next, "dev", "--hostname", host, "--port", portText], {
     cwd: web,
     stdio: "inherit",
-    env: developmentWebEnvironment()
+    env: { ...developmentWebEnvironment(), VDT_NEURAL_VOICE_OWNER_PORT: portText }
   });
   closed = new Promise((resolve) => {
     child.once("error", (error) => console.error(error.message));

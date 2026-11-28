@@ -6,9 +6,8 @@ import { BookOpen, Check, Download, LoaderCircle, RefreshCw, Sparkles, X } from 
 import { Button } from "@/components/ui/button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { downloadBinaryFile } from "@/lib/download";
-import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
-import { skillAuthorTimeoutMs } from "@/lib/skill-author-deadline";
-import { getVdtSkillContext, skillContextRootKpi, skillRequest, skillsChanged, type SkillDocument, type VdtSkillContext } from "@/lib/skills-client";
+import { captureCurrentSkillAuthorRequest, revalidateSkillWorkflowContext, skillContextIdentity } from "@/lib/skill-author-client";
+import { skillContextRootKpi, skillRequest, skillsChanged, type SkillDocument, type VdtSkillContext } from "@/lib/skills-client";
 import { applySkillChanges, skillWorkflowSourceKey, type SkillUpdateChange, type SkillUpdateProposal } from "@/lib/skill-workflow";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./skill-workflow-dialog.module.css";
@@ -21,13 +20,7 @@ interface NewDraft { key: string; raw: string; name: string; description: string
 interface UpdateDraft { key: string; proposal: SkillUpdateProposal; selected: string[] }
 interface SkillAuthorPreparation { key: string; providerId: string; startedAt: number; timeoutMs: number }
 
-/** Resolve once before asynchronous Context checks, so both the request and its
- * waiting message retain the same effective model, reasoning and budget. */
-export function captureSkillAuthorRequest(settings: Parameters<typeof resolveExecutionSettings>[0], key: string) {
-  const execution = resolveExecutionSettings(settings);
-  const preparation: SkillAuthorPreparation = { key, providerId: execution.providerId, startedAt: Date.now(), timeoutMs: skillAuthorTimeoutMs(execution.providerId) };
-  return { execution, preparation };
-}
+export { captureSkillAuthorRequest, revalidateSkillWorkflowContext, skillContextIdentity } from "@/lib/skill-author-client";
 
 export function formatSkillAuthorElapsed(elapsedMs: number): string {
   const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
@@ -60,26 +53,6 @@ export function SkillAuthorWaiting({ operation, preparation, onCancel }: {
     </div>
     <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel preparation</Button>
   </div>;
-}
-
-export function skillContextIdentity(context: VdtSkillContext | undefined): string {
-  return JSON.stringify([context?.skill?.id ?? null, context?.skill?.version ?? null,
-    context?.skill?.contentHash ?? null, context?.selection?.revision ?? null, Boolean(context?.needsReselection)]);
-}
-
-/** Refresh the parent before rejecting a stale pin so retry can use the new
- * Context. This also checks a previously empty/unresolved Context. */
-export async function revalidateSkillWorkflowContext(input: {
-  projectId: string; vdtId: string; rootKpi: string;
-  context: VdtSkillContext | undefined; stillCurrent: () => boolean;
-}): Promise<VdtSkillContext> {
-  const fresh = await getVdtSkillContext(input.projectId, input.vdtId, input.rootKpi);
-  if (!input.stillCurrent()) throw new Error("The tree changed. Prepare the draft again from the current Context.");
-  if (skillContextIdentity(fresh) !== skillContextIdentity(input.context)) {
-    skillsChanged();
-    throw new Error("The selected skill changed. Context is refreshing; prepare the draft again after it updates.");
-  }
-  return fresh;
 }
 
 function scalar(raw: string, key: string): string {
@@ -246,21 +219,32 @@ export function SkillWorkflowDialog({ open, onOpenChange, context, triggerRef, o
 
   const prepare = () => perform(mode, async (signal, stillCurrent) => {
     const capturedKey = currentKeyRef.current, state = useVdtStudioStore.getState();
-    const captured = captureSkillAuthorRequest(state.executionSettings, capturedKey), execution = captured.execution;
+    const captured = captureCurrentSkillAuthorRequest(state, capturedKey);
+    const stillSelected = () => {
+      const current = useVdtStudioStore.getState();
+      if (!stillCurrent() || current.executionSettings !== state.executionSettings) return false;
+      try {
+        return JSON.stringify(captureCurrentSkillAuthorRequest(current, capturedKey).requestProvider)
+          === JSON.stringify(captured.requestProvider);
+      } catch { return false; }
+    };
     setPreparation(captured.preparation);
-    const fresh = await checkSelection(stillCurrent);
-    if (!stillCurrent()) return;
+    const fresh = await checkSelection(stillSelected);
+    if (!stillSelected()) return;
     const input = { projectId: state.workspace.activeProjectId, vdtId: state.workspace.activeVdtId,
       project: { ...state.project, versions: [], scenarios: [], dataSources: [] },
-      providerId: execution.providerId, providerConfig: execution.providerConfig ?? {}, ...(feedback.trim() ? { feedback: feedback.trim() } : {}) };
+      ...captured.requestProvider,
+      ...(feedback.trim() ? { feedback: feedback.trim() } : {}) };
     if (mode === "create") {
       const result = await skillRequest<{ raw: string; warnings: string[] }>("/api/skills/from-vdt", input, signal);
-      if (stillCurrent()) setCreation({ key: capturedKey, raw: result.raw, name: scalar(result.raw, "title") || scalar(result.raw, "name"), description: scalar(result.raw, "description"), instructions: skillDraftInstructions(result.raw), warnings: result.warnings });
+      await checkSelection(stillSelected);
+      if (stillSelected()) setCreation({ key: capturedKey, raw: result.raw, name: scalar(result.raw, "title") || scalar(result.raw, "name"), description: scalar(result.raw, "description"), instructions: skillDraftInstructions(result.raw), warnings: result.warnings });
     } else {
       if (!fresh?.skill || !fresh.selection || fresh.skill.id === UNIVERSAL_SKILL_ID) throw new Error("Choose a thematic skill in Context before preparing an update.");
       const result = await skillRequest<{ proposal: SkillUpdateProposal }>("/api/skills/update-from-vdt", { ...input,
         base: { id: fresh.skill.id, version: fresh.skill.version, contentHash: fresh.skill.contentHash }, selectionRevision: fresh.selection.revision }, signal);
-      if (stillCurrent()) setUpdate({ key: capturedKey, proposal: result.proposal, selected: result.proposal.changes.map(change => change.id) });
+      await checkSelection(stillSelected);
+      if (stillSelected()) setUpdate({ key: capturedKey, proposal: result.proposal, selected: result.proposal.changes.map(change => change.id) });
     }
   });
 

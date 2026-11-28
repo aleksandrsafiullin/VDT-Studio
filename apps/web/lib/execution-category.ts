@@ -1,5 +1,6 @@
 import {
   applyLocalRunnerPreset,
+  DEFAULT_EXECUTION_SETTINGS,
   getLocalRunnerPreset,
   LOCAL_RUNNER_PRESET_CATALOG,
   type CliAgentId,
@@ -7,8 +8,32 @@ import {
   type LocalModelPresetId
 } from "./execution-mode-catalog";
 import { resolveCliCommandForAgent, type CliAgentDetectionLike } from "./cli-detection";
+import { modelReasoningKey } from "@vdt-studio/ai-harness/browser";
+import { FAST_LOCAL_REASONING } from "@vdt-studio/model-bridge/reasoning";
+import { resolveExecutionSettings } from "./execution-mode-resolver";
 
 export type ExecutionCategory = "cli_subscriptions" | "local_models" | "byok";
+
+export function configureLocalReasoning(previous: ExecutionSettings, next: ExecutionSettings): ExecutionSettings {
+  if (resolveExecutionCategory(next) !== "local_models") return next;
+  const keyFor = (settings: ExecutionSettings) => {
+    const { providerId, providerConfig } = resolveExecutionSettings(settings);
+    return modelReasoningKey(providerId, providerConfig);
+  };
+  const saved = rememberConfiguredLocalModelSelection(previous);
+  const oldLocal = resolveExecutionCategory(previous) === "local_models" ? previous
+    : saved ? { ...applyLocalRunnerPreset(previous, saved.presetId), localModel: saved.model } : undefined;
+  const oldKey = oldLocal ? keyFor(oldLocal) : undefined;
+  const newKey = keyFor(next);
+  if (newKey === oldKey || Object.hasOwn(next.modelReasoningBySource ?? {}, newKey)) return next;
+  const choices = { ...next.modelReasoningBySource };
+  if (oldKey && !Object.hasOwn(choices, oldKey)) choices[oldKey] = null;
+  return {
+    ...next,
+    localFastDefaultsByModel: { ...Object.fromEntries(Object.entries(next.localFastDefaultsByModel ?? {}).slice(-127)), [newKey]: true },
+    modelReasoningBySource: { ...Object.fromEntries(Object.entries(choices).slice(-126)), [newKey]: FAST_LOCAL_REASONING }
+  };
+}
 
 export function resolveExecutionCategory(settings: ExecutionSettings): ExecutionCategory {
   if (settings.executionMode === "byok") return "byok";
@@ -32,13 +57,23 @@ export function resolveSavedLocalModelSelection(settings: ExecutionSettings): No
   return { presetId: preset.id as LocalModelPresetId, model: settings.localModel ?? preset.model };
 }
 
+export function rememberConfiguredLocalModelSelection(settings: ExecutionSettings): ExecutionSettings["savedLocalModelSelection"] {
+  if (settings.savedLocalModelSelection || resolveExecutionCategory(settings) === "local_models"
+    || settings.localModel && settings.localModel !== DEFAULT_EXECUTION_SETTINGS.localModel
+    || settings.localBaseUrl && settings.localBaseUrl !== DEFAULT_EXECUTION_SETTINGS.localBaseUrl
+    || settings.localRunnerPresetId && !["ollama_openai", "custom_cli_json"].includes(settings.localRunnerPresetId)) {
+    return resolveSavedLocalModelSelection(settings);
+  }
+  return undefined;
+}
+
 export function selectExecutionCategory(
   settings: ExecutionSettings,
   category: ExecutionCategory,
   detections?: readonly CliAgentDetectionLike[],
   removedIds: readonly CliAgentId[] = []
 ): ExecutionSettings {
-  const savedLocalModelSelection = resolveSavedLocalModelSelection(settings);
+  const savedLocalModelSelection = rememberConfiguredLocalModelSelection(settings);
   if (category === "byok") return { ...settings, executionMode: "byok", savedLocalModelSelection };
   if (category === "cli_subscriptions") {
     const agentId = settings.selectedCliAgentId && !removedIds.includes(settings.selectedCliAgentId)
@@ -53,19 +88,20 @@ export function selectExecutionCategory(
       savedLocalModelSelection
     };
   }
-  return {
-    ...applyLocalRunnerPreset(settings, savedLocalModelSelection.presetId),
-    localModel: savedLocalModelSelection.model ?? getLocalRunnerPreset(savedLocalModelSelection.presetId).model,
-    savedLocalModelSelection
-  };
+  const local = resolveSavedLocalModelSelection(settings);
+  return configureLocalReasoning(settings, {
+    ...applyLocalRunnerPreset(settings, local.presetId),
+    localModel: local.model ?? getLocalRunnerPreset(local.presetId).model,
+    savedLocalModelSelection: local
+  });
 }
 
 export function selectLocalModelPreset(settings: ExecutionSettings, presetId: LocalModelPresetId): ExecutionSettings {
   const previous = resolveSavedLocalModelSelection(settings);
   const model = previous.presetId === presetId ? previous.model : getLocalRunnerPreset(presetId).model;
-  return {
+  return configureLocalReasoning(settings, {
     ...applyLocalRunnerPreset(settings, presetId),
     localModel: model,
     savedLocalModelSelection: { presetId, model }
-  };
+  });
 }

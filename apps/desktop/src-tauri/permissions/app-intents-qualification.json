@@ -1,0 +1,9 @@
+{
+  "permission": [
+    {
+      "identifier": "app-intents-qualification",
+      "description": "Private command for the packaged macOS Shortcuts qualification bridge.",
+      "commands": { "allow": ["app_intents_exchange"] }
+    }
+  ]
+}

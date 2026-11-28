@@ -48,9 +48,14 @@ read alone is selection-neutral.
 Local Supervisor amendment 2026-11-12. Context's preliminary match is available
 to the editor. For new-tree construction without a manual pin, the model uses
 the full request and run catalog, reads an exact version and selects it
-explicitly with a receipt. A no-applicable-skill outcome permits ordinary tree
-construction from the brief. Durable V2 grants and selection state remain in
-the corrective program.
+explicitly with a receipt. A no-applicable-skill outcome requires complete
+catalog pagination and permits ordinary tree construction from the brief. During Automatic and numerical discovery, the
+agent can ask a business scope question before choosing a method. A submitted
+scope answer can be traced from the accepted selection. When the user asks to
+confirm the method, the host presents the exact catalog title and the agent's
+reason and pauses before mutation. Only the submitted acceptance for that
+proposal completes selection. A decline leaves selection open. Durable V2
+grants and selection state remain in the corrective program.
 
 This user-requested local V1 workflow supersedes ADR-003's no-universal-
 preselection and read-only supplied-skill rules for V1. It does not implement V2
@@ -98,7 +103,10 @@ version/hash/content; automatic defaults are reconsidered after Root-KPI edits,
 while explicit choices remain pinned. A run snapshots its catalog on first
 access. Later edits cannot replace bytes already read by that run. Successful
 skill.select replaces the primary choice and persists the agent reason without
-editing the graph. Legacy compatibility recipe/topology activation remains;
+editing the graph. The run publishes one `skill_selected` event with the
+catalog title, localized reason, Skill version, hash, read receipt and stable
+`selectionId` for replay. Current Context revisions are checked again before
+graph mutations. Legacy compatibility recipe/topology activation remains;
 compilation needs explicit reselection before replacing a user choice. This is
 not V2 run-state CAS, an idempotency ledger or process-loss recovery.
 

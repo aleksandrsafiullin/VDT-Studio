@@ -68,8 +68,9 @@ export class OpenAiSessionBindingRegistrar {
 
   consume(bindingId: string) {
     const pending = this.pending.get(bindingId);
-    if (!pending) return;
+    if (!pending) return false;
     clearTimeout(pending.timer); pending.dispose(); this.pending.delete(bindingId);
+    return true;
   }
 }
 

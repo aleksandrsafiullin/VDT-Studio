@@ -66,6 +66,7 @@ export interface IncomingKpiReview {
   coverage: { totalRows: number; includedRows: number; excludedRows: number; categoryCount: number; complete: boolean };
   calculation?: string | undefined;
   blockingReasons: string[];
+  requiresExplicitDuration?: true;
   clarifications?: Array<{ id: string; question: string; answer?: string | undefined }> | undefined;
 }
 
@@ -78,6 +79,12 @@ export interface IncomingKpiBreakdown {
 const DURATION_HOURS = { seconds: 1 / 3600, minutes: 1 / 60, hours: 1, days: 24, target: 1 };
 const DAY_MS = 86_400_000;
 
+/** Recognize exact event identity labels and refuse to preselect normalized duplicates. */
+export function eventIdColumnCandidates(columns: readonly string[]): string[] {
+  const exact = new Set(columns.filter(column => /^event[ _-]?id$/i.test(column)));
+  return columns.filter(column => exact.has(column) || exact.has(column.replace(/_(?:[2-9]|[1-9]\d+)$/u, "")));
+}
+
 /** All arithmetic and partitions use complete local rows. Model suggestions never execute code. */
 export function buildIncomingKpiBreakdown(
   input: AnalyzeRawDatasetInput,
@@ -88,7 +95,9 @@ export function buildIncomingKpiBreakdown(
 ): IncomingKpiBreakdown {
   const target = input.project.graph.nodes.find((node) => node.id === targetNodeId);
   const supplied = input.incomingKpiOptions ?? {};
-  const options: IncomingKpiOptions = { ...inferIncomingOptions(tables, model, target), ...supplied };
+  const inferred = inferIncomingOptions(tables, model, target);
+  if (input.requireExplicitIncomingDuration) delete inferred.duration;
+  const options: IncomingKpiOptions = { ...inferred, ...supplied };
   const questions: IncomingKpiQuestion[] = [];
   const blockingReasons: string[] = [];
   const ask = (field: string, message: string) => {
@@ -96,7 +105,7 @@ export function buildIncomingKpiBreakdown(
   };
   const table = tables.find((candidate) => candidate.tableId === options.tableId);
   if (table && options.eventIdColumn === undefined) {
-    const candidates = table.columns.filter((column) => /^event[ _-]?id$/i.test(column));
+    const candidates = eventIdColumnCandidates(table.columns);
     if (candidates.length === 1) options.eventIdColumn = candidates[0];
     if (candidates.length > 1) ask("eventIdColumn", "Choose which column identifies a unique event, or confirm that the source has no unique event ID.");
   }
@@ -108,6 +117,7 @@ export function buildIncomingKpiBreakdown(
   }
   const review: IncomingKpiReview = {
     targetNodeId, options, questions, hierarchy: [],
+    ...(input.requireExplicitIncomingDuration ? { requiresExplicitDuration: true } : {}),
     coverage: { totalRows: table?.rows.length ?? 0, includedRows: 0, excludedRows: 0, categoryCount: 0, complete: false },
     blockingReasons
   };
@@ -127,11 +137,16 @@ export function buildIncomingKpiBreakdown(
   if (new Set(categoryColumns).size !== categoryColumns.length) blockingReasons.push("Each category column must appear only once in the hierarchy.");
   if (table && categoryColumns.some((column) => !table.columns.includes(column))) blockingReasons.push("A selected category column does not exist in the chosen table.");
   if (table && categoryColumns.some((column) => table.rows.some((row) => (row[column] ?? "").length > 2000))) blockingReasons.push("A category value exceeds 2,000 characters. Use concise category labels in the source extract; no categories will be shortened or omitted.");
-  if (!options.duration) ask("duration", "Choose an additive numeric value column in the KPI's base unit, a duration column and unit, or start and end timestamp columns.");
+  if (!options.duration) ask("duration", input.requireExplicitIncomingDuration
+    ? "Select an explicit duration mapping to calculate the breakdown."
+    : "Choose an additive numeric value column in the KPI's base unit, a duration column and unit, or start and end timestamp columns.");
   if (table && options.duration) {
     const fields = options.duration.mode === "column" ? [options.duration.column] : [options.duration.startColumn, options.duration.endColumn];
     if (fields.some((field) => !table.columns.includes(field))) blockingReasons.push("A value, duration or timestamp column does not exist in the chosen table.");
     if (fields.some((field) => categoryColumns.includes(field))) blockingReasons.push("Value, duration and timestamp columns cannot also be category columns.");
+    if (options.eventIdColumn && fields.includes(options.eventIdColumn)) {
+      blockingReasons.push("The event ID column identifies rows and cannot also supply a value, duration or timestamp. Choose a different calculation column.");
+    }
     if (options.duration.mode === "timestamps" && options.duration.startColumn === options.duration.endColumn) blockingReasons.push("Start and end must use different timestamp columns.");
     if (options.duration.mode === "timestamps" && !options.duration.format) ask("timestampFormat", "Confirm the timestamp format; ambiguous dates and Excel serial dates are not guessed.");
   }
@@ -164,7 +179,8 @@ export function buildIncomingKpiBreakdown(
     ? checkEventIds(table, options.eventIdColumn)
     : [];
   blockingReasons.push(...eventIdIssues);
-  if (!target || !table || !validMapping || categoryColumns.length === 0 || !options.duration) return result;
+  if (!target || !table || !validMapping || categoryColumns.length === 0 || !options.duration
+    || (input.requireExplicitIncomingDuration && questions.length > 0)) return result;
 
   const values: number[] = [];
   let invalidRows = 0;
@@ -365,6 +381,43 @@ function durationUnit(unit: string): "seconds" | "minutes" | "hours" | "days" | 
   if (/^(h|hr|hrs|hour|hours|ч|час|часа|часов|часы)$/i.test(unit)) return "hours";
   if (/^(d|day|days|сутки|суток|день|дня|дней)$/i.test(unit)) return "days";
   return undefined;
+}
+
+/** Recognize exact source unit declarations without the heuristic used for local suggestions. */
+export function declaredDurationUnitFromHeader(header: string): ReturnType<typeof durationUnit> | "ambiguous" {
+  const label = header.normalize("NFKC").trim();
+  const groups = /(?:\(([^()]*)\)|\[([^\[\]]*)\])/gu;
+  const matches = [...label.matchAll(groups)];
+  const declarations = matches.map(match => (match[1] ?? match[2])!.trim());
+  const bare = label.replace(groups, " ").trim();
+  const words = bare.match(/[\p{L}]+/gu) ?? [];
+  const readUnit = (token: string) => {
+    const value = token.replace(/\.$/u, "");
+    // "m" may be metres or minutes. A second duration declaration cannot disambiguate it.
+    if (/^m$/iu.test(value)) return "ambiguous" as const;
+    return durationUnit(/^с$/iu.test(value) ? "sec" : value);
+  };
+  const compound = /\/|\bper\b/iu;
+  const bareCompound = /([\p{L}]+\s*(?:\/|\s+per\s+)\s*[\p{L}]+)\.?$/iu.exec(bare)?.[1] ?? "";
+  if ([...declarations, bareCompound].some(declaration => {
+    if (!compound.test(declaration)) return false;
+    const components = declaration.match(/[\p{L}]+/gu)?.filter(token => !/^per$/iu.test(token)) ?? [];
+    return components.length > 1 && components.every(token => {
+      const value = readUnit(token);
+      return value !== undefined && value !== "ambiguous";
+    });
+  })) return "ambiguous";
+
+  const hints = new Set([...declarations, ...words.filter((word, index) => word.length > 1 || index === words.length - 1)]
+    .map(readUnit).filter(unit => unit !== undefined));
+  if (hints.size > 1) return "ambiguous";
+  if (compound.test(label)) return undefined;
+
+  const last = matches.at(-1);
+  const terminal = last && last.index + last[0].length === label.length ? declarations.at(-1)
+    : /[()[\]]/u.test(label) ? undefined : /(?:^|[\s_-])([\p{L}]{2,})\.?$/u.exec(label)?.[1];
+  const unit = terminal ? readUnit(terminal) : undefined;
+  return unit === "ambiguous" ? undefined : unit;
 }
 
 function durationUnitFromHeader(header: string): "seconds" | "minutes" | "hours" | "days" | undefined {

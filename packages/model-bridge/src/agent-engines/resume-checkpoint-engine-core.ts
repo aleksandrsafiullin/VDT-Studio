@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   agentEngineCheckpointSchema,
   agentQuestionSchema,
+  parseWaitingUserQuestions,
   agentSessionBindingSchema,
   vdtGatewayToolResultSchema,
   type AgentCapabilityProfile,
@@ -348,22 +349,22 @@ export function evaluateWaitingUserAskPayload(input: {
   readonly normalizeResult?: (result: VdtGatewayToolResult) => VdtGatewayToolResult;
 }): WaitingUserAskEvaluation {
   const call = input.pausedCall;
-  if (!call || call.toolName !== "user.ask") {
+  if (!call || (call.toolName !== "user.ask" && call.toolName !== "skill.select")) {
     return {
       kind: "terminal",
       error: questionInvalidTransportError(
         input.errorPrefix,
-        "A waiting-user result must come from the user.ask control tool."
+        "A waiting-user result must come from a supported question tool."
       )
     };
   }
-  const parsed = agentQuestionSchema.strict().array().min(1).max(5).safeParse(call.args.questions);
+  const parsed = parseWaitingUserQuestions(call, input.results);
   if (parsed.success) {
     return { kind: "accept", questions: parsed.data };
   }
   const issues = parsed.error.issues;
   const message = invalidQuestionPayloadMessage(issues);
-  if (input.retryCount >= QUESTION_PAYLOAD_RETRY_LIMIT) {
+  if (call.toolName !== "user.ask" || input.retryCount >= QUESTION_PAYLOAD_RETRY_LIMIT) {
     return {
       kind: "terminal",
       error: questionInvalidTransportError(input.errorPrefix, message)

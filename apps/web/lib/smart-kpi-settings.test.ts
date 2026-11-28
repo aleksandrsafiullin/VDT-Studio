@@ -72,7 +72,7 @@ describe("independent Suggested KPI settings", () => {
     expect(resolvedSmart(azure).providerConfig).toMatchObject({ model: "smart-deployment", deployment: "smart-deployment", modelReasoning: false });
     expect(resolveExecutionSettings(azure).providerConfig?.deployment).toBe("chat-deployment");
     const local = choose({ ...applyLocalRunnerPreset(api(), "ollama_openai"), localModel: "chat-local" }, { model: "smart-local" });
-    expect(resolvedSmart(local).providerConfig).toMatchObject({ model: "smart-local", modelReasoning: false });
+    expect(resolvedSmart(local).providerConfig).toMatchObject({ model: "smart-local", modelReasoning: "vdt-fast" });
     expect(local.localModel).toBe("chat-local");
   });
 
@@ -86,5 +86,14 @@ describe("independent Suggested KPI settings", () => {
     const settings = choose({ ...DEFAULT_EXECUTION_SETTINGS }, { model: "smart-only" });
     const restored = reconcilePersistedExecutionSettings("openai_compatible", {}, JSON.parse(JSON.stringify(persistedExecutionSettings(settings))));
     expect(smartKpiPreferences(restored).model).toBe("smart-only");
+  });
+
+  it("keeps an explicit independent model when Apple becomes the analytical choice", () => {
+    const chosen = choose(choose(api(), { model: "smart-only" }), { reasoning: "medium" });
+    const apple: ExecutionSettings = { ...chosen, analyticalSourceChoice: "apple_default" };
+    expect(resolveExecutionSettings(apple)).toEqual({ providerId: "apple_foundation_models" });
+    expect(resolvedSmart(apple)).toMatchObject({ providerId: "openai_compatible", providerConfig: { model: "smart-only", modelReasoning: "medium" } });
+    expect(resolvedSmart(choose(apple, { model: null }))).toEqual({ providerId: "apple_foundation_models" });
+    expect(apple.smartKpiBySource).toEqual(chosen.smartKpiBySource);
   });
 });

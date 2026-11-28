@@ -7,6 +7,7 @@ import {
   finalizeAgenticVdtRun,
   loadSkillLibraryFromFs,
   prepareAgenticVdtRun,
+  readSkillExcerpts,
   retrieveSkills,
   type GenerateVdtInputLike,
   type SkillExcerpt
@@ -30,6 +31,22 @@ async function listPackageFiles(root: string): Promise<string[]> {
 }
 
 describe("VDT agent skill library", () => {
+  it("prioritizes the authored scope boundary in a bounded Skill excerpt", async () => {
+    const library = await loadSkillLibraryFromFs(skillsRoot);
+    const skill = library.skills[0]!;
+    const body = [
+      "## When To Use", "Use for measured flow.", "",
+      "## scope boundary", "Use at the inspection boundary.", "",
+      "## Decomposition Pattern", "Start with observed throughput. ".repeat(12)
+    ].join("\n");
+    const [result] = readSkillExcerpts([{ ...skill, body }], 200);
+
+    expect(result?.excerpt).toContain("## scope boundary\nUse at the inspection boundary.");
+    expect(result?.excerpt).toContain("## Decomposition Pattern");
+    expect(result!.excerpt.length).toBeLessThanOrEqual(200);
+    expect(result?.excerpt.endsWith("...")).toBe(true);
+  });
+
   it("loads registry and verifies every skill path is referenced", async () => {
     const library = await loadSkillLibraryFromFs(skillsRoot);
     const registryPaths = new Set(library.registry.map((entry) => entry.path));
@@ -47,6 +64,7 @@ describe("VDT agent skill library", () => {
       "mining/mine-production-system.md",
       "mining/production-volume.md",
       "mining/underground-production-cycle.md",
+      "operations/process-capacity.md",
       "saas/funnel-growth.md"
     ]);
     expect(skillPaths.every((path) => registryPaths.has(path))).toBe(true);

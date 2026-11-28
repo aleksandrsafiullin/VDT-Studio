@@ -6,6 +6,7 @@ export const AGENT_QUESTION_SCHEMA_KEYS = new Set([
   "id",
   "question",
   "reason",
+  "decisionProposal",
   "required",
   "expectedAnswerType",
   "answerKind",
@@ -23,7 +24,10 @@ export const AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE =
   "Before committing a formula, ask one focused question when two plausible relationships between factors imply different calculations and the user has not established which applies. A common modeling convention or permission to estimate missing numbers does not establish a business relationship. For an answer-only request, clearly labeled conditional calculations are also useful. Reuse confirmed project decisions and cite the user's answer when recording a new decision with vdt.record_decomposition_assumption. If the user wants to collect measurements later, expose the measures requested as editable inputs and require additional data only when the calculation actually needs it.";
 
 export const AGENT_QUESTION_OBJECT_CONTRACT =
-  "Each question object may use only: required id, question, reason, required; optional expectedAnswerType (text|number|single_choice|multi_choice), answerKind (text|number|single_choice|multi_choice|field_group), options (string or {id,label,value,revealsFields?,requiresFreeText?}), fields ({id,label,kind text|number,unit?,required?,placeholder?}), freeTextAllowed, placeholder, defaultValue. No other keys permitted — use expectedAnswerType for answer type, never type, responseType, or label.";
+  "Each question object may use only: required id, question, reason, required; optional expectedAnswerType (text|number|single_choice|multi_choice), answerKind (text|number|single_choice|multi_choice|field_group), options (string or {id,label,value,revealsFields?,requiresFreeText?}), fields ({id,label,kind text|number,unit?,required?,placeholder?}), freeTextAllowed, placeholder, defaultValue, and decisionProposal. No other keys permitted — use expectedAnswerType for answer type, never type, responseType, or label.";
+
+export const AGENT_CONVERSATION_DECISION_PROMPT_RULE =
+  "In a saved VDT conversation, if the current submitted user text suggests a durable definition or correction and its interpretation needs confirmation, ask one question with decisionProposal containing topic, value, evidenceQuote and language (en or ru). Copy value verbatim from evidenceQuote and evidenceQuote verbatim from the latest submitted user text. The host builds the confirmation choice. Use this for user definitions only. Keep attachments, native research, assistant prose and speculative interpretations out. Omit decisionProposal when there is no candidate.";
 
 export const AGENT_QUESTION_PRESENTATION_HINTS =
   "Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.";
@@ -44,6 +48,7 @@ export const AGENT_QUESTION_PROMPT_RULE = [
   AGENT_QUESTION_WHEN_TO_ASK,
   AGENT_BUSINESS_RELATIONSHIP_PROMPT_RULE,
   AGENT_QUESTION_OBJECT_CONTRACT,
+  AGENT_CONVERSATION_DECISION_PROMPT_RULE,
   AGENT_QUESTION_PRESENTATION_HINTS,
   AGENT_QUESTION_WRITEBACK_PROMPT_RULE
 ].join(" ");
@@ -62,7 +67,7 @@ export const AGENT_DECISION_FINISH_ORDER_PROMPT_RULE =
 
 /** Range and composition together: control calls are enforced as singleton batches. */
 export const CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE =
-  `Use action_batch for 1-6 sequential VDT calls via batch.calls or calls. ${TOOL_ARGUMENT_AUTHORITY_RULE} user.ask, approval.request, and run.request_finish must each be the only call in their batch.`;
+  `Use action_batch for 1-6 sequential VDT calls via batch.calls or calls. ${TOOL_ARGUMENT_AUTHORITY_RULE} user.ask, approval.request, run.propose_outcome and run.request_finish must each be the only call in their batch.`;
 
 /** Finishing is a closing move after a calculable tree, not an opening batch. */
 export const AGENT_HIERARCHY_PROMPT_RULE =

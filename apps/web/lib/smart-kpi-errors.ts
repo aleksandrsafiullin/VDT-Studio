@@ -1,6 +1,7 @@
 /** Fixed, credential-free explanations shared by HTTP admission and the UI.
  * Never display a provider's free-form error or rejected request body. */
 export const SMART_KPI_FAILURE_REASONS: Readonly<Record<string, string>> = {
+  BINDING_CAPABILITY_DENIED: "The selected provider cannot run this Suggested KPI request. Verify the connection and select a supported model in Settings.",
   PREPARATION_IN_PROGRESS: "Another Suggested KPI request is still running for this project. Wait for it to finish, then choose Retry.",
   METADATA_TIMEOUT: "The provider took too long to verify the selected model. Choose Retry to check it again.",
   REASONING_UNSUPPORTED: "The selected model cannot use this Suggested KPI reasoning setting. Choose Provider default or a supported level.",

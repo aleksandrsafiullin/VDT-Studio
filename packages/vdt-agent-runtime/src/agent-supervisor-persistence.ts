@@ -174,6 +174,14 @@ export const finishReceiptV2Schema = z.object({
   projectHash: sha256Schema,
   validationHash: sha256Schema,
   calculationHash: sha256Schema,
+  artifactDelivery: z.object({
+    kind: z.literal("excel_workbook"),
+    id: z.string().regex(/^excel_[0-9a-f]{64}$/),
+    revisionId: safeIdSchema,
+    scenarioId: safeIdSchema.nullable(),
+    filename: z.string().min(1).max(512),
+    downloadUrl: z.string().min(1).max(2048)
+  }).strict().optional(),
   finalMessageHash: sha256Schema.nullable(),
   verifiedAt: timestampSchema,
   finalPersistedAt: timestampSchema.nullable()
@@ -275,6 +283,7 @@ export type AgentExecutionRecoveryStatus =
 /** Compact, read-only projection. Opaque session IDs, settings hashes,
  * checkpoints, receipts, and model/tool payloads are deliberately absent. */
 export interface AgentExecutionSummaryV2 {
+  executionMode?: "local" | "cli_subscription" | "api_keys" | "legacy" | undefined;
   readonly schemaVersion: 2;
   readonly executionProfile: AgentSessionBinding["executionProfile"];
   readonly engineId: string;
@@ -599,6 +608,9 @@ class AgentSupervisorPersistenceCore implements AgentSupervisorPersistence {
       ]);
       if (canonicalJson(projectFinishOutcome(previous) ?? null) !== canonicalJson(projectFinishOutcome(receipt) ?? null)) {
         throw new AgentSupervisorPersistenceError("FINISH_RECEIPT_CONFLICT", "Finish outcome evidence cannot change.");
+      }
+      if (canonicalJson(previous.artifactDelivery ?? null) !== canonicalJson(receipt.artifactDelivery ?? null)) {
+        throw new AgentSupervisorPersistenceError("FINISH_RECEIPT_CONFLICT", "Finish artifact evidence cannot change.");
       }
       assertForwardTransition("finish", previous.state, receipt.state, {
         verified: ["verified", "final_persisted"],

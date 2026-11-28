@@ -67,6 +67,7 @@ export interface VdtRunSupervisorOptions {
   outbox?: AgentRunEventOutbox | undefined;
   persistence?: AgentSupervisorPersistence | undefined;
   allowUnqualifiedExternalCanary?: boolean | undefined;
+  resolveFinalText?: ((receipt: FinishReceiptV2) => Promise<string | undefined>) | undefined;
   verifyFinish: (request: VdtFinishRequest) => Promise<VdtVerifiedFinishResult>;
   onEphemeralAssistantDelta?: ((input: {
     runId: string;
@@ -93,6 +94,7 @@ export class VdtRunSupervisor {
   private expectedBinding: AgentSessionBinding;
   private activeBinding: AgentSessionBinding | undefined;
   private readonly persistence: AgentSupervisorPersistence | undefined;
+  private readonly resolveFinalText: VdtRunSupervisorOptions["resolveFinalText"];
   private readonly verifyFinish: VdtRunSupervisorOptions["verifyFinish"];
   private readonly onEphemeralAssistantDelta?: VdtRunSupervisorOptions["onEphemeralAssistantDelta"];
   private readonly onUsage?: VdtRunSupervisorOptions["onUsage"];
@@ -113,6 +115,7 @@ export class VdtRunSupervisor {
     this.expectedBinding = agentSessionBindingSchema.parse(options.binding);
     this.persistence = options.persistence;
     this.verifyFinish = options.verifyFinish;
+    this.resolveFinalText = options.resolveFinalText;
     this.onEphemeralAssistantDelta = options.onEphemeralAssistantDelta;
     this.onUsage = options.onUsage;
     this.onFinal = options.onFinal;
@@ -522,12 +525,12 @@ export class VdtRunSupervisor {
   }
 
   private async acceptFinal(
-    event: Extract<AgentEngineEvent, { type: "final" }>,
+    incoming: Extract<AgentEngineEvent, { type: "final" }>,
     source: "external_agent" | "vdt_agent",
     sessionId: string
   ): Promise<void> {
     if (this.finalWasCancelled()) return;
-    if (!this.verifiedFinish || this.verifiedFinish.receiptId !== event.finishReceiptId) {
+    if (!this.verifiedFinish || this.verifiedFinish.receiptId !== incoming.finishReceiptId) {
       this.statusValue = "recovery_required";
       await this.appendError(
         "FINAL_WITHOUT_VERIFIED_FINISH",
@@ -560,6 +563,14 @@ export class VdtRunSupervisor {
       return;
     }
 
+    const trustedText = durableReceipt && this.resolveFinalText ? await this.resolveFinalText(durableReceipt) : undefined;
+    if (this.finalWasCancelled()) return;
+    if (this.resolveFinalText && !this.gateway.verifiedFinishHeadMatches()) {
+      this.statusValue = "recovery_required";
+      await this.appendError("FINISH_HEAD_CHANGED", new Error("The project head changed while resolving the final result."), true);
+      return;
+    }
+    const event = trustedText === undefined ? incoming : { ...incoming, text: trustedText };
     const existingFinals = durableFinalEvents(this.outbox.snapshot());
     if (existingFinals.length > 1) {
       this.statusValue = "recovery_required";

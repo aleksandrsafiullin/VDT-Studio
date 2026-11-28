@@ -51,6 +51,7 @@ export interface CompletionRequest {
   model?: string;
   modelReasoning?: import("@vdt-studio/model-bridge").HarnessReasoningValue;
   timeoutMs?: number;
+  localHttpSelection?: import("@vdt-studio/model-bridge").LocalHttpSelection;
 }
 
 export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";

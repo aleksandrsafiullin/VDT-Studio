@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_DATA_DISCOVERY_LIMITS } from "../packages/data-harness/src/index";
+import { parseDatasetInWorker } from "../packages/data-harness/src/parser";
+import { buildWorkspaceEventFile } from "../eval/agent-autonomy/assets/workspace-q01-events.v2.mjs";
 import { exportProjectExcel, type VdtNode, type VdtProject } from "../packages/vdt-core/src/index";
-import { assessWorkspaceJourney, loadWorkspaceFixture, loadWorkspaceOracle, loadWorkspaceRequest, workspaceProjectHash } from "./evaluate-agent-autonomy-workspace.mjs";
+import { assessWorkspaceJourney, checkWorkspaceSuites, loadWorkspaceFixture, loadWorkspaceOracle, loadWorkspaceRequest, workspaceProjectHash } from "./evaluate-agent-autonomy-workspace.mjs";
 
 function review(oracle: Awaited<ReturnType<typeof loadWorkspaceOracle>>) {
   return { reviewer: "fixture reviewer", independentOfGenerator: true,
@@ -139,5 +143,134 @@ describe("workspace journey oracles (offline evidence only)", () => {
     expect(assessWorkspaceJourney(overlap, evidence).decision).toBe("accepted_case_only");
     clarification.clarification.assertedActualResult = true;
     expect(assessWorkspaceJourney(overlap, evidence).checkpoints.clarification.checks.unresolved_premise).toBe("fail");
+  });
+});
+
+describe("Q01 independent workspace fixtures", () => {
+  it("maps both locales to a single independent oracle and leaves the sealed v1 suite intact", async () => {
+    expect(await checkWorkspaceSuites()).toEqual([
+      { version: 1, caseCount: 6, requestHash: "sha256:519c636215d7db737b5add51f5d0e744a6a13c1e6039d2f215749c2ab7069431",
+        oracleHash: "sha256:5993f9248fd788bd1735bcb540dbacdb6d3a4452164f27f1387e4e7ea542d4be" },
+      { version: 2, caseCount: 21, requestHash: expect.stringMatching(/^sha256:/), oracleHash: expect.stringMatching(/^sha256:/) },
+    ]);
+    const id = "SKILL-01-held-out";
+    const en = await loadWorkspaceRequest(id, "en");
+    const ru = await loadWorkspaceRequest(id, "ru");
+    const oracle = await loadWorkspaceOracle(id);
+    expect(en.id).toBe(ru.id);
+    expect(oracle.id).toBe(ru.id);
+    expect(ru.turns[0].prompt).toContain("Мы считаем принятые субтитры");
+    expect(en.turns[0].prompt).toContain("We count accepted captions");
+    expect(en.turns[0].prompt).not.toContain("Caption desk acceptance accounting");
+    expect(Object.keys(en).sort()).toEqual(["id", "setup", "turns"]);
+    expect(Object.keys(en.turns[0])).toEqual(["prompt"]);
+    await expect(loadWorkspaceRequest(id)).rejects.toThrow("Select original workspace request locale");
+  });
+
+  it("requires chronological capture and identifies retries independently", async () => {
+    const oracle = await loadWorkspaceOracle("SKILL-02-confirm");
+    const attempt = { number: 1, id: "a-1", locale: "ru", source: "fixture", priorAttemptId: "",
+      timeline: [{ elapsedMs: 0, action: "opened disposable VDT", evidenceReference: "storage-head" }] };
+    const evidence = { attempt, semanticReview: review(oracle) };
+    expect(assessWorkspaceJourney(oracle, evidence).decision).toBe("accepted_case_only");
+    attempt.number = 2;
+    expect(assessWorkspaceJourney(oracle, evidence).checkpoints.attempt.checks.identity).toBe("fail");
+    attempt.priorAttemptId = "a-0";
+    expect(assessWorkspaceJourney(oracle, evidence).checkpoints.attempt.checks.identity).toBe("pass");
+    attempt.timeline.push({ elapsedMs: -1, action: "submitted answer", evidenceReference: "message-id" });
+    expect(assessWorkspaceJourney(oracle, evidence).checkpoints.attempt.checks.operator_timeline).toBe("fail");
+  });
+});
+
+describe("Q01 parser golden controls", () => {
+  const categoryIds = new Map([
+    ["Mechanical", "mechanical"], ["Механика", "mechanical"],
+    ["Electrical", "electrical"], ["Электрика", "electrical"],
+    ["Waiting", "waiting"], ["Ожидание", "waiting"], ["", "uncategorized"],
+  ]);
+
+  async function parseEvents(locale: string, form: string, maxRows = DEFAULT_DATA_DISCOVERY_LIMITS.maxRows) {
+    const asset = buildWorkspaceEventFile(locale, form);
+    const bytes = new Uint8Array(asset.bytes);
+    return parseDatasetInWorker({
+      file: {
+        fileName: asset.name,
+        mimeType: form === "serial-xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv",
+        sizeBytes: bytes.length,
+        contentHash: createHash("sha256").update(bytes).digest("hex"),
+        storageRef: "test-fixture",
+        uploadedAt: "2026-11-25T00:00:00.000Z",
+      },
+      bytes, entryContext: { purpose: "incoming_kpis" },
+    }, { ...DEFAULT_DATA_DISCOVERY_LIMITS, maxRows });
+  }
+
+  it.each([
+    ["en", "duration-csv", "DATA-01-duration"],
+    ["ru", "duration-csv", "DATA-01-duration"],
+    ["en", "serial-xlsx", "DATA-02-serial"],
+    ["ru", "serial-xlsx", "DATA-02-serial"],
+  ])("reconciles all %s rows in %s to the separate golden totals and hashes", async (locale, form, id) => {
+    const oracle = await loadWorkspaceOracle(id);
+    const parsed = await parseEvents(locale, form);
+    const table = parsed.tables[0]!;
+    expect(table.rows).toHaveLength(15000);
+    expect(table.truncated).toBe(false);
+    const [idColumn, , category, start, end, duration] = table.columns as [string, string, string, string, string, string];
+    const weekdaysOnly = form === "serial-xlsx";
+    if (weekdaysOnly) expect(table.columnEncodings).toMatchObject({ [start]: "excel_datetime", [end]: "excel_datetime" });
+    const uniqueIds = new Set<string>();
+    const eventDays = new Set<number>();
+    const accepted = new Map<string, Array<[number, number]>>();
+    let duplicateCount = 0;
+    let invalidCount = 0;
+    let acceptedRows = 0;
+    let eligibleRows = 0;
+    let missingCategoryCount = 0;
+    for (const row of table.rows) {
+      const key = row[idColumn]!;
+      if (uniqueIds.has(key)) {
+        duplicateCount++;
+        continue;
+      }
+      uniqueIds.add(key);
+      const minutes = weekdaysOnly && row[end] ? Math.round((Number(row[end]) - Number(row[start])) * 1440) : Number(row[duration]);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        invalidCount++;
+        continue;
+      }
+      acceptedRows++;
+      if (!row[category]) missingCategoryCount++;
+      const date = weekdaysOnly ? new Date((Math.floor(Number(row[start])) - 25569) * 86400000) : new Date(row[start]!);
+      if (weekdaysOnly && [0, 6].includes(date.getUTCDay())) continue;
+      eligibleRows++;
+      eventDays.add(date.getUTCDate());
+      const tag = categoryIds.get(row[category]!)!;
+      const categoryRows = accepted.get(tag) ?? [];
+      categoryRows.push([Number(key), minutes]);
+      accepted.set(tag, categoryRows);
+    }
+    const denominatorDays = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(2026, 10, index + 1)))
+      .filter((day) => !weekdaysOnly || ![0, 6].includes(day.getUTCDay())).length;
+    const categories = Object.fromEntries([...accepted].map(([tag, rows]) => {
+      const minutes = rows.reduce((total, [, length]) => total + length, 0);
+      const rowMinutesSha256 = createHash("sha256").update(rows.map(([eventId, length]) => `${eventId}:${length}\n`).join("")).digest("hex");
+      return [tag, { count: rows.length, minutes, hoursPerDay: minutes / 60 / denominatorDays, rowMinutesSha256 }];
+    }));
+    const data = { rowCount: table.rows.length, duplicateCount, invalidCount, missingCategoryCount, acceptedRows,
+      eligibleRows, denominatorDays, zeroEventDays: denominatorDays - eventDays.size, categories };
+    expect(data).toEqual(oracle.dataGolden);
+    expect(assessWorkspaceJourney(oracle, { data }).checkpoints.data.checks.golden).toBe("pass");
+    expect(assessWorkspaceJourney(oracle, { data: { ...data, eligibleRows: 10000 } }).checkpoints.data.checks.golden).toBe("fail");
+  });
+
+  it("flags a sampled CSV and rejects a workbook above the configured row limit", async () => {
+    const csv = await parseEvents("ru", "duration-csv", 10000);
+    expect(csv.tables[0]?.rows).toHaveLength(10000);
+    expect(csv.tables[0]?.truncated).toBe(true);
+    expect(csv.warnings.some(({ message }) => /sampled/.test(message))).toBe(true);
+    const xlsx = await parseEvents("en", "serial-xlsx", 10000);
+    expect(xlsx.tables).toHaveLength(0);
+    expect(xlsx.warnings.some(({ message }) => /dimensions exceed/.test(message))).toBe(true);
   });
 });

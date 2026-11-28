@@ -1,0 +1,519 @@
+{
+  "schemaVersion": 2,
+  "evaluationClass": "workspace_journey",
+  "cases": [
+    {
+      "id": "SKILL-01-excavation",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Build a monthly model for ore loaded by our two excavators at the face. Each has 200 scheduled hours, loses 20 hours to downtime and loads 80 tonnes per working hour. Stop the accounting at the face."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Построй месячную модель погрузки руды двумя экскаваторами у забоя. На каждый запланировано 200 часов, из них 20 часов простоя. За рабочий час каждый грузит 80 тонн. Граница учёта — забой."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-01-held-out",
+      "setup": {
+        "catalog": "assets/workspace-q01-catalog.v2.json"
+      },
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "We count accepted captions each week. One desk checks 180 live captions; 30 are sent back. It also checks 40 corrections from last week, 10 of which still fail. No caption occurs in both queues. Build the weekly model for accepted captions."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Мы считаем принятые субтитры за неделю. Редакторы проверили 180 субтитров из прямого эфира, 30 вернули. Ещё проверили 40 исправлений с прошлой недели, 10 снова не прошли. Очереди не пересекаются. Построй модель числа принятых субтитров за неделю."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-02-face",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Our mine tracks both ore loaded at the face and ore delivered to the crusher. Those totals differ. Build a tree for monthly output in tonnes using one of them."
+            },
+            {
+              "prompt": "Count the tonnes at the face, as the excavators load them."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "На руднике учитывают и руду, погруженную у забоя, и руду, доставленную к дробилке. Эти объёмы различаются. Построй дерево месячного выпуска в тоннах по одному из показателей."
+            },
+            {
+              "prompt": "Считай у забоя, в момент погрузки экскаваторами."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-02-delivery",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Our mine tracks both ore loaded at the face and ore delivered to the crusher. Those totals differ. Build a tree for monthly output in tonnes using one of them."
+            },
+            {
+              "prompt": "Count only the ore received at the crusher."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "На руднике учитывают и руду, погруженную у забоя, и руду, доставленную к дробилке. Эти объёмы различаются. Построй дерево месячного выпуска в тоннах по одному из показателей."
+            },
+            {
+              "prompt": "Считай только руду, принятую у дробилки."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-02-confirm",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Our mine tracks both ore loaded at the face and ore delivered to the crusher. Those totals differ. Build a tree for monthly output in tonnes using one of them. Tell me which method you propose and wait for my confirmation before building."
+            },
+            {
+              "prompt": "At the face."
+            },
+            {
+              "prompt": "No, use delivery at the crusher. Show me the method before you build."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "На руднике учитывают и руду, погруженную у забоя, и руду, доставленную к дробилке. Эти объёмы различаются. Построй дерево месячного выпуска в тоннах по одному из показателей. Предложи метод и дождись моего подтверждения, прежде чем строить."
+            },
+            {
+              "prompt": "У забоя."
+            },
+            {
+              "prompt": "Нет, на приёмке у дробилки. Сначала покажи метод."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-03-gap",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Estimate the hours volunteers spend checking digitized archive recordings for missing spoken names. This week we checked 12 recordings; each took 25 minutes including replay. Build a tree for this work."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Посчитай часы волонтёров на проверку оцифрованных архивных записей: ищем пропущенные в расшифровке имена. За неделю проверили 12 записей, по 25 минут на каждую с учётом повторного прослушивания. Построй дерево."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-04-pin",
+      "setup": {
+        "catalog": "assets/workspace-q01-catalog.v2.json"
+      },
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "We count accepted captions each week. One desk checks 180 live captions; 30 are sent back. It also checks 40 corrections from last week, 10 of which still fail. No caption occurs in both queues. Build the weekly model for accepted captions."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Мы считаем принятые субтитры за неделю. Редакторы проверили 180 субтитров из прямого эфира, 30 вернули. Ещё проверили 40 исправлений с прошлой недели, 10 снова не прошли. Очереди не пересекаются. Построй модель числа принятых субтитров за неделю."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SKILL-05-replay",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Our mine tracks both ore loaded at the face and ore delivered to the crusher. Those totals differ. Build a tree for monthly output in tonnes using one of them."
+            },
+            {
+              "prompt": "Only what arrives at the crusher."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "На руднике учитывают и руду, погруженную у забоя, и руду, доставленную к дробилке. Эти объёмы различаются. Построй дерево месячного выпуска в тоннах по одному из показателей."
+            },
+            {
+              "prompt": "Только то, что доставили к дробилке."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "REV-01-structure",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "I run two processing stages and want a model of sustained throughput in tonnes per hour. Build the structure now. We will measure rates later."
+            },
+            {
+              "prompt": "All material goes through A and then B. There is no bypass or stockpile drawdown."
+            },
+            {
+              "prompt": "Calculate the numerical baseline now."
+            },
+            {
+              "prompt": "What measurements are still missing?"
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "У нас два этапа переработки, хочу модель устойчивой производительности в тоннах в час. Построй дерево, замеры будут позже."
+            },
+            {
+              "prompt": "Весь материал проходит через А, а затем через Б. Обхода или расходования запасов со склада нет."
+            },
+            {
+              "prompt": "Рассчитай базовое значение числом."
+            },
+            {
+              "prompt": "Каких замеров ещё не хватает?"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "REV-02-definition",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "For this tree, count only saleable tonnes."
+            },
+            {
+              "prompt": "Which inputs are still missing?"
+            },
+            {
+              "prompt": "Correction: include off-spec tonnes shipped to the rework partner, but exclude off-spec material still in our yard."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Под выпуском понимаем только товарную продукцию."
+            },
+            {
+              "prompt": "Каких исходных данных не хватает?"
+            },
+            {
+              "prompt": "Уточнение: включи некондиционную продукцию, отгруженную подрядчику на доработку, но исключи то, что осталось у нас на площадке."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "REV-03-workbook",
+      "setup": {
+        "fixture": "assets/workspace-legacy-manual.v1.json"
+      },
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Please put the Recovery scenario in an Excel file."
+            },
+            {
+              "prompt": "What would a workbook for Recovery contain? We are only discussing it."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Выгрузи в Excel сценарий Recovery."
+            },
+            {
+              "prompt": "Что было бы в файле Excel для Recovery? Мы пока только обсуждаем."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "REV-04-custom",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "We push completed batches from two queues to one quality gate. Sometimes they share a tester, sometimes they do not. Which rates should I combine? Gross revenue is 100 USD and the discount is 10%. Add a model for net revenue."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Готовые партии из двух очередей идут на общий контроль качества. Иногда у них один испытатель на двоих, иногда нет. Как объединять производительность? Валовая выручка — 100 долларов, скидка — 10%. Добавь модель чистой выручки."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VDT-production",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "I run two processing stages and want a model of sustained throughput in tonnes per hour. Build the structure now. We will measure rates later."
+            },
+            {
+              "prompt": "All material goes through A and then B. There is no bypass or stockpile drawdown."
+            },
+            {
+              "prompt": "We've reopened it. A sustains 70 t/h and B 90 t/h. What if B reaches 100 t/h? Save the baseline too."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "У нас два этапа переработки, хочу модель устойчивой производительности в тоннах в час. Построй дерево, замеры будут позже."
+            },
+            {
+              "prompt": "Весь материал проходит через А, а затем через Б. Обхода или расходования запасов со склада нет."
+            },
+            {
+              "prompt": "Мы снова открыли модель. У А устойчиво 70 т/ч, у Б — 90 т/ч. Что изменится, если Б достигнет 100 т/ч? Сохрани и базовый расчёт."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VDT-zero",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Two independent filling lines feed separate orders and both count towards the site total. Line A recorded 0 cases per hour during maintenance. Line B recorded 45 cases per hour. Save the measured hourly output."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Две независимые линии фасуют продукцию для разных заказов, выпуск обеих входит в итог площадки. На линии А во время ремонта зафиксировали 0 коробок в час, на линии Б — 45 коробок в час. Сохрани замер часового выпуска."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DATA-01-duration",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Use the uploaded equipment event log to model downtime by event category in equipment-hours per calendar day for November, including empty days. Keep events with no category visible as uncategorized. An event ID identifies one event."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "По загруженному журналу оборудования построй простои по категориям в машино-часах на календарный день ноября, включая дни без событий. Записи без категории покажи отдельно. Один идентификатор — одно событие."
+            }
+          ]
+        }
+      },
+      "setup": {
+        "eventFile": "duration-csv"
+      }
+    },
+    {
+      "id": "DATA-02-serial",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Use start and end times from the uploaded workbook to model equipment downtime in hours per working day in November. Use Monday through Friday and include working days with no events. An event ID identifies one event."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "По времени начала и окончания в книге посчитай простои оборудования в часах на рабочий день ноября. Рабочие дни — понедельник–пятница, включая дни без событий. Один идентификатор — одно событие."
+            }
+          ]
+        }
+      },
+      "setup": {
+        "eventFile": "serial-xlsx"
+      }
+    },
+    {
+      "id": "DATA-03-grain",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "How much time was the whole plant down each day? The log contains equipment stops. Some overlap. We also have a separate asset list that might contain repeated equipment IDs."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Сколько времени в день простаивал весь завод? В журнале остановки оборудования, некоторые совпадают по времени. Отдельный список оборудования может содержать повторяющиеся идентификаторы."
+            }
+          ]
+        }
+      },
+      "setup": {
+        "eventFile": "duration-csv"
+      }
+    },
+    {
+      "id": "DATA-04-limits",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Summarize the entire event file and tell me if any rows were excluded."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Подведи итог по всему файлу событий и скажи, если какие-то строки не учтены."
+            }
+          ]
+        }
+      },
+      "setup": {
+        "eventFile": "duration-csv"
+      }
+    },
+    {
+      "id": "VDT-professional",
+      "setup": {
+        "fixture": "assets/workspace-legacy-manual.v1.json"
+      },
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Check what limits output and save a scenario called Recovery using 90 hours of downtime."
+            },
+            {
+              "prompt": "Restore the version called Start of shift."
+            },
+            {
+              "prompt": "Save this corrected model as Recovery review and put Recovery in an editable Excel file."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Проверь, что ограничивает выпуск, и сохрани сценарий Recovery с простоем 90 часов."
+            },
+            {
+              "prompt": "Восстанови версию Start of shift."
+            },
+            {
+              "prompt": "Сохрани исправленную модель как Recovery review и выгрузи Recovery в редактируемый файл Excel."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VDT-unknown",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Two independent filling lines feed separate orders and both count towards the site total. We did not measure line A. Line B recorded 45 cases per hour. Save the measured hourly output."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Две независимые линии фасуют продукцию для разных заказов, выпуск обеих входит в итог площадки. Линию А не замеряли. На линии Б зафиксировали 45 коробок в час. Сохрани замер часового выпуска."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VDT-percent",
+      "variants": {
+        "en": {
+          "turns": [
+            {
+              "prompt": "Gross revenue was 100 USD. We offered a 10% discount on all sales. Build a model for net revenue after the discount."
+            }
+          ]
+        },
+        "ru": {
+          "turns": [
+            {
+              "prompt": "Валовая выручка составила 100 долларов. На все продажи действовала скидка 10%. Построй модель чистой выручки после скидки."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

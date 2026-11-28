@@ -12,6 +12,7 @@ import {
 } from "@vdt-studio/ai-harness/browser";
 import { validateChatStarterOutput, validateIncomingKpiChangeSet, validateKpiSuggestionModelOutput, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
+import { taskExecutionAssertion } from "./task-execution-expectation";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { CLI_CATALOG, type CliAgentId } from "./execution-mode-catalog";
 
@@ -586,6 +587,15 @@ function desktopModel(providerConfig: Record<string, unknown> | undefined): stri
   return typeof model === "string" && model.length > 0 ? model : undefined;
 }
 
+function localDiagnosticSelection(backendId: string, config: BackendTestRequest["providerConfig"]) {
+  if (!["ollama", "lm_studio", "vllm"].includes(backendId)) return {};
+  const model = desktopModel(config);
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(isModelReasoningValue(config?.modelReasoning) ? { modelReasoning: config.modelReasoning } : {})
+  };
+}
+
 function desktopTimeoutMs(providerConfig: Record<string, unknown> | undefined): number | undefined {
   const timeoutMs = providerConfigValue(providerConfig, "timeoutMs");
   return typeof timeoutMs === "number" && Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
@@ -886,7 +896,7 @@ abstract class BaseWebAiExecutionClient implements AiExecutionClient {
         method: "POST",
         headers: { "content-type": "application/json" },
         ...(execution.signal ? { signal: execution.signal } : {}),
-        body: JSON.stringify(request)
+        body: JSON.stringify({ ...request, ...taskExecutionAssertion(request.providerId, request.providerConfig) })
       });
       const payload = await readJsonResponse<{ ok?: boolean; result?: RunAiTaskResult; error?: string }>(
         response,
@@ -1168,7 +1178,7 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
     const response = await this.fetcher("/api/ai/dev-runtime", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "test", backendId })
+      body: JSON.stringify({ operation: "test", backendId, ...localDiagnosticSelection(backendId, request.providerConfig) })
     });
     const payload = await readJsonResponse<{ ok?: boolean; error?: string | { message?: string } }>(
       response,
@@ -1569,7 +1579,7 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
           return { ok: true };
         }
       }
-      return checkedBackendTestResult(await this.requireInvoke()("ai_test_backend", { backendId }));
+      return checkedBackendTestResult(await this.requireInvoke()("ai_test_backend", { backendId, ...localDiagnosticSelection(backendId, request.providerConfig) }));
     } catch (error) {
       throw desktopOperationError(error, "Backend test failed.");
     }

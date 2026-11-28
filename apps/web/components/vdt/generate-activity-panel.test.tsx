@@ -318,6 +318,91 @@ describe("GenerateActivityPanel", () => {
     expect(html).not.toContain('data-testid="agent-answer-freeform"');
   });
 
+  it("renders one authoritative answer card for the legacy and canonical projections of the current question", () => {
+    const store = new AgentRunStore();
+    const { runId } = store.createRun({ providerId: "mock", mode: "continue_project", input: {} });
+    const transcript = { id: "skill_scope", question: "Does the same flow pass through every stage?",
+      reason: "The flow determines the capacity formula.", required: true, expectedAnswerType: "text" as const,
+      answerKind: "text" as const, freeTextAllowed: true, placeholder: "Add details or provide a custom answer..." };
+    const pending = { expectedAnswerType: "text" as const, id: transcript.id, question: transcript.question,
+      reason: transcript.reason, required: true };
+    store.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [transcript] });
+    store.appendEvent(runId, { type: "clarifying_questions", title: "Clarifying questions", message: transcript.question,
+      questions: [transcript] });
+    store.appendEvent(runId, { type: "clarifying_questions", title: "Clarifying questions", message: transcript.question,
+      questions: [pending], metadata: { eventV2Id: "run:40", questionSetId: "questions-exchange-1-5:call" } });
+    store.updateRun(runId, { status: "needs_user_input", pendingQuestions: [pending] });
+    const snapshot = store.getSnapshot(runId);
+    const current = activity({ runId, status: "needs_user_input", runtimeAgentRun: snapshot, agentChatMessages: snapshot.chatMessages });
+
+    const html = renderToStaticMarkup(<GenerateActivityPanel activity={current} onCancel={() => undefined} onAnswer={() => undefined} />);
+    expect(html.match(/data-testid="generate-questions"/g)).toHaveLength(1);
+    const input = html.match(/<input[^>]*data-testid="agent-answer-field-skill_scope-answer"[^>]*>/)?.[0];
+    expect(input).toBeDefined();
+    expect(input).not.toContain('disabled=""');
+    expect(html).toContain("Send answer");
+    expect(html).not.toContain(transcript.placeholder);
+  });
+
+  it("keeps an earlier answered occurrence with identical wording in history as the current transcript catches up", () => {
+    let now = "2026-11-26T07:40:40.700Z";
+    const store = new AgentRunStore({ now: () => now });
+    const { runId } = store.createRun({ providerId: "mock", mode: "continue_project", input: {} });
+    const question = { id: "basis", question: "Which scope applies?", reason: "Needed for the capacity rule.", required: true,
+      expectedAnswerType: "text" as const };
+    store.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [question] });
+    store.appendEvent(runId, { type: "clarifying_questions", title: "Clarifying questions", message: question.question,
+      questions: [question], metadata: { questionSetId: "previous" } });
+    now = "2026-11-26T07:40:41.000Z";
+    store.appendChatMessage(runId, { role: "user", kind: "answer", text: "The previous scope." });
+    now = "2026-11-26T07:40:42.000Z";
+    store.updateRun(runId, { status: "needs_user_input", pendingQuestions: [question] });
+    store.appendEvent(runId, { type: "clarifying_questions", title: "Clarifying questions", message: question.question,
+      questions: [question], metadata: { questionSetId: "current" } });
+
+    const render = () => {
+      const snapshot = store.getSnapshot(runId);
+      const current = activity({ runId, status: "needs_user_input", runtimeAgentRun: snapshot, agentChatMessages: snapshot.chatMessages });
+      return renderToStaticMarkup(<GenerateActivityPanel activity={current} onCancel={() => undefined} onAnswer={() => undefined} />);
+    };
+    const before = render();
+    store.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [question] });
+    const after = render();
+    for (const html of [before, after]) {
+      const inputs = html.match(/<input[^>]*data-testid="agent-answer-field-basis-answer"[^>]*>/g) ?? [];
+      expect(inputs).toHaveLength(2);
+      expect(isDisabledOpeningTag(inputs[0])).toBe(true);
+      expect(isDisabledOpeningTag(inputs[1])).toBe(false);
+      expect(html.match(/Previous question/g)).toHaveLength(1);
+      expect(html.match(/Send answer/g)).toHaveLength(1);
+    }
+  });
+
+  it("keeps only the exact pending typed form active when the transcript is behind or an approval is pending", () => {
+    const store = new AgentRunStore();
+    const { runId } = store.createRun({ providerId: "mock", mode: "continue_project", input: {} });
+    const prior = { id: "basis", question: "Earlier question?", required: true, reason: "Old context.", answerKind: "text" as const };
+    const pending = { ...prior, question: "How many shifts are in scope?", reason: "Current context.", answerKind: "field_group" as const,
+      freeTextAllowed: false, fields: [{ id: "shifts", label: "Shifts", kind: "number" as const, required: true }] };
+    store.appendChatMessage(runId, { role: "assistant", kind: "question", questions: [prior] });
+    store.updateRun(runId, { status: "needs_user_input", pendingQuestions: [pending] });
+    const snapshot = store.getSnapshot(runId);
+    const current = activity({ runId, status: "needs_user_input", runtimeAgentRun: snapshot, agentChatMessages: snapshot.chatMessages });
+
+    const html = renderToStaticMarkup(<GenerateActivityPanel activity={current} onCancel={() => undefined} onAnswer={() => undefined} />);
+    const oldInput = html.match(/<input[^>]*data-testid="agent-answer-field-basis-answer"[^>]*>/)?.[0];
+    const currentInput = html.match(/<input[^>]*data-testid="agent-answer-field-basis-shifts"[^>]*>/)?.[0];
+    expect(oldInput).toContain('disabled=""');
+    expect(currentInput).toBeDefined();
+    expect(currentInput).not.toContain('disabled=""');
+    expect(html).toContain("How many shifts are in scope?");
+
+    const approval = renderToStaticMarkup(<GenerateActivityPanel activity={{ ...current,
+      runtimeAgentRun: { ...snapshot, status: "waiting_approval" } }} onCancel={() => undefined} onAnswer={() => undefined} />);
+    expect(approval).not.toContain('data-testid="agent-answer-field-basis-shifts"');
+    expect(approval.match(/<input[^>]*data-testid="agent-answer-field-basis-answer"[^>]*>/)?.[0]).toContain('disabled=""');
+  });
+
   it("keeps cancelled question history without claiming the agent is still working", () => {
     const html = renderToStaticMarkup(<GenerateActivityPanel
       activity={activity({ status: "cancelled", canCancel: false, agentChatMessages: [{

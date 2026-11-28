@@ -5,6 +5,10 @@ import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from "lucide-react";
 import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { Button } from "@/components/ui/button";
 
+const DURATION_UNITS = {
+  target: "KPI base unit (no conversion)", seconds: "seconds", minutes: "minutes", hours: "hours", days: "days"
+} as const;
+
 const INPUT = "mt-1 w-full min-w-0 rounded-md border border-line bg-white px-2 py-1.5 text-xs text-ink";
 
 interface Props {
@@ -94,7 +98,26 @@ export function IncomingKpiMappingReview({ snapshot, options, running, mappingCh
           <Button type="button" size="sm" className="mt-2" icon={<Plus className="h-3.5 w-3.5" />} disabled={running || !table || categoryColumns.length >= 4} onClick={() => patch({ categoryColumns: [...categoryColumns, ""] })}>Add category level</Button>
         </div>
         <div className="mt-4">
-          <Field label="How is the value recorded?"><select aria-label="How is the value recorded?" className={INPUT} value={duration?.mode ?? ""} disabled={running} onChange={(event) => patch({ duration: event.target.value === "column" ? { mode: "column", column: "", unit: "target" } : event.target.value === "timestamps" ? { mode: "timestamps", startColumn: "", endColumn: "" } : undefined })}><option value="">Choose the value calculation</option><option value="column">Numeric value / duration column</option><option value="timestamps">End minus start timestamps (duration)</option></select></Field>
+          <Field label="How is the value recorded?">
+            <select aria-label="How is the value recorded?" className={INPUT}
+              value={duration?.mode === "column" && review.requiresExplicitDuration ? `column:${duration.unit}` : duration?.mode ?? ""}
+              disabled={running} onChange={(event) => {
+                const value = event.target.value;
+                const unit = value.startsWith("column:") ? value.slice("column:".length) : value === "column" ? "target" : "";
+                if (Object.hasOwn(DURATION_UNITS, unit)) {
+                  patch({ duration: { mode: "column", column: duration?.mode === "column" ? duration.column : "",
+                    unit: unit as keyof typeof DURATION_UNITS } });
+                } else {
+                  patch({ duration: value === "timestamps" ? { mode: "timestamps", startColumn: "", endColumn: "" } : undefined });
+                }
+              }}>
+              <option value="">Choose the value calculation</option>
+              {review.requiresExplicitDuration ? Object.entries(DURATION_UNITS).map(([unit, label]) =>
+                <option key={unit} value={`column:${unit}`}>Numeric value / duration column · {label}</option>
+              ) : <option value="column">Numeric value / duration column</option>}
+              <option value="timestamps">End minus start timestamps (duration)</option>
+            </select>
+          </Field>
           {duration?.mode === "column" ? <div className="mt-2 grid gap-3 sm:grid-cols-3">
             <ColumnSelect label="Value / duration column" value={duration.column} columns={columns} disabled={running} onChange={(column) => patch({ duration: { ...duration, column } })} />
             <Field label="Value / duration unit"><select aria-label="Value / duration unit" className={INPUT} value={duration.unit} disabled={running} onChange={(event) => patch({ duration: { ...duration, unit: event.target.value as typeof duration.unit } })}><option value="target">KPI base unit (no conversion)</option>{["seconds", "minutes", "hours", "days"].map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></Field>

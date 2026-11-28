@@ -1,4 +1,4 @@
-import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
+import { isHarnessReasoningValue, parseLocalHttpSelection } from "@vdt-studio/model-bridge";
 import { isHarnessBackendId } from "@vdt-studio/model-bridge/harness-catalog";
 export const SIDECAR_PROTOCOL_VERSION = 1;
 export const DEFAULT_SIDECAR_MAX_FRAME_BYTES = 1024 * 1024;
@@ -186,14 +186,14 @@ const EMPTY_PAYLOAD_METHODS = new Set<SidecarRequestMethod>(["list_backends", "g
 const METHOD_PAYLOAD_KEYS = {
   list_backends: [],
   detect_clis: ["agentId", "excludeCursor"],
-  test_backend: ["backendId"],
+  test_backend: ["backendId", "model", "modelReasoning", "localHttpSelection"],
   list_models: ["backendId"],
-  complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"],
-  smart_execution: ["backendId", "model", "modelReasoning", "timeoutMs"],
+  complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs", "localHttpSelection"],
+  smart_execution: ["backendId", "model", "modelReasoning", "timeoutMs", "localHttpSelection"],
   harness_settings: ["action", "profile", "removeId"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
-  speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
+  speech: ["operation", "modelId", "confirmed", "audioBase64", "jobId", "selection", "sessionId", "preview", "locale", "setupId", "eventId", "text"],
   get_app_mode: []
 } satisfies Record<SidecarRequestMethod, readonly string[]>;
 
@@ -332,6 +332,9 @@ function validateRequestPayload(method: SidecarRequestMethod, payload: JsonObjec
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
+  }
+  if ("localHttpSelection" in payload && !parseLocalHttpSelection(payload.localHttpSelection)) {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "localHttpSelection must reference an exact host profile version and model revision.");
   }
   if ("modelReasoning" in payload && !isHarnessReasoningValue(payload.modelReasoning)) throw new SidecarProtocolError("INVALID_PAYLOAD", "modelReasoning must be a bounded provider reasoning value.");
   if (method === "smart_execution" && (!(isHarnessBackendId(payload.backendId) || ["ollama", "lm_studio", "vllm"].includes(String(payload.backendId))) || Number(payload.timeoutMs ?? 5000) > 5000)) {

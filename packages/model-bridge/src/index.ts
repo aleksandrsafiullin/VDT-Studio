@@ -5,3 +5,5 @@ export * from "./safe-json";
 export * from "./schema-registry";
 export * from "./subscription-cli";
 export * from "./harness/catalog";
+
+export * from "./local-execution-http";

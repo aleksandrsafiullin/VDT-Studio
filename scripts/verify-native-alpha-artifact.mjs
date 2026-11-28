@@ -26,6 +26,34 @@ function json(root, relative) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function verifyAppleHelpers(application, resources) {
+  const manifestName = "vdt-apple-helpers.json";
+  const names = [
+    ["foundationModels", "Contents/Helpers/vdt-apple-foundation-models"],
+    ["voice", "Contents/Helpers/vdt-apple-voice"]
+  ];
+  if (!existsSync(join(resources, manifestName))) {
+    if (names.some(([, relative]) => existsSync(join(application, relative)))) fail("Apple preview helper requires a resource manifest");
+    return [];
+  }
+  const manifestPath = file(resources, manifestName);
+  if (lstatSync(manifestPath).size > 1024) fail("Apple preview resource manifest is too large");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (manifest?.version !== 1 || typeof manifest.analyticalDefault !== "boolean" || Object.keys(manifest).length !== 4) {
+    fail("invalid Apple preview resource manifest");
+  }
+  if (manifest.analyticalDefault) fail("automatic Apple default requires release qualification");
+  return names.map(([key, relative]) => {
+    const path = file(application, relative);
+    const { mode, size } = lstatSync(path);
+    if (realpathSync(path) !== join(realpathSync(application), relative) || !SHA.test(manifest[key])
+      || size < 1 || size > 16 * 1024 * 1024 || !(mode & 0o111) || digest(path) !== manifest[key]) {
+      fail(`Apple preview helper does not match its manifest: ${relative}`);
+    }
+    return path;
+  });
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024, ...options });
   if (result.error || result.status !== 0) fail(`${command} failed: ${result.error?.message ?? result.stderr ?? result.status}`);
@@ -148,6 +176,7 @@ export function verifyNativeAlphaArtifact(directory, {
   if (!new Set(["darwin", "win32"]).has(platform)) fail("run on the target Mac or Windows host");
   const output = realpathSync(directory);
   const metadata = json(output, platform === "darwin" ? "macos-package.json" : "windows-package.json");
+  if (platform === "darwin" && metadata.qualification === "app-intents-validation-only") fail("App Intents qualification artifacts are excluded from ordinary alpha verification");
   const architecture = platform === "darwin" ? "arm64" : "x64";
   if (metadata.schemaVersion !== 1 || metadata.platform !== platform || metadata.architecture !== architecture) fail("platform metadata does not match the candidate host contract");
   if (metadata.sourceCommit !== sourceCommit || readFileSync(file(output, "SOURCE_COMMIT"), "utf8").trim() !== sourceCommit) fail("source commit mismatch");
@@ -175,12 +204,14 @@ export function verifyNativeAlphaArtifact(directory, {
   let storageAddon;
   if (platform === "darwin") {
     file(application, "Contents/MacOS/vdt-studio-desktop");
+    if (existsSync(join(resources, "Metadata.appintents"))) fail("App Intents metadata requires separate qualification");
+    const appleHelpers = verifyAppleHelpers(application, resources);
     command("codesign", ["--verify", "--deep", "--strict", application]);
     command("codesign", ["--verify", "--strict", installer]);
     if (metadata.signed) {
       const teams = new Set();
       const cursorHelper = cursorIsolation ? [file(application, "Contents/Helpers/vdt-cursor-macos-supervisor")] : [];
-      for (const target of [application, node, installer, ...cursorHelper]) {
+      for (const target of [application, node, installer, ...cursorHelper, ...appleHelpers]) {
         const signature = command("codesign", ["--display", "--verbose=4", target]);
         if (!signature.includes("Authority=Developer ID Application:") || !/^TeamIdentifier=\w+/m.test(signature)) fail("candidate does not carry a Developer ID signature");
         teams.add(signature.match(/^TeamIdentifier=(\w+)/m)[1]);

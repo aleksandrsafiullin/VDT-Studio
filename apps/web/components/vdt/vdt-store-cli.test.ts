@@ -219,6 +219,8 @@ function parseAgentStartBody(fetchMock: MockedFunction<typeof fetch>) {
   const [, requestInit] = startCall!;
   return JSON.parse(String(requestInit?.body)) as {
     mode?: string;
+    outcomeSelection?: string;
+    outcome?: string;
     input?: { prompt?: string; project?: { id?: string }; businessContext?: string; personalisation?: { userInstructions?: string; projectRules?: string } };
     workspace?: { vdtId?: string };
     executionBindingId?: string;
@@ -769,6 +771,17 @@ describe("vdt-store change-set workflow", () => {
     expect((body.input as { selectedNodeId?: string }).selectedNodeId).toBe(selectedNodeId === "deleted-kpi" ? undefined : selectedNodeId);
   });
 
+  it("forwards Automatic as an explicit opt-in with the original chat request", async () => {
+    mockAgentStartFetch("agent-run-automatic-outcome");
+    useVdtStudioStore.setState({ executionSettings: byokExecutionSettings() });
+    const prompt = "Построй дерево, замеры будут позже.";
+    expect(await useVdtStudioStore.getState().startAgentRun(prompt, { outcomeSelection: "automatic" })).toBe(true);
+    const body = parseAgentStartBody(vi.mocked(fetch));
+    expect(body.outcomeSelection).toBe("automatic");
+    expect(body.outcome).toBeUndefined();
+    expect(body.input?.prompt).toBe(prompt);
+  });
+
   it("clears only the current tree's chat KPI context and restores it on a deliberate selection", () => {
     useVdtStudioStore.setState({
       project: cloneProject(productionVolumeProject), selectedNodeId: "calendar_time",
@@ -931,6 +944,43 @@ describe("vdt-store change-set workflow", () => {
       text: "Continue without web research.",
       selectedNodeId,
       researchMode: "off"
+    });
+  });
+
+  it("fences a paused API run after a local switch and resumes only with its pinned selection", async () => {
+    const runId = "agent-run-api-before-switch";
+    const paused = runtimeSnapshotFixture({
+      runId,
+      status: "needs_user_input",
+      completedAt: undefined,
+      executionSummary: {
+        executionMode: "api_keys",
+        executionProfile: "model_agent",
+        backendId: "openai_compatible",
+        modelId: "gpt-test"
+      }
+    }) as VdtAgentRunSnapshot;
+    vi.mocked(fetch).mockClear().mockResolvedValue(jsonResponse({ ok: true, snapshot: paused }));
+    useVdtStudioStore.setState({ agentRun: paused, activeAgentRunId: runId, executionSettings: byokExecutionSettings() });
+
+    useVdtStudioStore.getState().setExecutionCategory("local_models");
+    expect(await useVdtStudioStore.getState().sendAgentInstruction("Use the latest production figures")).toBe(false);
+    await useVdtStudioStore.getState().sendAgentAnswers({ scope: "delivered tonnes" });
+    await useVdtStudioStore.getState().sendAgentApproval(true, undefined, "proposal_1");
+    await useVdtStudioStore.getState().continueAgentRun();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(useVdtStudioStore.getState().agentError).toContain("Execution settings changed");
+    expect(useVdtStudioStore.getState().activeAgentRunId).toBe(runId);
+
+    useVdtStudioStore.getState().setExecutionCategory("byok");
+    await useVdtStudioStore.getState().sendAgentAnswers({ scope: "delivered tonnes" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe(`/api/agent/runs/${runId}/messages`);
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      type: "user_answer",
+      expectedExecutionMode: "api_keys",
+      answers: { scope: "delivered tonnes" }
     });
   });
 

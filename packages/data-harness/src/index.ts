@@ -3,7 +3,7 @@ import { textFromInput, isNumberLike, isDateLike, extensionOf, safeId, shortHash
 import { reconcileIncomingKpiPlan } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import { buildIncomingKpiBreakdown as buildCompleteIncomingKpiBreakdown, incomingKpiOptionsSchema, parseDatasetNumber, type IncomingKpiOptions, type IncomingKpiReview } from "./incoming-kpi-breakdown";
-export { INCOMING_KPI_LIMITS, incomingKpiOptionsSchema } from "./incoming-kpi-breakdown";
+export { declaredDurationUnitFromHeader, eventIdColumnCandidates, INCOMING_KPI_LIMITS, incomingKpiOptionsSchema } from "./incoming-kpi-breakdown";
 export type { IncomingKpiOptions, IncomingKpiReview, IncomingKpiQuestion } from "./incoming-kpi-breakdown";
 import type {
   DataQualityReport,
@@ -92,6 +92,8 @@ export interface AnalyzeRawDatasetInput {
   text?: string | undefined;
   project: VdtProject;
   incomingKpiOptions?: IncomingKpiOptions | undefined;
+  /** Internal review policy restored from the saved run during recalculation. */
+  requireExplicitIncomingDuration?: true | undefined;
   entryContext?: {
     source?: string | undefined;
     cardName?: string | undefined;
@@ -104,13 +106,20 @@ export interface AnalyzeRawDatasetInput {
   signal?: AbortSignal | undefined;
 }
 
+export type WorkbookDateEncoding = "excel_serial" | "ambiguous_excel_dates";
+
 export interface DataDiscoveryStructuredProvider {
+  /** Explicitly set by the provider adapter, outside the model decision schema. */
+  requireExplicitDurationOnClarification?: true;
+  /** Supplies parser observations to the host adapter, outside the model input and prompt. */
+  observeWorkbookDateColumns?: true;
   completeStructured<TInput, TOutput>(params: {
     taskType: "data_agent_decision" | "analyze_raw_dataset" | "review_dataset_proposal";
     input: TInput;
     schema: unknown;
     systemPrompt: string;
     userPrompt: string;
+    workbookDateColumns?: ReadonlyMap<string, ReadonlyMap<string, WorkbookDateEncoding>>;
     model?: string | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<TOutput>;
@@ -157,6 +166,8 @@ export interface DataTable {
   truncated: boolean;
   layoutIssue?: string | undefined;
   columnFormats?: Record<string, string> | undefined;
+  /** Parsed XLSX columns containing numeric cells with date-formatted sections. */
+  xlsxDateColumns?: Array<[column: string, encoding: WorkbookDateEncoding]> | undefined;
   excelDateSystem?: "1900" | "1904" | undefined;
   numericColumns?: string[] | undefined;
   columnEncodings?: Record<string, "excel_duration_days" | "mixed_excel_duration" | "excel_datetime"> | undefined;
@@ -406,6 +417,9 @@ export async function runRawDataDiscovery(input: AnalyzeRawDatasetInput): Promis
     requiredProviderQuestions: []
   };
   await runProviderIndependentAgentLoop(context, addEvent);
+  if (context.input.requireExplicitIncomingDuration && !input.requireExplicitIncomingDuration) {
+    context.changeSet = buildVdtChangeSet(context.input, dataset, context.semanticModel, context.proposal, limits);
+  }
   const incomingKpi = input.entryContext?.purpose === "incoming_kpis"
     ? buildCompleteIncomingKpiBreakdown(context.input, dataset.tables, context.semanticModel, sourceIdFor(input), input.entryContext.targetNodeId ?? input.project.rootNodeId).review
     : undefined;
@@ -576,7 +590,10 @@ export async function reanalyzeDiscoveryWithUserEdits(
   const options = { ...previous.incomingKpi.options, ...edits.incomingKpiOptions };
   if (options.tableId !== previous.incomingKpi.options.tableId && edits.incomingKpiOptions?.eventIdColumn === undefined) delete options.eventIdColumn;
   if (edits.incomingKpiOptions && edits.incomingKpiOptions.confirmed !== true) options.confirmed = false;
-  const next = await runRawDataDiscovery({ ...input, entryContext: previous.entryContext ?? input.entryContext, incomingKpiOptions: options });
+  const next = await runRawDataDiscovery({
+    ...input, entryContext: previous.entryContext ?? input.entryContext, incomingKpiOptions: options,
+    requireExplicitIncomingDuration: previous.incomingKpi.requiresExplicitDuration
+  });
   next.runId = previous.runId;
   next.createdAt = previous.createdAt;
   next.userEdits = { ...mergedEdits, incomingKpiOptions: next.incomingKpi?.options ?? options };
@@ -1594,7 +1611,7 @@ async function runProviderIndependentAgentLoop(
       file: publicFileMetadata(context.input.file),
       tools: dataDiscoveryToolNameSchema.options,
       observations: modelVisibleObservations(context),
-      project: projectExcerpt(context.input.project),
+      project: projectExcerpt(context.input.project, context.input.entryContext?.targetNodeId),
       entryContext: context.input.entryContext,
       incomingKpiOptions: context.input.incomingKpiOptions,
       currentProposal: {
@@ -1622,6 +1639,11 @@ async function runProviderIndependentAgentLoop(
     }
 
     if (decision.type === "ask_user") {
+      if (context.input.entryContext?.purpose === "incoming_kpis" && context.input.provider.requireExplicitDurationOnClarification) {
+        const options = { ...context.input.incomingKpiOptions };
+        delete options.duration;
+        context.input = { ...context.input, incomingKpiOptions: options, requireExplicitIncomingDuration: true };
+      }
       context.requiredProviderQuestions.push(...decision.questions);
       context.proposal.questions = [...new Set([...context.proposal.questions, ...decision.questions])].slice(0, 8);
       context.semanticModel.questionsForUser = [...new Set([...context.semanticModel.questionsForUser, ...decision.questions])].slice(0, 8);
@@ -1641,7 +1663,7 @@ async function runProviderIndependentAgentLoop(
       datasetId: context.input.datasetId,
       observations: modelVisibleObservations(context),
       entryContext: context.input.entryContext,
-      project: projectExcerpt(context.input.project),
+      project: projectExcerpt(context.input.project, context.input.entryContext?.targetNodeId),
       incomingKpiOptions: context.input.incomingKpiOptions,
       deterministicProposal: context.proposal
     });
@@ -1660,7 +1682,7 @@ async function runProviderIndependentAgentLoop(
       datasetId: context.input.datasetId,
       observations: modelVisibleObservations(context),
       entryContext: context.input.entryContext,
-      project: projectExcerpt(context.input.project),
+      project: projectExcerpt(context.input.project, context.input.entryContext?.targetNodeId),
       incomingKpiOptions: context.input.incomingKpiOptions,
       proposal: context.proposal
     });
@@ -1765,12 +1787,18 @@ async function callDataProvider<TOutput>(
   input: unknown
 ): Promise<TOutput> {
   const schema = taskType === "data_agent_decision" ? dataAgentDecisionSchema : rawDatasetAnalysisResultSchema;
-  const output = await context.input.provider!.completeStructured<unknown, unknown>({
+  const provider = context.input.provider!;
+  const workbookDateColumns = provider.observeWorkbookDateColumns && taskType === "data_agent_decision"
+    ? new Map(context.dataset.tables.filter(table => table.xlsxDateColumns?.length)
+      .map(table => [table.tableId, new Map(table.xlsxDateColumns)]))
+    : undefined;
+  const output = await provider.completeStructured<unknown, unknown>({
     taskType,
     input,
     schema,
     systemPrompt: DATA_DISCOVERY_SYSTEM_PROMPT,
     userPrompt: JSON.stringify(input),
+    ...(workbookDateColumns ? { workbookDateColumns } : {}),
     ...(context.input.providerModel ? { model: context.input.providerModel } : {}),
     signal: context.input.signal
   });
@@ -2116,12 +2144,17 @@ function publicFileMetadata(file: DataDiscoveryFileMetadata): Omit<DataDiscovery
   };
 }
 
-function projectExcerpt(project: VdtProject) {
+function projectExcerpt(project: VdtProject, targetNodeId?: string) {
+  const nodes = project.graph.nodes.slice(0, 80);
+  if (targetNodeId && !nodes.some(node => node.id === targetNodeId)) {
+    const target = project.graph.nodes.find(node => node.id === targetNodeId);
+    if (target) nodes.splice(79, 1, target);
+  }
   return {
     id: project.id,
     name: project.name,
     rootNodeId: project.rootNodeId,
-    nodes: project.graph.nodes.slice(0, 80).map((node) => ({
+    nodes: nodes.map((node) => ({
       id: node.id,
       name: node.name,
       type: node.type,

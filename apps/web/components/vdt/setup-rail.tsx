@@ -1,30 +1,49 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, History, Keyboard, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
 import { clsx } from "clsx";
-import type { ChatStarterOutput, VdtNode } from "@vdt-studio/vdt-core";
+import { kpiCanonicalJson, type ChatStarterOutput, type VdtNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
+import { isAppleAnalyticalChoice } from "@/lib/apple-first-launch";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
 import type { CliRequestReadiness } from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
-import { useDesktopLayout } from "@/lib/use-desktop-layout";
-import { filterAgentChatHistoryForVdt, selectedCliScanStatus, selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
+import { desktopLayoutMatches, subscribeDesktopLayout, useDesktopLayout } from "@/lib/use-desktop-layout";
+import { filterAgentChatHistoryForVdt, hasActiveWorkspaceVdt, selectedCliScanStatus, selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 import { SkillContextControl } from "./skill-context-control";
 import type { SettingsSectionId } from "./settings-nav";
-import { useSpeechSettings } from "./speech-store";
+import { selectedAppleVoice, useSpeechSettings, useSpeechStore } from "./speech-store";
+import { useScopedComposerDraft, useVoiceDialogue } from "./use-voice-dialogue";
+import { useComposerVoiceShortcuts } from "./use-composer-voice-shortcuts";
+import { useNativeAppIntents } from "./use-native-app-intents";
+import { canUseComposerVoiceShortcut, composerVoiceShortcuts, type ComposerVoiceShortcutScope } from "@/lib/composer-voice-shortcuts";
+import { spokenReviewIntent } from "@/lib/voice-confirmation";
+import { dialogueDestination, heardQuestion, spokenAnswer, type DialogueDestination } from "@/lib/voice-dialogue";
+import { createLocalNotificationSynthesis } from "@/lib/local-notification-synthesis";
+import { createOpenAiNotificationSynthesis } from "@/lib/openai-notification-synthesis";
+import { openAiSpeechCredentialTarget } from "@/lib/openai-byok-speech-client";
+import { resolveVdtAppMode } from "@/lib/app-mode";
+import type { VoiceSynthesis } from "@/lib/voice-notification-queue";
+import { selectedSpeechAnalytics, speechAnalyticsConnectionKey } from "@/lib/speech-client";
+import type { SpeechSelection } from "@vdt-studio/local-runner/speech-catalog";
 import { useVoiceDictation } from "./use-voice-dictation";
 import { VoiceInputStatus } from "./voice-input-status";
+import { useApiKeyStorage } from "./api-key-storage";
+import { SpokenUpdateControls, VoiceConversationControls } from "./voice-conversation-controls";
 import { WebSearchControl, type ResearchStatus } from "./web-search-control";
 import { useCliChatReadiness } from "./use-cli-chat-readiness";
 import { ComposerModelPicker } from "./composer-model-picker";
 import { useProviderConnectionCheck } from "@/lib/provider-connection-state";
+import { FAST_LOCAL_REASONING } from "@vdt-studio/model-bridge/reasoning";
+import { adaptiveReasoningPolicy } from "@/app/api/agent/runs/adaptive-reasoning";
+import { providerConnectionRequest, requestProviderModelCapabilities } from "@/lib/provider-agent-binding";
 import { providerConnectionKey } from "@/lib/provider-connection";
 export { ExecutionReadinessDot } from "./composer-model-picker";
 import type { AgentChatHistoryEntry } from "./vdt-store";
@@ -110,18 +129,96 @@ export function SelectedKpiContext({ node, onClear }: { node: Pick<VdtNode, "id"
   );
 }
 
-export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutput["prompts"] | undefined }) {
+function isComposerWorkspaceVisible() {
+  const { ui, workspace } = useVdtStudioStore.getState();
+  return !document.hidden && workspace.activePanel === "vdt" && hasActiveWorkspaceVdt(workspace)
+    && (!ui.leftPanelCollapsed || !desktopLayoutMatches());
+}
+
+function voiceDialogueSelection() {
+  const state = useVdtStudioStore.getState();
+  const { workspace, executionSettings, generateActivity } = state;
+  const { stt, modelId, language } = useSpeechStore.getState();
+  const preview = state.appleNativePreview?.settings === executionSettings ? state.appleNativePreview.binding : undefined;
+  const run = generateActivity?.runtimeAgentRun;
+  const scopeId = JSON.stringify([workspace.activeProjectId ?? null, workspace.activeVdtId ?? null]);
+  const analytics = preview ? { mode: "local" as const, providerId: preview.backendId, modelId: preview.modelId }
+    : selectedSpeechAnalytics(executionSettings);
+  const selectionIdentity = [workspace.activeVdtId ? null : state.project.id, speechAnalyticsConnectionKey(executionSettings), analytics,
+    resolveExecutionSettings(executionSettings).providerConfig?.modelReasoning ?? null, preview?.bindingId ?? null, stt, modelId, language];
+  const scope = JSON.stringify([scopeId, state.projectRevision, ...selectionIdentity]);
+  const observationIdentity = JSON.stringify([scopeId, ...selectionIdentity]);
+  const selection: SpeechSelection = {
+    version: 1, scopeId, analytics, language,
+    stt: stt === "apple_local" ? { providerId: "apple_local", modelId: "system" }
+      : stt === "whisper_local" ? { providerId: "whisper_local", modelId } : null,
+    tts: null, realtime: null
+  };
+  const base = workspace.draftRevisionBase;
+  const choice = executionSettings.analyticalSourceChoice;
+  const bindingId = isAppleAnalyticalChoice(choice) && preview?.backendId === "apple_foundation_models"
+    && preview.bindingId.startsWith("apple_native_") && preview.admission?.mode === "local"
+    && preview.admission.providerId === preview.backendId && preview.admission.modelId === preview.modelId
+    && preview.appleIdentity ? preview.bindingId : undefined;
+  const idleApple = resolveVdtAppMode() === "desktop" && workspace.activePanel === "vdt"
+    && !workspace.isLoading && !workspace.isMutating && !workspace.pendingRevisionCommit
+    && base && base.projectId === workspace.activeProjectId && base.vdtId === workspace.activeVdtId
+    && base.expectedHead.activeRevisionId && base.expectedHead.activeContentIdentity
+    && (bindingId || (choice === "untouched" && !preview)) ? {
+      base, project: state.project, executionSettings, microphoneKey: JSON.stringify([stt, modelId, language]), bindingId,
+      verifiedFirstLaunch: state.appleFirstLaunch?.status === "ready" && state.appleFirstLaunch.firstLaunchDefaultEnabled
+    } : undefined;
+  const runScope = run?.request.workspace;
+  const sameWorkspace = (!runScope?.projectId || runScope.projectId === workspace.activeProjectId)
+    && (!runScope?.vdtId || runScope.vdtId === workspace.activeVdtId);
+  const pending = run?.events.slice().reverse().find(event => event.type === "clarifying_questions");
+  const questionSetId = pending?.metadata?.questionSetId;
+  const questions = generateActivity?.status === "needs_user_input" ? run?.pendingQuestions : undefined;
+  const proposal = run?.pendingMutationProposal;
+  const destination = sameWorkspace ? dialogueDestination({
+    runId: generateActivity?.runId,
+    status: run?.status === "waiting_approval" ? "waiting_approval" : generateActivity?.status,
+    questionSetId: typeof questionSetId === "string" ? questionSetId : undefined,
+    questionEventId: pending?.id,
+    projectId: runScope?.projectId,
+    vdtId: runScope?.vdtId,
+    proposal: runScope?.projectId && runScope.vdtId && proposal?.status === "proposed"
+      ? { runId: proposal.runId, projectId: runScope.projectId, vdtId: runScope.vdtId,
+          proposalId: proposal.id, baseRevisionId: proposal.baseRevisionId, baseRevision: proposal.baseRevision }
+      : undefined,
+    questions
+  }) : undefined;
+  if (destination?.kind === "answer" && (pending?.questions?.length !== 1 || pending.questions[0]?.id !== questions?.[0]?.id
+    || pending.questions[0]?.question !== questions?.[0]?.question)) return { scope, observationIdentity, selection, destination: undefined, idleApple };
+  return { scope, observationIdentity, selection, destination, idleApple };
+}
+
+export function SetupRail({ starterPrompts, voiceSynthesis = null }: {
+  starterPrompts?: ChatStarterOutput["prompts"] | undefined;
+  /** Supplied only by an explicitly granted local synthesis owner. */
+  voiceSynthesis?: VoiceSynthesis | null;
+}) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("execution");
   const [confirmSpeechDownload, setConfirmSpeechDownload] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const [instructionText, setInstructionText] = useState("");
+  const draftScope = useVdtStudioStore(state => JSON.stringify([
+    state.workspace.activeProjectId ?? null, state.workspace.activeVdtId ?? state.project.id
+  ]));
+  const [instructionText, setInstructionText] = useScopedComposerDraft(draftScope);
   const [chatOutcome, setChatOutcome] = useState<ChatOutcome | "">("");
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
   const briefRef = useRef<HTMLDetailsElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  const composerIsOpen = useCallback(() => Boolean(composerRef.current?.isConnected) && isComposerWorkspaceVisible(), []);
+  const voiceControlsRef = useRef<HTMLDivElement>(null);
+  const dictationButtonRef = useRef<HTMLButtonElement>(null);
+  const dialoguePrimaryRef = useRef<HTMLButtonElement>(null);
+  const startDialogueButtonRef = useRef<HTMLButtonElement>(null);
+  const voiceFocusAfterToggle = useRef<"start" | "end" | null>(null);
   const activityScrollRef = useRef<HTMLElement>(null);
   const followConversationRef = useRef(true);
   const [researchMode, setResearchMode] = useState<ResearchMode>("auto");
@@ -135,9 +232,18 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const agentChatHistory = useVdtStudioStore((state) => state.agentChatHistory);
   const activeVdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
+  const activeProjectId = useVdtStudioStore((state) => state.workspace.activeProjectId);
+  const [adaptiveReadiness, setAdaptiveReadiness] = useState<"idle" | "checking" | "supported" | "unsupported" | "unavailable">("idle");
+  const [adaptiveRequested, setAdaptiveRequested] = useState(false);
+  const adaptiveCheckRef = useRef<AbortController | null>(null);
   const project = useVdtStudioStore((state) => state.project);
   const speech = useSpeechSettings();
-  const voice = useVoiceDictation(setInstructionText, activeVdtId);
+  const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
+  const isDesktop = useDesktopLayout();
+  const showCollapsed = isDesktop && leftPanelCollapsed;
+  const voice = useVoiceDictation(text => {
+    if (composerIsOpen()) setInstructionText(text);
+  }, draftScope);
   const scopedAgentChatHistory = useMemo(
     () => {
       const seen = new Set<string>();
@@ -154,9 +260,6 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const changeSetSelection = useVdtStudioStore((state) => state.changeSetSelection);
   const aiError = useVdtStudioStore((state) => state.aiError);
   const aiActionError = useVdtStudioStore((state) => state.aiActionError);
-  const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
-  const isDesktop = useDesktopLayout();
-  const showCollapsed = isDesktop && leftPanelCollapsed;
   const selectedNode = useVdtStudioStore((state) => shouldContinueOpenVdt(state)
     ? selectedNodeForAgentChat(state)
     : undefined);
@@ -175,6 +278,8 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   const applyPendingChangeSet = useVdtStudioStore((state) => state.applyPendingChangeSet);
   const discardPendingChangeSet = useVdtStudioStore((state) => state.discardPendingChangeSet);
   const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
+  const applePreview = useVdtStudioStore(state => state.appleNativePreview?.settings === state.executionSettings
+    ? state.appleNativePreview.binding : undefined);
   const executionSummary = formatExecutionModeSummary(executionSettings);
   const resolvedExecution = resolveExecutionSettings(executionSettings);
   const canRunDeepenAction = resolvedExecution.providerId !== "mock";
@@ -184,10 +289,9 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
     isScanning: isRescanningClis,
     detectionError: cliDetectionError
   });
-  const canUseConfiguredRuntime =
-    canRunDeepenAction &&
-    !byokValidationBlocked &&
-    (cliReadiness?.canExecute ?? true);
+  const canUseConfiguredRuntime = Boolean(applePreview) || (
+    canRunDeepenAction && !byokValidationBlocked && (cliReadiness?.canExecute ?? true)
+  );
   const providerCheck = useProviderConnectionCheck();
   const currentProviderCheck = providerCheck.key === providerConnectionKey(executionSettings) && providerCheck.state ? providerCheck : undefined;
   const { state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage } = !cliReadiness && currentProviderCheck
@@ -204,17 +308,50 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
     : 0;
   const canContinueCurrentAgentRun = generateActivity?.status === "running" ||
     generateActivity?.status === "needs_user_input";
-  const canSendInstruction =
+  const canSendTypedInstruction =
     !voice.active &&
     instructionText.trim().length > 0 &&
     canUseConfiguredRuntime &&
     (!isGenerating || Boolean(generateActivity));
   const canStartNewChat = Boolean(generateActivity);
   const hasRetryableError = Boolean(generateActivity?.retryableError);
-  const modelLabel = executionSummary.secondary ?? executionSummary.primary;
+  const modelLabel = applePreview ? "Apple on-device preview" : executionSummary.secondary ?? executionSummary.primary;
   const canStopResponse = generateActivity?.status === "running" && !instructionText.trim() && !voice.active;
   const activeRun = generateActivity?.runtimeAgentRun;
   const outcomeLocked = canContinueCurrentAgentRun || generateActivity?.status === "recovery_required";
+  const canCheckAdaptive = Boolean(activeProjectId && activeVdtId && !applePreview && !outcomeLocked
+    && resolvedExecution.providerId === "local_runner" && resolvedExecution.providerConfig?.backendId === "ollama"
+    && resolvedExecution.providerConfig.modelReasoning === FAST_LOCAL_REASONING);
+  useEffect(() => {
+    setAdaptiveReadiness("idle");
+    setAdaptiveRequested(false);
+    return () => adaptiveCheckRef.current?.abort();
+  }, [activeProjectId, activeVdtId, executionSettings, canCheckAdaptive]);
+
+  function adaptiveScopeIsCurrent() {
+    const current = useVdtStudioStore.getState();
+    return current.executionSettings === executionSettings
+      && current.workspace.activeProjectId === activeProjectId && current.workspace.activeVdtId === activeVdtId;
+  }
+
+  async function checkAdaptiveReasoning() {
+    if (!canCheckAdaptive || !adaptiveScopeIsCurrent()) return;
+    const connection = providerConnectionRequest(executionSettings, resolvedExecution.providerId, resolvedExecution.providerConfig, false);
+    if (!connection) return;
+    adaptiveCheckRef.current?.abort();
+    const check = new AbortController();
+    adaptiveCheckRef.current = check;
+    setAdaptiveReadiness("checking");
+    try {
+      const capabilities = await requestProviderModelCapabilities(connection, AbortSignal.any([check.signal, AbortSignal.timeout(8_000)]));
+      if (!check.signal.aborted && adaptiveScopeIsCurrent()) {
+        setAdaptiveReadiness(adaptiveReasoningPolicy(capabilities) ? "supported" : "unsupported");
+      }
+    } catch {
+      if (!check.signal.aborted && adaptiveScopeIsCurrent()) setAdaptiveReadiness("unavailable");
+    }
+  }
+
   const conversationId = activeRun?.request.conversationId;
   const verifiedRun = activeRun?.finishOutcome?.outcome === "structural_model"
     ? activeRun
@@ -227,6 +364,296 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
     ? verifiedRun.request.workspace.vdtId === activeVdtId
     : verifiedProject.id === project.id);
   const latestChatMessage = generateActivity?.agentChatMessages?.at(-1);
+  const visualProposal = activeRun?.pendingMutationProposal;
+  const visualWorkspace = activeRun?.request.workspace;
+  const visualApproval = visualProposal && visualWorkspace?.projectId && visualWorkspace.vdtId
+    ? { runId: visualProposal.runId, projectId: visualWorkspace.projectId, vdtId: visualWorkspace.vdtId,
+        proposalId: visualProposal.id, baseRevisionId: visualProposal.baseRevisionId, baseRevision: visualProposal.baseRevision }
+    : undefined;
+  const dialogueSelection = voiceDialogueSelection();
+  const { scope: notificationScope, selection: { analytics: { mode, providerId, modelId } } } = dialogueSelection;
+  const localSpeakEnabled = speech.tts === "apple_local" && speech.autoSpeak && speech.appleStatus?.supported === true;
+  const { voiceId: installedVoiceId, ratePercent, volumePercent } = selectedAppleVoice(speech, true) ?? {};
+  const notificationLocale = speech.ttsLocale;
+  const notificationRunId = generateActivity?.runId;
+  const localSynthesis = useMemo(() => installedVoiceId && ratePercent !== undefined && volumePercent !== undefined ? createLocalNotificationSynthesis({
+    scope: notificationScope,
+    analytics: { mode, providerId, modelId },
+    voice: { voiceId: installedVoiceId, locale: notificationLocale, ratePercent, volumePercent },
+    autoSpeak: localSpeakEnabled,
+    current: () => {
+      const settings = useSpeechStore.getState();
+      const currentVoice = selectedAppleVoice(settings, true);
+      return resolveVdtAppMode() === "desktop" && composerIsOpen() && settings.autoSpeak && settings.tts === "apple_local"
+        && currentVoice?.locale === notificationLocale && currentVoice.voiceId === installedVoiceId
+        && currentVoice.ratePercent === ratePercent && currentVoice.volumePercent === volumePercent
+        && useVdtStudioStore.getState().generateActivity?.runId === notificationRunId
+        && voiceDialogueSelection().scope === notificationScope;
+    }
+  }) : null, [composerIsOpen, notificationRunId, notificationScope, mode, providerId, modelId, installedVoiceId, notificationLocale, ratePercent, volumePercent, localSpeakEnabled]);
+  const vaultStatus = useApiKeyStorage(state => state.status);
+  const cloudTargetKey = useVdtStudioStore(state => {
+    const target = openAiSpeechCredentialTarget(state);
+    return target && target.runId === state.generateActivity?.runId ? JSON.stringify(target) : undefined;
+  });
+  const cloudAvailable = resolveVdtAppMode() !== "hosted_web"
+    && process.env.NEXT_PUBLIC_VDT_OPENAI_SPEECH_BYOK_ENABLED === "true"
+    && speech.ready && vaultStatus === "saved" && Boolean(cloudTargetKey) && !voiceSynthesis;
+  const cloudLocale = notificationLocale === "ru" ? "ru" : "en";
+  const [cloudConsent, setCloudConsent] = useState<{ key: string; scope: string; settings: typeof executionSettings; locale: "en" | "ru" }>();
+  const cloudConsentRef = useRef<typeof cloudConsent>(undefined);
+  const [cloudUpdateError, setCloudUpdateError] = useState<string>();
+  const revokeCloudUpdates = () => {
+    cloudConsentRef.current = undefined;
+    setCloudConsent(undefined);
+    setCloudUpdateError(undefined);
+  };
+  const cloudEnabled = cloudAvailable && Boolean(cloudConsent && cloudTargetKey === cloudConsent.key
+    && notificationScope === cloudConsent.scope && executionSettings === cloudConsent.settings && cloudLocale === cloudConsent.locale);
+  useEffect(() => {
+    if (cloudConsent && !cloudEnabled) revokeCloudUpdates();
+  }, [cloudConsent, cloudEnabled]);
+  useEffect(() => {
+    const revokeWhenHidden = () => { if (document.hidden) revokeCloudUpdates(); };
+    document.addEventListener("visibilitychange", revokeWhenHidden);
+    window.addEventListener("pagehide", revokeCloudUpdates);
+    return () => {
+      cloudConsentRef.current = undefined;
+      document.removeEventListener("visibilitychange", revokeWhenHidden);
+      window.removeEventListener("pagehide", revokeCloudUpdates);
+    };
+  }, []);
+  const cloudSynthesis = useMemo(() => cloudEnabled && cloudConsent ? createOpenAiNotificationSynthesis({
+    consent: JSON.parse(cloudConsent.key),
+    locale: cloudLocale,
+    current: () => {
+      const current = useVdtStudioStore.getState();
+      const target = openAiSpeechCredentialTarget(current);
+      const voiceSettings = useSpeechStore.getState();
+      return cloudConsentRef.current === cloudConsent && composerIsOpen() && !voiceSettings.spokenMuted
+        && voiceSettings.stt !== "off" && useApiKeyStorage.getState().status === "saved"
+        && current.executionSettings === cloudConsent.settings && target?.runId === current.generateActivity?.runId
+        && JSON.stringify(target) === cloudConsent.key && voiceDialogueSelection().scope === cloudConsent.scope
+        && (voiceSettings.ttsLocale === "ru" ? "ru" : "en") === cloudLocale;
+    },
+    snapshot: () => useVdtStudioStore.getState().generateActivity?.runtimeAgentRun,
+    onFailure: setCloudUpdateError
+  }) : null, [cloudEnabled, cloudConsent, cloudLocale, composerIsOpen]);
+  const effectiveSynthesis = voiceSynthesis ?? cloudSynthesis ?? localSynthesis;
+  const appleWorkspace = dialogueSelection.idleApple;
+  const matchesAppleRun = !activeRun || (activeRun.request.providerId === "model_agent"
+    && activeRun.request.executionBindingId === appleWorkspace?.bindingId
+    && (!activeRun.executionSummary || activeRun.executionSummary.backendId === "apple_foundation_models"));
+  const notificationWorkspace = effectiveSynthesis === localSynthesis && localSynthesis && appleWorkspace?.bindingId && matchesAppleRun
+    ? appleWorkspace : undefined;
+  const notificationBase = notificationWorkspace?.base;
+  const notificationProject = notificationWorkspace?.project;
+  const observationScope = useMemo(() => notificationBase && notificationProject
+    ? kpiCanonicalJson([dialogueSelection.observationIdentity, notificationBase, notificationProject])
+    : undefined, [dialogueSelection.observationIdentity, notificationBase, notificationProject]);
+  const [spokenReview, setSpokenReview] = useState<{ scope: string; target: Extract<DialogueDestination, { kind: "review" }>; text: string }>();
+  const visibleSpokenReview = spokenReview && spokenReview.scope === dialogueSelection.scope
+    && JSON.stringify(spokenReview.target) === JSON.stringify(dialogueSelection.destination) ? spokenReview : undefined;
+  const reviewReadbackRef = useRef<(key: string, message: string) => void>(() => undefined);
+  const voiceCapturePending = useRef(false);
+  const [manualCaptureBusy, setManualCaptureBusy] = useState(false);
+  const microphoneIsReleased = () => composerIsOpen() && !voiceCapturePending.current && !voice.hasCapture();
+  const dialogue = useVoiceDialogue({
+    selected: voiceDialogueSelection,
+    canCapture: microphoneIsReleased,
+    dispatch: async (destination, text, capture) => {
+      if (!composerIsOpen()) return false;
+      if (destination.kind === "instruction") return submitAgentInstruction(text, destination.continuing);
+      if (destination.kind === "review") {
+        const intent = spokenReviewIntent(text);
+        const live = voiceDialogueSelection();
+        if (!intent || JSON.stringify(live.destination) !== JSON.stringify(destination)) return false;
+        const ru = speech.language === "ru";
+        const proposed = useVdtStudioStore.getState().generateActivity?.runtimeAgentRun?.pendingMutationProposal;
+        const count = proposed?.selectedChangeIds.length ?? 0;
+        const readback = intent === "decline"
+          ? ru ? "Предложение ожидает решения. Проверьте изменения и нажмите «Отклонить»." : "The proposal is still pending. Review the changes and choose Reject on screen."
+          : ru ? `Предложено изменений: ${count}. Проверьте предложение на экране.`
+            : `Proposed changes: ${count}. Review them on screen before approving.`;
+        setSpokenReview({ scope: live.scope, target: destination, text: readback });
+        reviewReadbackRef.current(`${destination.runId}:${destination.proposal.proposalId}:${destination.proposal.baseRevision}:${capture.turnId}`, readback);
+        return true;
+      }
+      if (destination.kind !== "answer" || !capture.recognitionProof) return false;
+      await useVdtStudioStore.getState().sendAgentAnswers([spokenAnswer(destination, text)], {
+        runId: destination.runId, checkpoint: heardQuestion(destination, { ...capture, recognitionProof: capture.recognitionProof })
+      });
+      return !useVdtStudioStore.getState().agentError;
+    },
+    preserve: text => setInstructionText(previous => previous ? `${previous}
+${text}` : text),
+    speakNotifications: !showCollapsed && Boolean(localSynthesis || cloudSynthesis),
+    notifications: {
+      scope: dialogueSelection.scope,
+      canPlay: () => composerIsOpen() && voiceDialogueSelection().scope === notificationScope
+        && useVdtStudioStore.getState().generateActivity?.runId === notificationRunId,
+      observationScope,
+      runId: generateActivity?.runId,
+      snapshot: activeRun,
+      canonicalQuestionsOnly: !activeRun || Boolean(activeRun.request.executionBindingId
+        && (activeRun.request.providerId === "model_agent" || activeRun.request.providerId === "external_cli_agent")),
+      locale: cloudSynthesis ? cloudLocale : localSynthesis && !voiceSynthesis ? notificationLocale : speech.language,
+      currentReadbackOnly: cloudSynthesis !== null,
+      synthesis: effectiveSynthesis
+    }
+  });
+  const manualMicrophoneIsReady = () => microphoneIsReleased() && !dialogue.hasCapture();
+  const { resume: resumeNotifications } = dialogue.notifications;
+  const finishManualCapture = () => {
+    if (!voiceCapturePending.current || voice.hasCapture()) return;
+    const release = voice.waitForRelease();
+    void Promise.resolve(release).then(() => {
+      if (!voiceCapturePending.current || voice.hasCapture()) return;
+      if (release !== voice.waitForRelease()) { finishManualCapture(); return; }
+      voiceCapturePending.current = false;
+      resumeNotifications();
+      setManualCaptureBusy(false);
+    });
+  };
+  useEffect(() => {
+    if (!voice.active) finishManualCapture();
+  });
+  reviewReadbackRef.current = dialogue.notifications.reviewReadback;
+  function abandonSpokenDraft() {
+    dialogue.onManualEdit();
+    dialogue.notifications.interrupt();
+    setSpokenReview(undefined);
+  }
+  const voiceBoundary = useRef({ close: () => {}, scope: notificationScope, interrupt: dialogue.notifications.interrupt });
+  voiceBoundary.current = {
+    scope: notificationScope,
+    interrupt: dialogue.notifications.interrupt,
+    close: () => {
+      voice.onManualEdit();
+      dialogue.deactivate();
+      setSpokenReview(undefined);
+    }
+  };
+  useEffect(() => {
+    const check = () => {
+      const owner = voiceBoundary.current;
+      if (!composerIsOpen()) owner.close();
+      else if (voiceDialogueSelection().scope !== owner.scope) owner.interrupt();
+    };
+    const workspace = useVdtStudioStore.subscribe((state, previous) => {
+      if (state.ui.leftPanelCollapsed !== previous.ui.leftPanelCollapsed || state.workspace !== previous.workspace
+        || state.executionSettings !== previous.executionSettings || state.appleNativePreview !== previous.appleNativePreview) check();
+    });
+    const layout = subscribeDesktopLayout(check);
+    const speech = useSpeechStore.subscribe(check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      workspace();
+      layout();
+      speech();
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [composerIsOpen]);
+
+  const canSendInstruction = canSendTypedInstruction && !dialogue.active;
+  const canStartDialogue = speech.ready && canUseConfiguredRuntime && !voice.active && !manualCaptureBusy && Boolean(dialogueSelection.destination)
+    && (dialogueSelection.destination?.kind !== "answer" || activeRun?.status === "needs_user_input");
+  const showDialogue = dialogue.enabled || speech.ready;
+  const voiceAnswer = dialogue.enabled && activeRun?.status === "needs_user_input" && dialogueSelection.destination?.kind === "answer"
+    ? dialogueSelection.destination : undefined;
+  useEffect(() => {
+    const transition = voiceFocusAfterToggle.current;
+    if (transition === "start" && dialogue.enabled) {
+      voiceFocusAfterToggle.current = null;
+      const primary = dialoguePrimaryRef.current;
+      (primary && !primary.disabled ? primary : voiceControlsRef.current)?.focus();
+    } else if (transition === "end" && !dialogue.enabled) {
+      voiceFocusAfterToggle.current = null;
+      const start = startDialogueButtonRef.current;
+      const dictation = dictationButtonRef.current;
+      (start && !start.disabled ? start : dictation && !dictation.disabled ? dictation : instructionInputRef.current)?.focus();
+    }
+  }, [dialogue.enabled]);
+  const recordVisibleTurn = () => {
+    if (!microphoneIsReleased()) return;
+    const current = voiceDialogueSelection();
+    if (current.scope === dialogueSelection.scope && JSON.stringify(current.destination) === JSON.stringify(dialogueSelection.destination)) {
+      void dialogue.record();
+    }
+  };
+  const dialogueControls = dialogue.enabled ? <VoiceConversationControls dialogue={dialogue} ready={speech.ready}
+    canSpeak={canStartDialogue} hasSynthesis={Boolean(effectiveSynthesis)} question={Boolean(voiceAnswer)}
+    controlsRef={voiceControlsRef} primaryRef={dialoguePrimaryRef} onSpeak={recordVisibleTurn} onEnd={() => {
+      voiceFocusAfterToggle.current = "end";
+      dialogue.deactivate();
+    }} /> : null;
+  const dictationControlDisabled = dialogue.enabled || dialogue.captureBusy || dialogue.notifications.playback === "speaking"
+    || voice.state === "starting" || voice.state === "finishing"
+    || (!voice.active && (manualCaptureBusy || speech.installing || speech.status?.supported === false));
+  function voiceShortcutScope(selection: ReturnType<typeof voiceDialogueSelection>, working: boolean): ComposerVoiceShortcutScope {
+    const review = selection.destination?.kind === "review" ? selection.destination.proposal : undefined;
+    const answer = selection.destination?.kind === "answer" ? selection.destination : undefined;
+    const reviewKey = review && JSON.stringify([review.projectId, review.vdtId, review.runId, review.proposalId, review.baseRevisionId, review.baseRevision]);
+    const stopControl = dialogue.enabled && dialogue.phase === "listening" ? "dialogue"
+      : !dialogue.enabled && voice.state === "listening" && voice.hasCapture() ? "dictation" : undefined;
+    return {
+      scope: answer ? JSON.stringify([selection.scope, answer.runId, answer.questionSetId, answer.questionEventId, answer.questionId]) : selection.scope,
+      hasVoiceControls: showDialogue || !dictationControlDisabled, reviewKey, stopControl,
+      status: stopControl ? "listening" : reviewKey ? "review-available" : working ? "working" : "ready"
+    };
+  }
+  const renderedVoiceShortcutScope = voiceShortcutScope(dialogueSelection, generateActivity?.status === "running");
+  const readVoiceShortcutScope = () => voiceShortcutScope(voiceDialogueSelection(), useVdtStudioStore.getState().generateActivity?.status === "running");
+  const voiceShortcutTargets = {
+    showControls: () => voiceControlsRef.current ?? dictationButtonRef.current,
+    stop: (control: NonNullable<ComposerVoiceShortcutScope["stopControl"]>) => control === "dialogue"
+      ? dialoguePrimaryRef.current : composerRef.current?.querySelector<HTMLElement>(
+        '[data-testid="voice-input-status"][data-voice-state="listening"] button[aria-label="Finish recording"]'
+      ) ?? null,
+    review: () => activityScrollRef.current?.querySelector<HTMLElement>('[data-testid="mutation-preview"]') ?? null
+  };
+  const voiceShortcuts = useComposerVoiceShortcuts(renderedVoiceShortcutScope, readVoiceShortcutScope, voiceShortcutTargets);
+  const focusShortcut = (target: HTMLElement | null, review = false) => {
+    const owner = review ? activityScrollRef.current : composerRef.current;
+    if (!target?.isConnected || !owner?.contains(target)
+      || target.matches(":disabled,[aria-disabled=true]") || target.closest("[hidden], [inert]")) return false;
+    if (review) target.tabIndex = -1;
+    target.focus();
+    return document.activeElement === target;
+  };
+  const nativeIntents = useNativeAppIntents(() => {
+    const { workspace } = useVdtStudioStore.getState();
+    if (!composerRef.current?.isConnected || workspace.activePanel !== "vdt"
+      || !workspace.activeProjectId || !workspace.activeVdtId || workspace.isLoading || workspace.isMutating
+      || workspace.pendingRevisionCommit) return { status: "ready" };
+    const current = readVoiceShortcutScope();
+    if (current.scope !== renderedVoiceShortcutScope.scope || current.reviewKey !== renderedVoiceShortcutScope.reviewKey
+      || current.stopControl !== renderedVoiceShortcutScope.stopControl) return { status: "ready" };
+    const captureKey = current.stopControl === "dialogue" ? dialogue.captureToken()
+      : current.stopControl === "dictation" ? voice.captureToken() : undefined;
+    return {
+      scopeKey: current.scope,
+      ...(captureKey && { captureKey }),
+      ...(current.reviewKey && { reviewKey: current.reviewKey }),
+      status: captureKey ? "listening" : current.reviewKey ? "reviewAvailable" : current.status === "working" ? "working" : "ready"
+    };
+  }, {
+    focusComposer: () => focusShortcut(instructionInputRef.current),
+    focusVoiceControls: () => readVoiceShortcutScope().hasVoiceControls && focusShortcut(voiceShortcutTargets.showControls()),
+    focusStopListening: () => {
+      const control = readVoiceShortcutScope().stopControl;
+      return Boolean(control && focusShortcut(voiceShortcutTargets.stop(control)));
+    },
+    focusPendingReview: () => {
+      const destination = voiceDialogueSelection().destination;
+      if (destination?.kind !== "review") return false;
+      const { proposal } = destination;
+      const card = voiceShortcutTargets.review();
+      return Boolean(card && card.dataset.proposalId === proposal.proposalId && card.dataset.proposalRun === proposal.runId
+        && card.dataset.proposalRevision === proposal.baseRevisionId && focusShortcut(card, true));
+    }
+  });
+
 
   useEffect(() => {
     if (!contextMenuOpen) return;
@@ -253,7 +680,7 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
   useEffect(() => {
     const scroll = activityScrollRef.current;
     if (scroll && followConversationRef.current && !historyOpen) scroll.scrollTop = scroll.scrollHeight;
-  }, [generateActivity?.runId, latestChatMessage?.id, latestChatMessage?.text, generateActivity?.publicStatus?.message, verifiedProject, historyOpen]);
+  }, [generateActivity?.runId, latestChatMessage?.id, latestChatMessage?.text, generateActivity?.publicStatus?.message, verifiedProject, historyOpen, voiceAnswer?.questionEventId]);
 
   useEffect(() => {
     const el = instructionInputRef.current;
@@ -280,27 +707,30 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
     };
   }, []);
 
-  async function submitAgentInstruction() {
-    const text = instructionText.trim();
-    if (!canSendInstruction) return;
+  async function submitAgentInstruction(spoken?: string, spokenContinuation?: boolean): Promise<boolean> {
+    const text = (spoken ?? instructionText).trim();
+    if (spoken === undefined ? !canSendInstruction : !text || !canUseConfiguredRuntime || voice.active) return false;
     followConversationRef.current = true;
-    if (!canContinueCurrentAgentRun) {
+    if (!(spokenContinuation ?? canContinueCurrentAgentRun)) {
+      if (spoken === undefined && adaptiveRequested && (!canCheckAdaptive || !adaptiveScopeIsCurrent())) return false;
       const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
       const accepted = await startAgentRun(text, {
-        researchMode,
-        ...(chatOutcome ? { outcome: chatOutcome } : {}),
+        researchMode: applePreview ? "off" : researchMode,
+        ...(spoken === undefined && adaptiveRequested ? { adaptiveReasoning: true } : {}),
+        ...(chatOutcome ? { outcome: chatOutcome } : { outcomeSelection: "automatic" }),
         ...(shouldContinue ? { mode: "continue_project", includeCurrentProject: true } : {}),
         ...(shouldContinue ? { selectedNodeId: selectedNode?.id ?? null } : {})
       });
       if (accepted) {
-        setInstructionText("");
+        if (spoken === undefined) setInstructionText(previous => previous.trim() === text ? "" : previous);
         setChatOutcome("");
+        setAdaptiveRequested(false);
       }
-      return;
+      return accepted;
     }
-    const accepted = await sendAgentInstruction(text, selectedNode?.id ?? null, researchMode);
-    if (!accepted) return;
-    setInstructionText("");
+    const accepted = await sendAgentInstruction(text, selectedNode?.id ?? null, applePreview ? "off" : researchMode);
+    if (accepted && spoken === undefined) setInstructionText(previous => previous.trim() === text ? "" : previous);
+    return accepted;
   }
 
   if (showCollapsed) {
@@ -353,7 +783,10 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
             <PanelToggleButton
               panel="left"
               testId="collapse-left-panel"
-              onToggle={toggleLeftPanel}
+              onToggle={() => {
+                if (desktopLayoutMatches()) voiceBoundary.current.close();
+                toggleLeftPanel();
+              }}
               className={styles.iconButton}
             />
           </div>
@@ -445,6 +878,7 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
                   {starterPrompts.map((prompt) => (
                     <button type="button" key={prompt} onClick={() => {
                       voice.onManualEdit();
+                      abandonSpokenDraft();
                       setInstructionText(prompt.trim());
                       instructionInputRef.current?.focus();
                     }}>
@@ -455,17 +889,21 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
               </div>
             ) : null}
 
+            {visibleSpokenReview ? <p role="status" data-testid="voice-review-readback" className="text-xs text-muted">{visibleSpokenReview.text}</p> : null}
             {generateActivity ? (
               <GenerateActivityPanel
                 activity={generateActivity}
                 onCancel={cancelGenerate}
+                cancelInToolbar={canStopResponse}
+                questionVoice={voiceAnswer ? { target: voiceAnswer, control: dialogueControls, onManualAnswer: abandonSpokenDraft } : undefined}
                 onSavedCopy={hasSavedCopySource ? () => void continueFromSavedCopy() : undefined}
                 onAnswer={(answers) => void sendAgentAnswers(answers)}
                 onContinueRun={() => void continueAgentRun()}
                 onApproval={(approved, selectedChangeIds, proposalId) => void sendAgentApproval(
                   approved,
                   selectedChangeIds,
-                  proposalId
+                  proposalId,
+                  visualApproval?.proposalId === proposalId ? visualApproval : undefined
                 )}
               />
             ) : null}
@@ -518,6 +956,7 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
 
         <div className={styles.composerDock}>
         <form
+          ref={composerRef}
           className={styles.composer}
           data-testid="agent-composer"
           onSubmit={(event) => {
@@ -529,13 +968,41 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
             clearAgentKpiContext();
             instructionInputRef.current?.focus();
           }} />
-          <VoiceInputStatus state={voice.state} error={voice.error} audio={voice.audio} recognizing={voice.recognizing} onStop={() => { void voice.stop(); }} onCancel={voice.cancel} onDismiss={voice.clearError} />
+          <VoiceInputStatus state={voice.state} error={voice.error} audio={voice.audio} recognizing={voice.recognizing} openAi={voice.openAi} onStop={() => { void voice.stop(); }} onCancel={voice.cancel} onDismiss={voice.clearError} />
+          {!dialogue.enabled && (localSynthesis || cloudSynthesis) ? <div className={clsx(styles.dialogueUtilities, "px-2")} role="group" aria-label="Spoken updates">
+            <SpokenUpdateControls dialogue={dialogue} showError={!cloudSynthesis} />
+          </div> : null}
+          {cloudAvailable ? <details className="px-2 text-xs leading-5 text-muted">
+            <summary className="cursor-pointer font-medium text-ink">OpenAI spoken questions and approvals{cloudEnabled ? " · On for this run" : ""}</summary>
+            <p className="mt-1">OpenAI receives the current question or approval notice as text and returns an AI-generated voice. This uses your OpenAI API organization’s credits or paid balance. Recognition stays on this computer.</p>
+            {cloudEnabled ? <Button type="button" size="sm" variant="secondary" onClick={() => {
+              revokeCloudUpdates();
+              dialogue.notifications.interrupt();
+            }}>Turn off OpenAI spoken updates</Button> : <Button type="button" size="sm" variant="secondary"
+              disabled={voice.active || dialogue.active || dialogue.notifications.playback === "speaking" || dialogue.spokenMuted}
+              onClick={() => {
+                if (!cloudTargetKey || document.hidden) return;
+                const consent: NonNullable<typeof cloudConsent> = { key: cloudTargetKey, scope: notificationScope, settings: executionSettings, locale: cloudLocale };
+                cloudConsentRef.current = consent;
+                setCloudConsent(consent);
+              }}>Enable for this run · API usage</Button>}
+          </details> : null}
+          {cloudEnabled && cloudUpdateError ? <p className="px-2 text-xs text-red-700" role="alert">{cloudUpdateError}</p> : null}
+          {!dialogue.enabled && showDialogue ? <div ref={voiceControlsRef} tabIndex={-1} role="group" aria-label="Voice conversation" className="px-2 py-1" data-testid="agent-voice-dialogue">
+            <Button ref={startDialogueButtonRef} type="button" size="sm" variant="ghost" disabled={!canStartDialogue} onClick={() => {
+              if (!microphoneIsReleased()) return;
+              voiceFocusAfterToggle.current = "start";
+              dialogue.enable();
+            }}>
+              Start voice conversation
+            </Button>
+          </div> : !voiceAnswer ? dialogueControls : null}
           <TextArea
             ref={instructionInputRef}
             rows={3}
             className={clsx("max-h-[min(40vh,20rem)]", styles.input)}
             value={instructionText}
-            onChange={(event) => { voice.onManualEdit(); setInstructionText(event.target.value); }}
+            onChange={(event) => { voice.onManualEdit(); abandonSpokenDraft(); setInstructionText(event.target.value); }}
             placeholder="Ask anything about your model…"
             aria-label="Message VDT Agent"
             onKeyDown={(event) => {
@@ -559,6 +1026,25 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
               <option value="calculated_baseline">Calculate baseline</option>
             </SelectInput>
           </label>
+          {canCheckAdaptive && (
+            adaptiveReadiness === "supported" ? (
+              <label className="flex items-center gap-2 px-2 pb-1 text-xs text-muted">
+                <input type="checkbox" checked={adaptiveRequested} disabled={isGenerating}
+                  onChange={(event) => setAdaptiveRequested(event.target.checked)} />
+                Adaptive reasoning for this run
+              </label>
+            ) : (
+              <div className="flex items-center gap-2 px-2 pb-1 text-xs text-muted">
+                <button type="button" className="underline" onClick={() => void checkAdaptiveReasoning()}
+                  disabled={isGenerating || adaptiveReadiness === "checking"}>
+                  Check adaptive reasoning
+                </button>
+                <span role="status">{adaptiveReadiness === "checking" ? "Checking Ollama…"
+                  : adaptiveReadiness === "unsupported" ? "Ollama did not report ordered reasoning levels for this model."
+                    : adaptiveReadiness === "unavailable" ? "Could not verify Ollama reasoning levels." : ""}</span>
+              </div>
+            )
+          )}
           <div className={styles.composerToolbar}>
             <div className={styles.composerTools}>
               <div ref={contextMenuRef} className={styles.contextMenu}>
@@ -591,12 +1077,13 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
                 ) : null}
               </div>
               <WebSearchControl mode={researchMode} status={researchStatus} onChange={setResearchMode} />
-              <Button
+              {!dialogue.enabled ? <Button
+                ref={dictationButtonRef}
                 type="button"
                 size="icon"
                 variant="ghost"
                 className={clsx(styles.toolButton, voice.state === "listening" && styles.recordingButton)}
-                disabled={voice.state === "starting" || voice.state === "finishing" || (!voice.active && (speech.installing || speech.status?.supported === false))}
+                disabled={dictationControlDisabled}
                 aria-label={voice.active ? "Stop dictation" : speech.ready ? "Start local dictation" : "Set up voice input"}
                 aria-pressed={voice.active}
                 title={speech.installing ? "Downloading the speech model…" : voice.active ? "Stop dictation and review the text" : speech.ready ? "Dictate locally into the chat draft" : "Download a model to enable local voice input"}
@@ -609,14 +1096,79 @@ export function SetupRail({ starterPrompts }: { starterPrompts?: ChatStarterOutp
                     setSettingsSection("voice"); setConfirmSpeechDownload(true); setSettingsOpen(true); return;
                   }
                   const input = instructionInputRef.current;
-                  void voice.start(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, speech.modelId, speech.language);
+                  if (!manualMicrophoneIsReady() || !dialogue.notifications.pauseForCapture()) return;
+                  voiceCapturePending.current = true;
+                  setManualCaptureBusy(true);
+                  void voice.start(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, speech.modelId, speech.language)
+                    .then(finishManualCapture);
                 }}
                 icon={voice.state === "starting" || voice.state === "finishing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : voice.state === "listening" ? <Square className="h-3.5 w-3.5 fill-current" /> : <Mic className="h-4 w-4" />}
-              />
+              /> : null}
+              {!dialogue.enabled && cloudTargetKey && vaultStatus === "saved" && !cloudEnabled && !voiceSynthesis
+                && resolveVdtAppMode() !== "hosted_web" && process.env.NEXT_PUBLIC_VDT_OPENAI_SPEECH_BYOK_ENABLED === "true"
+                && (speech.language === "en" || speech.language === "ru" || speech.language === "auto") ? (
+                  <details className={styles.contextMenu}>
+                    <summary className={clsx(styles.toolButton, "cursor-pointer gap-1 px-2 text-xs")} aria-label="OpenAI dictation" title="OpenAI dictation">
+                      <Mic size={16} aria-hidden="true" />
+                      <span>OpenAI</span>
+                    </summary>
+                    <div className={styles.contextPopover}>
+                      <p className="px-2 py-1 text-xs leading-5 text-muted">Send one microphone recording to OpenAI for transcription using your API credits or paid balance. Review the text in the draft before sending.</p>
+                      <Button type="button" size="sm" variant="secondary" disabled={voice.active || manualCaptureBusy || dialogue.captureBusy || dialogue.notifications.playback === "speaking"} onClick={event => {
+                        const target = openAiSpeechCredentialTarget(useVdtStudioStore.getState());
+                        const { language, tts, ttsLocale } = useSpeechStore.getState();
+                        if (!target || JSON.stringify(target) !== cloudTargetKey || cloudConsentRef.current || !manualMicrophoneIsReady()
+                          || (language !== "en" && language !== "ru" && language !== "auto") || !dialogue.notifications.pauseForCapture()) return;
+                        const input = instructionInputRef.current;
+                        const popup = event.currentTarget.closest("details");
+                        if (popup) popup.open = false;
+                        voiceCapturePending.current = true;
+                        setManualCaptureBusy(true);
+                        void voice.startOpenAi(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, {
+                          target, selection: { recognitionLanguage: language, localSynthesis: tts, synthesisLanguage: ttsLocale === "ru" ? "ru" : "en" },
+                          isCurrent: () => {
+                            const current = useSpeechStore.getState();
+                            return useApiKeyStorage.getState().status === "saved" && !cloudConsentRef.current
+                              && useVdtStudioStore.getState().executionSettings === executionSettings
+                              && current.language === language && current.tts === tts && current.ttsLocale === ttsLocale;
+                          }
+                        }).then(finishManualCapture);
+                      }}>Record with OpenAI</Button>
+                    </div>
+                  </details>
+                ) : null}
+              {resolveVdtAppMode() === "desktop" ? (
+                <details className={styles.contextMenu} data-testid="composer-voice-shortcuts" onToggle={(event) => {
+                  if (!event.currentTarget.open) voiceShortcuts.dismissStatus();
+                }}>
+                  <summary className={clsx(styles.toolButton, "cursor-pointer list-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent")}
+                    aria-label="Voice shortcuts" title="Voice shortcuts" aria-keyshortcuts="V S X R" onKeyDown={(event) => {
+                      if (event.currentTarget.closest("details")?.open) voiceShortcuts.handleSummaryKey(event);
+                    }}>
+                    <Keyboard size={16} aria-hidden="true" />
+                  </summary>
+                  <div className={styles.contextPopover} role="group" aria-label="Voice shortcuts">
+                    {composerVoiceShortcuts.map(({ action, key, label }) => (
+                      <button key={action} type="button" className={clsx(styles.menuItem, "disabled:opacity-50")}
+                        disabled={!canUseComposerVoiceShortcut(action, renderedVoiceShortcutScope)}
+                        onClick={(event) => { voiceShortcuts.activate(action, event.nativeEvent.isTrusted); }}>
+                        {label}<kbd className="ml-auto" aria-hidden="true">{key}</kbd>
+                      </button>
+                    ))}
+                    {voiceShortcuts.status ? <p role="status" className="text-xs text-muted">{voiceShortcuts.status}</p> : null}
+                    {nativeIntents.available ? <label className="flex items-center gap-2 px-2 py-1 text-xs text-ink">
+                      <input type="checkbox" checked={nativeIntents.enabled}
+                        onChange={event => nativeIntents.toggle(event.nativeEvent.isTrusted)} />
+                      Allow macOS Shortcuts for this window
+                    </label> : null}
+                  </div>
+                </details>
+              ) : null}
             </div>
             <div className={styles.composerActions}>
-              <ComposerModelPicker modelLabel={modelLabel} providerLabel={executionSummary.primary}
-                readiness={{ state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage }}
+              <ComposerModelPicker modelLabel={modelLabel} providerLabel={applePreview ? "Apple Foundation Models" : executionSummary.primary}
+                readiness={applePreview ? { state: "ready", label: "Preview", message: `On-device · ${applePreview.appleIdentity?.locale ?? ""}` }
+                  : { state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage }}
                 locked={canContinueCurrentAgentRun}
                 onOpenSettings={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }} />
               {canStopResponse ? (

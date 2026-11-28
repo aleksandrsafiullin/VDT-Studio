@@ -24,6 +24,10 @@ The [current readiness assessment](docs/implementation/OPEN_ALPHA_READINESS_2026
 tracks the remaining gates. Developers can use the [source quickstart](#quickstart)
 and [contribution guide](CONTRIBUTING.md).
 
+Apple on-device analytics and conversation are opt-in engineering previews on
+eligible Apple Silicon Macs. Automatic Apple selection and physical voice
+qualification remain release gates. [Preview requirements](docs/desktop-installation.md#apple-ai-preview-package)
+
 ## First project
 
 Once you have an accepted desktop build or a working development setup:
@@ -266,6 +270,7 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 - BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
 - Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
 - Local whisper.cpp dictation into an editable chat draft, with incremental text, model selection and confirmed downloads in Settings → Voice input. See [Voice input](docs/VOICE_INPUT.md) for platform and verification limits.
+- Settings → Voice input includes setup guidance for eligible ChatGPT Pro API credits and the separate experimental Codex CLI protocol check. See [OpenAI voice setup](docs/VOICE_INPUT.md#set-up-openai-voice-with-eligible-chatgpt-pro-api-credits) for preview availability and billing.
 - Editable Excel (`.xlsx`) export directly from the VDT editor. **More exports** downloads the current tree as JSON or Markdown with the same serializers as the CLI.
 - Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
 

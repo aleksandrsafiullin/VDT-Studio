@@ -1,5 +1,14 @@
 # Local Runner
 
+## Third-party model servers
+
+The host restricts the reviewed local HTTP compatibility adapters to
+manifest-owned loopback endpoints and excludes cloud model aliases and redirects.
+Settings identifies offline configuration as unverified for these adapters.
+Verified Local admission requires a host-owned transport and a model revision
+pin. The production runner has no such HTTP transport at this stage.
+See [ADR-016](adr/ADR-016-host-execution-admission.md).
+
 ## Smart response requirements (2026-11-11)
 
 Smart API, CLI, paired and local-model execution receives the same host-derived

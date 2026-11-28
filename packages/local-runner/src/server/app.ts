@@ -1,4 +1,4 @@
-import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
+import { isHarnessReasoningValue, LocalHttpRouteError } from "@vdt-studio/model-bridge";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AuditEvent, BackendManifest } from "../cli/types";
 import type { ExecutorOptions } from "./executor";
@@ -16,6 +16,8 @@ import {
   listRuntimeBackends,
   listRuntimeModels,
   parseCompletionPayload,
+  parseRuntimeBackendTestSelection,
+  readRuntimeLocalHttpSelection,
   testRuntimeBackend,
   type LocalRuntimeContext,
   type RuntimeResult
@@ -180,13 +182,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function assertEmptyBody(value: unknown): void {
-  if (value === undefined) return;
-  if (!isRecord(value) || Object.keys(value).length > 0) {
-    throw new HttpError(400, "UNKNOWN_FIELD", "This endpoint accepts only an empty JSON object.");
-  }
-}
-
 export async function routeLocalRunnerRequest(request: IncomingMessage, context: LocalRunnerContext): Promise<RuntimeResult> {
   validateTransport(request, context);
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
@@ -222,9 +217,9 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
   }
   const testMatch = url.pathname.match(/^\/v1\/backends\/([^/]+)\/test$/);
   if (request.method === "POST" && testMatch) {
-    assertEmptyBody(await readJson(request));
+    const { model, localHttpSelection, modelReasoning } = parseRuntimeBackendTestSelection(await readJson(request));
     const backendId = decodeURIComponent(testMatch[1]!);
-    return testRuntimeBackend(backendId, context.runtime);
+    return testRuntimeBackend(backendId, context.runtime, model, localHttpSelection, modelReasoning);
   }
   if (request.method === "POST" && url.pathname === "/v1/completions") {
     const controller = new AbortController();
@@ -235,9 +230,9 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
   if (request.method === "POST" && url.pathname === "/v1/harnesses") return runtimeHarnessSettings(await readJson(request) as { action?: unknown; profile?: unknown; removeId?: unknown }, context.runtime);
   if (request.method === "POST" && url.pathname === "/v1/smart-execution") {
     const body = await readJson(request);
-    if (!isRecord(body) || typeof body.backendId !== "string" || Object.keys(body).some(key => !["backendId", "model", "modelReasoning", "timeoutMs"].includes(key)) || (body.modelReasoning !== undefined && !isHarnessReasoningValue(body.modelReasoning)) || (body.model !== undefined && typeof body.model !== "string") || (body.timeoutMs !== undefined && (typeof body.timeoutMs !== "number" || !Number.isSafeInteger(body.timeoutMs) || body.timeoutMs <= 0))) throw new HttpError(400, "INVALID_REQUEST", "Invalid Smart identity request.");
+    if (!isRecord(body) || typeof body.backendId !== "string" || Object.keys(body).some(key => !["backendId", "model", "modelReasoning", "timeoutMs", "localHttpSelection"].includes(key)) || (body.modelReasoning !== undefined && !isHarnessReasoningValue(body.modelReasoning)) || (body.model !== undefined && typeof body.model !== "string") || (body.timeoutMs !== undefined && (typeof body.timeoutMs !== "number" || !Number.isSafeInteger(body.timeoutMs) || body.timeoutMs <= 0))) throw new HttpError(400, "INVALID_REQUEST", "Invalid Smart identity request.");
     const controller = new AbortController(), abort = () => controller.abort(); request.socket.once("close", abort);
-    try { return await resolveSmartRuntimeExecution(body.model as string | undefined, context.runtime, controller.signal, body.timeoutMs as number | undefined, body.backendId as string, isHarnessReasoningValue(body.modelReasoning) ? body.modelReasoning : undefined); }
+    try { return await resolveSmartRuntimeExecution(body.model as string | undefined, context.runtime, controller.signal, body.timeoutMs as number | undefined, body.backendId as string, isHarnessReasoningValue(body.modelReasoning) ? body.modelReasoning : undefined, readRuntimeLocalHttpSelection(body.localHttpSelection)); }
     finally { request.socket.removeListener("close", abort); }
   }
   const cancelMatch = url.pathname.match(/^\/v1\/completions\/([^/]+)\/cancel$/);
@@ -255,6 +250,7 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
 
 function normalizeError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
+  if (error instanceof LocalHttpRouteError) return new HttpError(error.statusCode, error.code, error.message);
   if (error instanceof LocalRuntimeError) return new HttpError(error.statusCode, error.code, error.message);
   return new HttpError(500, "LOCAL_RUNNER_ERROR", "Local runner failed safely.");
 }

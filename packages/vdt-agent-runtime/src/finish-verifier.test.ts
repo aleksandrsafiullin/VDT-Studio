@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy,validateGraph } from "@vdt-studio/vdt-core";
+import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy,validateGraph,applyDecompositionAssumptionOperation } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import { finishReceiptV2Schema, type AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
@@ -23,6 +23,77 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("withholds finish for a formula that contradicts a typed confirmed topology", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Capacity", projectTitle: "Capacity", unit: "t/h" });
+    const { rootNodeId } = builder.getProject();
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "stage_a", name: "Stage A", unit: "t/h", baselineValue: 70 });
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "stage_b", name: "Stage B", unit: "t/h", baselineValue: 90 });
+    builder.setFormula({ nodeId: rootNodeId, formula: "stage_a + stage_b" });
+    const statement = "Every item passes through both stages without bypass.";
+    const result = applyDecompositionAssumptionOperation(builder.getProject(), {
+      nodeId: rootNodeId, statement, changesConclusionWhen: "A bypass opens.",
+      evidence: { kind: "user_confirmed", sourceId: "user:1", quote: statement },
+      relationship: { kind: "serial_capacity", operandNodeIds: ["stage_a", "stage_b"], unit: "t/h" }
+    }, { operationId: "test", now: "2026-11-25T00:00:00Z" });
+    if (result.status !== "ok") throw new Error(result.message);
+    for (const outcome of ["structural_model", "calculated_baseline"] as const) {
+      expect(verifyDeterministicRunFinish({ ...readyInput(), project: result.project, outcome })).toMatchObject({
+        accepted: false, code: "GRAPH_INVALID", payload: {
+          readinessIssues: [expect.objectContaining({ code: "RELATIONSHIP_FORMULA_MISMATCH" })]
+        }
+      });
+    }
+  });
+
+  it("requires the saved quantity-rate product for structural finish without filling blank measurements", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Total hours", projectTitle: "Recorded inventory", unit: "h" });
+    const { rootNodeId } = builder.getProject();
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "quantity", name: "Item count", unit: "count" });
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "rate", name: "Hours per item", unit: "h/item" });
+    const statement = "The hours-per-item rate applies to every counted item.";
+    const saved = applyDecompositionAssumptionOperation(builder.getProject(), {
+      nodeId: rootNodeId, statement, changesConclusionWhen: "The quantity or rate basis changes.",
+      evidence: { kind: "user_confirmed", sourceId: "user:quantity-rate", quote: statement },
+      relationship: { kind: "quantity_rate", operandNodeIds: ["quantity", "rate"], operandUnits: ["count", "h/item"], unit: "h" }
+    }, { operationId: "test_quantity_rate_finish", now: "2026-11-25T00:00:00Z" });
+    if (saved.status !== "ok") throw new Error(saved.message);
+    expect(saved.result.note).toContain("\nDecomposition relationship v2: ");
+
+    const reopened = new VdtBuilderSession({ project: saved.project });
+    const structural = () => ({
+      ...readyInput(), project: reopened.getProject(), outcome: "structural_model" as const, requireDerivedRoot: true
+    });
+    for (const [formula, issue] of [
+      ["min(quantity, rate)", "RELATIONSHIP_FORMULA_MISMATCH"],
+      ["min(quantity * rate, 1000)", "RELATIONSHIP_UNVERIFIED"]
+    ] as const) {
+      reopened.setFormula({ nodeId: rootNodeId, formula });
+      const finish = verifyDeterministicRunFinish(structural());
+      expect(finish).toMatchObject({ accepted: false, code: "GRAPH_INVALID", payload: {
+        readinessIssues: expect.arrayContaining([expect.objectContaining({ code: issue, nodeId: rootNodeId })])
+      } });
+      expect(finish.finishReceipt).toBeUndefined();
+    }
+
+    reopened.setFormula({ nodeId: rootNodeId, formula: "quantity * rate" });
+    const input = structural();
+    const before = structuredClone(input.project);
+    const finish = verifyDeterministicRunFinish(input);
+    expect(finish).toMatchObject({ accepted: true, code: "FINISH_VERIFIED", finishReceipt: {
+      outcome: "structural_model", missingInputCount: 2,
+      missingInputs: expect.arrayContaining([
+        expect.objectContaining({ nodeId: "quantity", requiredForRoot: true }),
+        expect.objectContaining({ nodeId: "rate", requiredForRoot: true })
+      ])
+    } });
+    expect(finish.payload).not.toHaveProperty("rootValue");
+    expect(verifyDeterministicRunFinish({ ...input, outcome: "calculated_baseline" }))
+      .toMatchObject({ accepted: false, code: "CALCULATION_ERRORS" });
+    expect(input.project).toEqual(before);
+  });
+
   it("distinguishes missing measurements, zero, an invalid model, and an answer", () => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ rootKpi: "Capacity", projectTitle: "Capacity", unit: "t/h" });
@@ -453,3 +524,17 @@ function supervisorStateWithSettledHistory(): AgentSupervisorPersistenceStateV2 
     updatedAt: "2026-08-26T10:00:02.000Z"
   };
 }
+
+it("binds the exact delivered Excel descriptor and reuses only a matching receipt", () => {
+  const artifactDelivery = {
+    kind: "excel_workbook" as const, id: `excel_${"d".repeat(64)}`, revisionId: "revision_recovery",
+    scenarioId: "recovery", filename: "Recovery.xlsx", downloadUrl: "/api/agent/runs/test/excel-workbook?id=issued"
+  };
+  const input = { ...readyInput(), outcome: "answer" as const, artifactDelivery };
+  const first = verifyDeterministicRunFinish(input);
+  expect(finishReceiptV2Schema.parse(first.finishReceipt).artifactDelivery).toEqual(artifactDelivery);
+  expect(verifyDeterministicRunFinish({ ...input, existingFinishReceipt: first.finishReceipt }).receiptId).toBe(first.receiptId);
+  const changed = verifyDeterministicRunFinish({ ...input, existingFinishReceipt: first.finishReceipt,
+    artifactDelivery: { ...artifactDelivery, revisionId: "older_revision" } });
+  expect(changed.receiptHash).not.toBe(first.receiptHash);
+});

@@ -1,31 +1,34 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   classifyVdtRequest,
   compileSkillRecipe,
   rankSkillCandidates,
+  recallScopedSkillCandidates,
   readSkillExcerpts,
   readExecutableSkillTopology,
   skillCard,
   UNIVERSAL_SKILL_ID,
+  type VdtAgentQuestion,
   type VdtSkill
 } from "@vdt-studio/vdt-agent";
 import { skillContentHash } from "@vdt-studio/storage";
 import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import { createStructuredFeedback } from "../feedback";
-import { excludedExcavationSkillIds } from "../construction-source-facts";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
-import { AgentToolError, type AgentTool } from "../tool-registry";
+import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
 import { skillSeedTopologyTool } from "./skill-topology-tool";
-import { activateRunSkill, loadRunSkillLibrary, requireSelectedRunSkill, skillCatalogProgress } from "./run-skill-library";
+import { activateRunSkill, announceRunSkill, assertRunSkillSelectionCurrent, assertSkillScopeAnswered, loadRunSkillLibrary, requireSelectedRunSkill, skillCatalogProgress } from "./run-skill-library";
 
 export function createSkillTools(): AgentTool[] {
   return [skillListTool, skillSearchTool, skillReadTool, skillSelectTool, skillReportGapTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
 }
 
 const SKILL_CATALOG_PAGE_SIZE = 16;
+// Keep the scoped default inside the model review projection.
+const SCOPED_SKILL_EXCERPT_MAX_CHARS = 2_399;
 
 function semanticSkillCard(skill: VdtSkill) {
   const { id, title, description, domain, version, contentHash } = skillCard(skill);
@@ -107,9 +110,22 @@ const skillSearchTool: AgentTool = {
       throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before a scoped search.");
     }
     const classification = semantic ? undefined : classifyVdtRequest(input);
-    const candidates = rankSkillCandidates([input.rootKpi, input.industry, input.businessContext, input.goal].filter(Boolean).join(" "), library)
-      .filter(({ skill }) => !semantic || skill.id !== UNIVERSAL_SKILL_ID)
-      .slice(0, input.maxSkills ?? 3).map((candidate) => semantic ? semanticSkillCard(candidate.skill) : {
+    const ranked = rankSkillCandidates([input.rootKpi, input.industry, input.businessContext, input.goal].filter(Boolean).join(" "), library);
+    const limit = input.maxSkills ?? 3;
+    const exact = semantic ? ranked.filter(({ skill }) => skill.id !== UNIVERSAL_SKILL_ID) : ranked;
+    let recalled: VdtSkill[] = [];
+    if (semantic && !exact.length) {
+      const userMessages = state.chatMessages.filter(message => message.role === "user").reverse();
+      const instructionIndex = userMessages.findIndex(message => message.kind === "instruction" && message.text?.trim());
+      const instruction = userMessages[instructionIndex]?.text ?? state.request.input.prompt;
+      const answers = userMessages.slice(0, instructionIndex < 0 ? undefined : instructionIndex)
+        .filter(message => message.kind === "answer").slice(0, 4)
+        .flatMap(message => (message.answers ?? []).flatMap(answer => [answer.freeText,
+          ...Object.values(answer.fields ?? {}).filter(value => typeof value === "string")]));
+      recalled = recallScopedSkillCandidates([...answers, instruction].filter(Boolean).join("\n"), library);
+    }
+    const candidates = semantic ? (exact.length ? exact.map(({ skill }) => skill) : recalled).slice(0, limit).map(semanticSkillCard)
+      : exact.slice(0, limit).map((candidate) => ({
       id: candidate.skill.id,
       path: candidate.skill.path,
       title: candidate.skill.title,
@@ -121,7 +137,7 @@ const skillSearchTool: AgentTool = {
       outputs: candidate.skill.frontmatter.outputs,
       referenceFiles: candidate.skill.frontmatter.referenceFiles,
       runtimePolicy: candidate.skill.frontmatter.runtimePolicy
-    });
+    }));
     context.emit({
       type: "skill_search",
       phase: "retrieving_skills",
@@ -152,7 +168,8 @@ const skillReadTool: AgentTool = {
       && Array.isArray(event.metadata?.candidateIds) && event.metadata.candidateIds.includes(skill.id))) {
       throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before reading an unpinned candidate.");
     }
-    const [excerpt] = readSkillExcerpts([skill], input.maxChars);
+    const maxChars = input.maxChars ?? (state.request.skillResolution ? SCOPED_SKILL_EXCERPT_MAX_CHARS : undefined);
+    const [excerpt] = readSkillExcerpts([skill], maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
     const topology = readExecutableSkillTopology(skill);
@@ -170,9 +187,14 @@ const skillReadTool: AgentTool = {
         selectedSkillIdsBefore: selectedSkillIds, selectedSkillIdsAfter: selectedSkillIds, selectionChanged: false
       }
     });
-    if (state.request.skillResolution && !state.request.skillResolution.outcome && pinned?.source === "user"
-      && pinned.id === skill.id && pinned.version === version && pinned.contentHash === contentHash) {
-      context.updateRun({ request: { ...state.request, skillResolution: { ...state.request.skillResolution, outcome: "selected" } } });
+    const exactPin = state.request.skillResolution && !state.request.skillResolution.outcome && pinned?.source === "user"
+      && pinned.id === skill.id && pinned.version === version && pinned.contentHash === contentHash;
+    if (exactPin) {
+      assertSkillScopeAnswered(state);
+      assertRunSkillSelectionCurrent(context);
+      if (!state.request.skillResolution?.confirmationRequired) {
+        completePinnedSkill(context, readReceiptId, "skill.read");
+      }
     }
     return {
       id: excerpt.id,
@@ -182,6 +204,7 @@ const skillReadTool: AgentTool = {
       version,
       contentHash,
       readReceiptId,
+      ...(exactPin ? { pinAwaitingConfirmation: state.request.skillResolution?.confirmationRequired === true } : {}),
       excerpt: excerpt.excerpt,
       requiredInputs: skill.frontmatter.requires,
       outputs: excerpt.outputs ?? [],
@@ -202,15 +225,18 @@ const skillReadTool: AgentTool = {
 
 const skillSelectTool: AgentTool = {
   name: "skill.select",
-  description: "Choose the primary VDT skill using its exact readReceiptId and a brief reason.",
+  description: "Select a read Skill and explain fit. If the user requested approval first, set confirmMethod.",
   inputSchema: z.object({
     skillId: z.string().min(1).max(160),
     reason: z.string().trim().min(1).max(500),
-    readReceiptId: z.string().min(1).max(100).optional()
+    readReceiptId: z.string().min(1).max(100).optional(),
+    confirmMethod: z.boolean().optional()
   }).strict(),
   outputSchema: z.record(z.string(), z.unknown()), phase: "reading_skills",
   async run(context, input) {
-    const library = await loadRunSkillLibrary(context), skill = library.byId.get(input.skillId);
+    const library = await loadRunSkillLibrary(context);
+    context.assertSkillSelectionScope?.();
+    const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", "Skill was not found in this run's catalog.");
     const state = context.store.getState(context.runId), contentHash = skillContentHash(skill.raw);
     const resolution = state.request.skillResolution;
@@ -219,25 +245,90 @@ const skillSelectTool: AgentTool = {
       && (!resolution && input.readReceiptId === undefined || event.metadata.readReceiptId === input.readReceiptId && typeof input.readReceiptId === "string"));
     if (!read) throw new AgentToolError("SKILL_READ_REQUIRED", "Read this exact skill version and pass its readReceiptId before selecting it.");
     const pinned = state.request.input.skillSelection;
-    if (resolution && pinned?.source === "user") {
-      if (pinned.id !== skill.id) throw new AgentToolError("SKILL_USER_PINNED", "Keep the skill selected by the user in Context.");
-      return { selectedSkill: state.selectedSkills[0] };
+    const currentPin = resolution && pinned?.source === "user";
+    if (currentPin && (pinned.id !== skill.id || pinned.contentHash !== contentHash)) {
+      throw new AgentToolError("SKILL_USER_PINNED", "Keep the exact Skill selected by the user in Context.");
     }
-    if (resolution && context.requirePlanOperands
-      && excludedExcavationSkillIds(state.request, skillCatalogProgress(state).candidateIds).includes(input.skillId)) {
-      throw new AgentToolError("SKILL_SCOPE_MISMATCH", "The brief limits this output to the working face and excludes downstream transport. Select an applicable face-output skill using its exact read receipt.");
+    assertSkillScopeAnswered(state);
+    assertRunSkillSelectionCurrent(context);
+    if (resolution?.outcome === "selected") {
+      if (state.selectedSkills[0]?.id === skill.id) return { selectedSkill: state.selectedSkills[0] };
+      throw new AgentToolError("SKILL_SELECTION_FIXED", "Start a fresh run to choose another method after selection.");
     }
-    const selected = activateRunSkill(context, skill, input.reason);
-    context.emit({
-      type: "skill_selected", title: "Skill selected", message: `${skill.title}: ${input.reason}`,
-      metadata: {
-        ...selected, toolName: "skill.select", readReceiptIds: [read.metadata?.readReceiptId],
-        ...(resolution ? { resolutionMode: "agent_semantic", usedLegacyMarkers: false, usedLanguageAliases: false } : {})
-      }
-    });
+    const pending = resolution?.pendingMethod;
+    const existingChoice = pending && [...state.chatMessages].reverse().find(message => message.role === "user" && message.kind === "answer"
+      && message.answers?.some(answer => answer.questionId === pending.questionId));
+    const chosenIds = pending && existingChoice?.answers?.find(answer => answer.questionId === pending.questionId)?.selectedOptionIds;
+    const sameCandidate = pending?.skillId === skill.id && pending.contentHash === contentHash;
+    const confirmed = chosenIds?.length === 1 && chosenIds[0] === "accept_method";
+    const accepted = sameCandidate && pending?.readReceiptId === input.readReceiptId && confirmed;
+    if (sameCandidate && existingChoice && !confirmed) {
+      throw new AgentToolError("SKILL_METHOD_DECLINED", "The user declined this proposal. Ask about the changed scope or propose a different method.");
+    }
+    if (resolution && (resolution.confirmationRequired || input.confirmMethod) && !accepted) {
+      return proposeSkillMethod(context, skill, read.metadata?.readReceiptId as string, input.reason);
+    }
+    const readReceiptId = typeof read.metadata?.readReceiptId === "string" ? read.metadata.readReceiptId : undefined;
+    if (currentPin) return { selectedSkill: completePinnedSkill(context, readReceiptId, "skill.select", existingChoice?.id) };
+    const selected = activateRunSkill(context, skill, accepted && pending ? pending.reason : input.reason);
+    announceRunSkill(context, selected, readReceiptId, "skill.select", accepted ? existingChoice?.id : undefined);
     return { selectedSkill: selected };
   }
 };
+
+function completePinnedSkill(
+  context: AgentToolContext, readReceiptId: string | undefined, toolName: "skill.read" | "skill.select",
+  methodConfirmationSourceMessageId?: string
+) {
+  const state = context.store.getState(context.runId);
+  const pinned = state.selectedSkills[0];
+  const resolution = state.request.skillResolution;
+  if (!pinned || !resolution) throw new AgentToolError("SKILL_USER_PIN_UNAVAILABLE", "The pinned Skill could not be verified.");
+  const reason = russianSkillRequest(context) ? "Вы выбрали этот метод в контексте." : "You selected this method in Context.";
+  const selected = { ...pinned, reason };
+  context.updateRun({ selectedSkills: [selected], request: { ...state.request,
+    skillResolution: { selectionRevision: resolution.selectionRevision, outcome: "selected" }
+  } });
+  announceRunSkill(context, selected, readReceiptId, toolName, methodConfirmationSourceMessageId);
+  return selected;
+}
+
+function russianSkillRequest(context: AgentToolContext): boolean {
+  return /[\u0400-\u04ff]/u.test(context.getRun().request.input.prompt ?? "");
+}
+
+function proposeSkillMethod(context: AgentToolContext, skill: VdtSkill, readReceiptId: string, reason: string) {
+  const state = context.store.getState(context.runId);
+  const resolution = state.request.skillResolution!;
+  const version = skill.frontmatter.version ?? 1;
+  const contentHash = skillContentHash(skill.raw);
+  const questionId = `skill-method-${createHash("sha256")
+    .update(JSON.stringify([state.runId, readReceiptId, resolution.selectionRevision])).digest("hex").slice(0, 32)}`;
+  const russian = russianSkillRequest(context);
+  const question: VdtAgentQuestion = {
+    id: questionId,
+    question: russian ? `Использовать метод «${skill.title}»?` : `Use the method “${skill.title}”?`,
+    reason,
+    required: true,
+    expectedAnswerType: "single_choice",
+    answerKind: "single_choice",
+    freeTextAllowed: true,
+    options: [
+      { id: "accept_method", label: russian ? "Использовать этот метод" : "Use this method", value: "accept_method" },
+      { id: "decline_method", label: russian ? "Выбрать другой метод" : "Choose a different method", value: "decline_method" }
+    ]
+  };
+  context.updateRun({
+    request: { ...state.request, skillResolution: { ...resolution, confirmationRequired: true,
+      pendingMethod: { questionId, skillId: skill.id, version, contentHash, readReceiptId, reason }
+    } },
+    status: "needs_user_input",
+    phase: "asking_clarifying_questions",
+    pendingQuestions: [question]
+  });
+  return { proposedSkill: { id: skill.id, version, contentHash, title: skill.title, readReceiptId, reason },
+    questions: [question] };
+}
 
 const skillReportGapTool: AgentTool = {
   name: "skill.report_gap",
@@ -249,15 +340,17 @@ const skillReportGapTool: AgentTool = {
     const state = context.store.getState(context.runId);
     const resolution = state.request.skillResolution;
     if (!resolution || state.selectedSkills.length) throw new AgentToolError("SKILL_GAP_NOT_ALLOWED", "A skill gap is available only for a new tree without a selected skill.");
-    const { catalogBrowsed, catalogComplete, scopedSearchReviewed, searchCandidateIds, candidateIds } = skillCatalogProgress(state);
+    const { catalogBrowsed, catalogComplete, scopedSearchReviewed, searchCandidateIds } = skillCatalogProgress(state);
     if (!catalogBrowsed) {
       throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before reporting a gap.");
     }
-    if (!catalogComplete && !scopedSearchReviewed) {
-      throw new AgentToolError("SKILL_CATALOG_REVIEW_REQUIRED", "Review additional catalog pages, or search for the requested process and read the returned candidates before reporting a gap.");
+    if (!catalogComplete) {
+      throw new AgentToolError("SKILL_CATALOG_REVIEW_REQUIRED", "Review every remaining catalog page before reporting a gap. A search alone cannot establish that no method applies.");
     }
-    if (context.requirePlanOperands && excludedExcavationSkillIds(state.request, candidateIds).length) {
-      throw new AgentToolError("SKILL_SCOPE_MATCH_AVAILABLE", "The catalog contains a skill for the explicitly requested face output. Read its exact version before selecting it.");
+    assertSkillScopeAnswered(state);
+    assertRunSkillSelectionCurrent(context);
+    if (resolution.confirmationRequired) {
+      throw new AgentToolError("SKILL_METHOD_CONFIRMATION_REQUIRED", "The user asked to approve a method before building. Do not use the gap to bypass that decision.");
     }
     const outcome = "no_applicable_skill";
     if (resolution.outcome !== outcome) {
@@ -266,6 +359,10 @@ const skillReportGapTool: AgentTool = {
         type: "skill_search", title: "No applicable skill", message: input.reason,
         metadata: { toolName: "skill.report_gap", outcome, catalogComplete, scopedSearchReviewed, searchCandidateIds }
       });
+      const text = russianSkillRequest(context)
+        ? `Подходящего метода в библиотеке нет. Построю дерево на основе ваших данных. ${input.reason}`
+        : `No catalog method fits. I can build from the facts you supplied. ${input.reason}`;
+      context.store.appendChatMessage(state.runId, { role: "assistant", kind: "status", text });
     }
     return { outcome };
   }

@@ -1,5 +1,6 @@
 "use client";
 
+import { editorHandoffView, readFileHandoffDraftReceipt, type EditorHandoffAttempt, type FileHandoffDraftReceipt } from "@/lib/editor-handoff-controller";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -51,11 +52,14 @@ import { canUndoSmartKpi, createSmartKpiActions, guardSmartKpiActions, hasSmartK
   type SmartKpiApplyInput, type SmartKpiApplyResult, type SmartKpiMutationView, type SmartKpiOperation, type SmartKpiRebase, type SmartKpiUndo } from "@/lib/smart-kpi-transaction";
 import { fileImportContextError, type FileImportTargetContext } from "@/components/data-import/import-context";
 import {
-  buildAgentPublicStartRequest
+  buildAgentPublicStartRequest,
+  resolveVerifiedLocalModelBinding
 } from "@/lib/agent-start-resolver";
+import { FAST_LOCAL_REASONING } from "@vdt-studio/model-bridge/reasoning";
 import { prepareProviderAgentBinding } from "@/lib/provider-agent-binding";
 import {
   createAgentClient,
+  type PublicAgentExecutionBindingSummary,
   type AgentAnswerPayload as RuntimeAgentAnswerPayload,
   type AgentChatMessage as RuntimeAgentChatMessage,
   type ManualProjectChange,
@@ -89,12 +93,17 @@ import {
 import { collectExistingPositions } from "./layout-positions";
 import { changeSnapshotName } from "./version-presentation";
 import { scrubPersistedProviderSecrets } from "./provider-persistence";
+import { appleIsExpected, appleRecoveryMessage, appleUnavailability, isAppleAnalyticalChoice,
+  restoreAnalyticalSourceChoice, shouldCheckAppleDefault, type AppleFirstLaunchStatus } from "@/lib/apple-first-launch";
+import { prepareAppleNativeAgentBinding, readAppleLaunchAvailability } from "@/lib/apple-native-client";
 import { normalizeRemovedCliAgentIds, reconcileRemovedCliSelections } from "@/lib/cli-subscription-preferences";
 import {
   resolveExecutionCategory,
   resolveSavedLocalModelSelection,
+  rememberConfiguredLocalModelSelection,
   selectExecutionCategory,
   selectLocalModelPreset,
+  configureLocalReasoning,
   type ExecutionCategory
 } from "@/lib/execution-category";
 import {
@@ -380,6 +389,10 @@ export interface VdtStudioState {
   providerId: ProviderId;
   providerConfig: ProviderConfigState;
   executionSettings: ExecutionSettings;
+  appleNativePreview?: { binding: PublicAgentExecutionBindingSummary; settings: ExecutionSettings } | undefined;
+  appleFirstLaunch?: AppleFirstLaunchStatus | undefined;
+  refreshAppleAnalyticalDefault: (options?: { selectManually?: boolean; locale?: string }) => Promise<PublicAgentExecutionBindingSummary | undefined>;
+  setAppleNativePreviewBinding: (binding?: PublicAgentExecutionBindingSummary) => void;
   removedCliAgentIds: CliAgentId[];
   cliDetectionAgents?: CliAgentDetectionSnapshot[] | undefined;
   cliDetectionError?: string | undefined;
@@ -422,12 +435,15 @@ export interface VdtStudioState {
   pendingIncomingKpiRestart?: { runId: string; workspaceId: string; vdtId: string | null; terminalCleanupConfirmed?: true } | undefined;
   buildIncomingKpiContext: SmartKpiIncomingActions["buildIncomingKpiContext"];
   previewIncomingKpiBatch: SmartKpiIncomingActions["previewIncomingKpiBatch"];
-  applySmartKpiSuggestion: (input: SmartKpiApplyInput) => Promise<SmartKpiApplyResult>;
+  applySmartKpiSuggestion: (input: SmartKpiApplyInput, handoff?: EditorHandoffAttempt) => Promise<SmartKpiApplyResult>;
   undoSmartKpiSuggestion: () => Promise<boolean>;
   reconcilePendingSmartKpiCommit: () => Promise<boolean>;
   aiError?: string | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
-  pendingFileImport?: { changeSetId: string; context: FileImportTargetContext } | undefined;
+  pendingFileImport?: {
+    changeSetId: string; reviewedChangeSet: VdtChangeSet; context: FileImportTargetContext; handoff?: EditorHandoffAttempt | undefined;
+  } | undefined;
+  fileHandoffDraftReceipt?: FileHandoffDraftReceipt | undefined;
   changeSetSelection: Set<string>;
   highlightedNodeIds: string[];
   aiActionError?: string | undefined;
@@ -509,20 +525,24 @@ export interface VdtStudioState {
     options?: {
       mode?: VdtAgentStartRequest["mode"];
       outcome?: VdtAgentStartRequest["outcome"];
+      outcomeSelection?: VdtAgentStartRequest["outcomeSelection"];
       selectedNodeId?: string | null;
       includeCurrentProject?: boolean;
       researchMode?: ResearchMode | undefined;
       executionBindingId?: string | undefined;
+      adaptiveReasoning?: boolean | undefined;
     }
   ) => Promise<boolean>;
   resumePersistedAgentRun: () => Promise<void>;
   connectAgentEvents: (runId: string) => void;
-  sendAgentAnswers: (answers: Record<string, string | number | string[]> | RuntimeAgentAnswerPayload[]) => Promise<void>;
+  sendAgentAnswers: (answers: Record<string, string | number | string[]> | RuntimeAgentAnswerPayload[],
+    spoken?: { runId: string; checkpoint: import("@vdt-studio/vdt-agent-runtime").AgentQuestionExpectation }) => Promise<void>;
   continueAgentRun: () => Promise<void>;
   sendAgentApproval: (
     approved: boolean,
     selectedChangeIds?: string[] | undefined,
-    proposalId?: string | undefined
+    proposalId?: string | undefined,
+    expectedProposal?: import("@vdt-studio/vdt-agent-runtime").AgentProposalExpectation
   ) => Promise<void>;
   sendAgentInstruction: (text: string, selectedNodeId?: string | null, researchMode?: ResearchMode) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
@@ -551,7 +571,7 @@ export interface VdtStudioState {
   cloneScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
   updateScenarioComment: (scenarioId: string, nodeId: string, text: string) => void;
-  stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet, context?: FileImportTargetContext) => boolean;
+  stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet, context?: FileImportTargetContext, handoff?: EditorHandoffAttempt) => boolean;
   toggleChangeSelection: (changeId: string) => void;
   applyPendingChangeSet: () => void;
   discardPendingChangeSet: () => void;
@@ -573,6 +593,19 @@ export function canUndoVersionRestore(state: Pick<VdtStudioState, "project" | "w
 function buildInitialProject() {
   return cloneProject(productionVolumeProject);
 }
+
+let appleRefresh: { settings: ExecutionSettings; locale: string; selectManually: boolean;
+  pending: Promise<PublicAgentExecutionBindingSummary | undefined> } | undefined;
+
+function manuallySelectedExecution(settings: ExecutionSettings): ExecutionSettings {
+  return { ...settings, analyticalSourceChoice: "manual" };
+}
+
+const ANALYTICAL_SELECTION_FIELDS = new Set<keyof ExecutionSettings>([
+  "apiKey", "baseUrl", "byokGateway", "byokProtocol", "command", "deployment", "endpoint",
+  "executionMode", "gatewayPresetId", "localBaseUrl", "localModel", "localRunnerPresetId",
+  "model", "runnerProviderId", "selectedCliAgentId", "useMockProvider"
+]);
 
 const EMPTY_WORKSPACE: VdtWorkspaceState = {
   activePanel: "project",
@@ -963,6 +996,38 @@ function describeBackendLabel(
     backendId,
     backendLabel: backendId === "mock" ? "Runtime not configured" : backendId.replace(/_/g, " ")
   };
+}
+
+function agentContinuationOptions(
+  state: VdtStudioState,
+  runId: string,
+  report: (error: { aiError: string; agentError: string }) => void
+): { expectedExecutionMode?: NonNullable<RuntimeAgentRunSnapshot["executionSummary"]>["executionMode"] } | null {
+  const run = state.agentRun?.runId === runId ? state.agentRun : state.generateActivity?.runtimeAgentRun;
+  const summary = run?.runId === runId ? run.executionSummary : undefined;
+  if (!summary) return {};
+
+  const backend = summary.backendId;
+  const legacyLocal = ["ollama", "lm_studio", "vllm"].includes(backend);
+  const isApi = ["openai_compatible", "anthropic", "azure_openai", "gemini"].includes(backend);
+  const mode = summary.executionMode ?? (summary.executionProfile === "external_cli_agent" ? "cli_subscription"
+    : isApi ? "api_keys" : legacyLocal || backend === "mock" ? "legacy" : undefined);
+  if (!mode) return {};
+
+  const category = mode === "local" || (mode === "legacy" && legacyLocal) ? "local_models"
+    : mode === "cli_subscription" ? "cli_subscriptions" : "byok";
+  // A retained Apple run continues on its pinned binding after a settings switch.
+  if (backend === "apple_foundation_models" && run?.request.executionBindingId) return { expectedExecutionMode: "local" };
+  const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+  const selectedBackend = providerConfig?.backendId ?? providerId;
+  const selectedModel = providerConfig?.model;
+  if (resolveExecutionCategory(state.executionSettings) !== category || selectedBackend !== backend
+    || (typeof selectedModel === "string" && selectedModel && summary.modelId && selectedModel !== summary.modelId)) {
+    const message = "Execution settings changed. Re-select this run's provider and model to continue, or end it and start a run with your current selection.";
+    report({ aiError: message, agentError: message });
+    return null;
+  }
+  return { expectedExecutionMode: mode };
 }
 
 function activityTimeoutMs(
@@ -1795,7 +1860,66 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         localModel: "qwen3",
         timeoutSec: 60
       },
-      executionSettings: { ...DEFAULT_EXECUTION_SETTINGS },
+      executionSettings: { ...DEFAULT_EXECUTION_SETTINGS, analyticalSourceChoice: "untouched" },
+      refreshAppleAnalyticalDefault: (options = {}) => {
+        const state = get();
+        const { executionSettings } = state;
+        const choice = restoreAnalyticalSourceChoice(executionSettings.analyticalSourceChoice, false);
+        const selectManually = options.selectManually === true;
+        const locale = options.locale ?? (typeof navigator !== "undefined" ? navigator.language : "en-US");
+        if (state.isGenerating || (!selectManually && choice === "manual")) return Promise.resolve(undefined);
+        if (resolveVdtAppMode() !== "desktop") return Promise.resolve(undefined);
+        if (appleRefresh?.settings === executionSettings && appleRefresh.locale === locale
+          && appleRefresh.selectManually === selectManually) return appleRefresh.pending;
+        let defaultEnabled = state.appleFirstLaunch?.firstLaunchDefaultEnabled === true;
+        let ownedChecking: AppleFirstLaunchStatus | undefined;
+        const publishChecking = () => {
+          ownedChecking = { status: "checking", firstLaunchDefaultEnabled: defaultEnabled, selectManually };
+          set({ appleFirstLaunch: ownedChecking });
+        };
+        const isCurrent = () => appleRefresh === ticket && get().executionSettings === executionSettings && !get().isGenerating;
+        const pending = Promise.resolve().then(async () => {
+          try {
+            if (!isCurrent()) return;
+            publishChecking();
+            const signal = AbortSignal.timeout(12_000);
+            const availability = await readAppleLaunchAvailability(signal);
+            if (!isCurrent()) return;
+            defaultEnabled = availability.firstLaunchDefaultEnabled;
+            if (!shouldCheckAppleDefault(selectManually ? "apple_manual" : choice, availability)) {
+              set(isAppleAnalyticalChoice(choice) || selectManually
+                ? { appleNativePreview: undefined, appleFirstLaunch: {
+                    status: "unavailable", firstLaunchDefaultEnabled: defaultEnabled,
+                    message: appleUnavailability(availability, choice)
+                  } }
+                : { appleFirstLaunch: { status: "inactive", firstLaunchDefaultEnabled: false } });
+              return;
+            }
+            publishChecking();
+            const binding = await prepareAppleNativeAgentBinding(locale, signal);
+            if (!isCurrent()) return;
+            const currentChoice = selectManually ? "apple_manual" : choice === "untouched" ? "apple_default" : choice;
+            const settings = choice === currentChoice ? executionSettings : { ...executionSettings, analyticalSourceChoice: currentChoice };
+            set({ executionSettings: settings, appleNativePreview: { binding, settings },
+              appleFirstLaunch: { status: "ready", firstLaunchDefaultEnabled: defaultEnabled } });
+            return binding;
+          } catch (error) {
+            if (isCurrent()) set({ appleNativePreview: undefined, appleFirstLaunch: {
+              status: "unavailable", firstLaunchDefaultEnabled: defaultEnabled,
+              message: error instanceof Error ? error.message : "Apple availability could not be verified. Try again or choose another model."
+            } });
+          } finally {
+            if (appleRefresh === ticket) appleRefresh = undefined;
+            if (ownedChecking && get().appleFirstLaunch === ownedChecking) set({ appleFirstLaunch: undefined });
+          }
+        });
+        const ticket = { settings: executionSettings, locale, selectManually, pending };
+        appleRefresh = ticket;
+        return pending;
+      },
+      setAppleNativePreviewBinding: binding => set(state => ({
+        appleNativePreview: binding ? { binding, settings: state.executionSettings } : undefined
+      })),
       removedCliAgentIds: [],
       cliDetectionAgents: undefined,
       cliDetectionError: undefined,
@@ -2725,7 +2849,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           providerId,
           providerConfig,
           providerTestStatus: undefined,
-          executionSettings: migrateLegacyProviderToExecutionSettings(providerId, providerConfig)
+          executionSettings: manuallySelectedExecution(migrateLegacyProviderToExecutionSettings(providerId, providerConfig))
         });
       },
       setProviderConfigField: (field, value) =>
@@ -2737,31 +2861,33 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           return {
             providerConfig,
             providerTestStatus: undefined,
-            executionSettings: migrateLegacyProviderToExecutionSettings(state.providerId, providerConfig)
+            executionSettings: manuallySelectedExecution(migrateLegacyProviderToExecutionSettings(state.providerId, providerConfig))
           };
         }),
       setExecutionMode: (executionMode) =>
         set((state) => ({
-          ...withSyncedLegacyProvider({ ...state.executionSettings, executionMode }, state.providerConfig),
+          ...withSyncedLegacyProvider(manuallySelectedExecution({ ...state.executionSettings, executionMode }), state.providerConfig),
           byokFieldErrors: undefined
         })),
-      setExecutionCategory: (category) => set((state) => ({
-        ...withSyncedLegacyProvider(
-          selectExecutionCategory(state.executionSettings, category, state.cliDetectionAgents, state.removedCliAgentIds),
-          state.providerConfig
-        ),
-        byokFieldErrors: undefined
-      })),
+      setExecutionCategory: (category) => set((state) =>
+        category === "local_models" && appleIsExpected(state.executionSettings.analyticalSourceChoice, state.appleFirstLaunch) ? {} : ({
+          ...withSyncedLegacyProvider(
+            manuallySelectedExecution(selectExecutionCategory(state.executionSettings, category, state.cliDetectionAgents, state.removedCliAgentIds)),
+            state.providerConfig
+          ),
+          byokFieldErrors: undefined
+        })),
       setExecutionSettingsField: (field, value) =>
         set((state) => ({
           ...withSyncedLegacyProvider(
-            {
+            configureLocalReasoning(state.executionSettings, {
               ...state.executionSettings,
               [field]: value,
+              ...(ANALYTICAL_SELECTION_FIELDS.has(field) ? { analyticalSourceChoice: "manual" as const } : {}),
               ...(field === "localModel" && resolveExecutionCategory(state.executionSettings) === "local_models"
                 ? { savedLocalModelSelection: { ...resolveSavedLocalModelSelection(state.executionSettings), model: value as string | undefined } }
                 : {})
-            },
+            }),
             state.providerConfig
           ),
           byokFieldErrors: clearByokFieldError(state.byokFieldErrors, field)
@@ -2769,9 +2895,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       restoreApiKeyFromVault: (scope, value) => set(state => {
         // The mounted vault manager owns generation/deletion races. This narrow
         // hydration hook cannot change provider/destination or grant admission.
-        if (apiKeyScope(state.executionSettings) !== scope) return {};
-        return { ...withSyncedLegacyProvider({ ...state.executionSettings, apiKey: value }, state.providerConfig),
-          byokFieldErrors: clearByokFieldError(state.byokFieldErrors, "apiKey") };
+        if (apiKeyScope(state.executionSettings) !== scope) return state;
+        const byokFieldErrors = clearByokFieldError(state.byokFieldErrors, "apiKey");
+        if ((state.executionSettings.apiKey ?? "") === value) {
+          // An empty vault and an unset key describe the same connection.
+          // Keep the settings identity that owns any in-flight host admission.
+          if ((state.providerConfig.apiKey ?? "") !== value) {
+            return { providerConfig: { ...state.providerConfig, apiKey: state.executionSettings.apiKey }, providerTestStatus: undefined, byokFieldErrors };
+          }
+          return byokFieldErrors === state.byokFieldErrors ? state : { byokFieldErrors };
+        }
+        return { ...withSyncedLegacyProvider({ ...state.executionSettings, apiKey: value }, state.providerConfig), byokFieldErrors };
       }),
       setSelectedCliAgentId: (agentId) =>
         set((state) => {
@@ -2786,12 +2920,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             {
               ...state.executionSettings,
               selectedCliAgentId: agentId,
+              analyticalSourceChoice: "manual",
               executionMode: "local_cli",
               localRunnerPresetId: "custom_cli_json",
               runnerProviderId: "cli_stub",
               command,
               cliModelSelection,
-              savedLocalModelSelection: resolveSavedLocalModelSelection(state.executionSettings)
+              savedLocalModelSelection: rememberConfiguredLocalModelSelection(state.executionSettings)
             },
             state.providerConfig
           );
@@ -2824,9 +2959,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       setLocalRunnerPreset: (presetId) =>
         set((state) =>
           withSyncedLegacyProvider(
-            presetId === "custom_cli_json"
+            manuallySelectedExecution(presetId === "custom_cli_json"
               ? selectExecutionCategory(state.executionSettings, "cli_subscriptions", state.cliDetectionAgents, state.removedCliAgentIds)
-              : selectLocalModelPreset(state.executionSettings, presetId),
+              : selectLocalModelPreset(state.executionSettings, presetId)),
             state.providerConfig
           )
         ),
@@ -2837,7 +2972,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               {
                 ...state.executionSettings,
                 byokProtocol: protocol,
-                byokGateway: "none"
+                byokGateway: "none",
+                analyticalSourceChoice: "manual"
               },
               DEFAULT_PRESET_BY_PROTOCOL[protocol]
             ),
@@ -2851,13 +2987,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             gateway === "none"
               ? withSyncedLegacyProvider(
                   applyGatewayPreset(
-                    state.executionSettings,
+                    manuallySelectedExecution(state.executionSettings),
                     DEFAULT_PRESET_BY_PROTOCOL[state.executionSettings.byokProtocol ?? "openai"]
                   ),
                   state.providerConfig
                 )
               : withSyncedLegacyProvider(
-                  applyGatewayPreset(state.executionSettings, GATEWAY_TO_PRESET[gateway]),
+                  applyGatewayPreset(manuallySelectedExecution(state.executionSettings), GATEWAY_TO_PRESET[gateway]),
                   state.providerConfig
                 );
 
@@ -2868,7 +3004,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }),
       setGatewayPreset: (presetId) =>
         set((state) => ({
-          ...withSyncedLegacyProvider(applyGatewayPreset(state.executionSettings, presetId), state.providerConfig),
+          ...withSyncedLegacyProvider(applyGatewayPreset(manuallySelectedExecution(state.executionSettings), presetId), state.providerConfig),
           byokFieldErrors: undefined
         })),
       setMemoryModelMode: (mode, cliAgentId) =>
@@ -3370,8 +3506,43 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       startAgentRun: async (initialInstruction, options) => {
         if (get().isGenerating) return false;
         if (pendingIncomingRestartHere(get())) { set({ aiError: "Confirm the previous agent cleanup before starting another run." }); return false; }
+        const before = get();
+        let preview = before.appleNativePreview?.settings === before.executionSettings
+          ? before.appleNativePreview.binding : undefined;
+        const explicitBindingId = options?.executionBindingId?.trim();
+        const choice = before.executionSettings.analyticalSourceChoice;
+        const explicitApple = explicitBindingId?.startsWith("apple_native_") || explicitBindingId && explicitBindingId === preview?.bindingId;
+        if ((!explicitBindingId || explicitApple) && resolveVdtAppMode() === "desktop"
+          && (choice === "untouched" || isAppleAnalyticalChoice(choice) || preview || explicitApple)) {
+          if ((preview || explicitApple) && !isAppleAnalyticalChoice(choice)) {
+            try {
+              preview = await prepareAppleNativeAgentBinding(navigator.language, AbortSignal.timeout(12_000));
+              if (get().executionSettings !== before.executionSettings) return false;
+              get().setAppleNativePreviewBinding(preview);
+            } catch (error) {
+              if (get().executionSettings === before.executionSettings) {
+                get().setAppleNativePreviewBinding();
+                set({ aiError: error instanceof Error ? error.message : appleRecoveryMessage(), generateActivity: undefined });
+              }
+              return false;
+            }
+          } else preview = await before.refreshAppleAnalyticalDefault();
+        }
         const state = get();
-        const requestedExecutionBindingId = options?.executionBindingId?.trim();
+        const appliedDefault = choice === "untouched" && state.executionSettings.analyticalSourceChoice === "apple_default"
+          && preview !== undefined && preview.bindingId === state.appleNativePreview?.binding.bindingId;
+        if (state.isGenerating || state.executionSettings !== before.executionSettings && !appliedDefault
+          || state.workspace.activeVdtId !== before.workspace.activeVdtId
+          || state.workspace.activeProjectId !== before.workspace.activeProjectId) return false;
+        if (!explicitBindingId && !preview && appleIsExpected(state.executionSettings.analyticalSourceChoice, state.appleFirstLaunch)) {
+          set({ aiError: appleRecoveryMessage(state.appleFirstLaunch), generateActivity: undefined });
+          return false;
+        }
+        if (explicitApple && explicitBindingId !== preview?.bindingId) {
+          set({ aiError: "The Apple model identity changed. Select the verified model and retry.", generateActivity: undefined });
+          return false;
+        }
+        const requestedExecutionBindingId = explicitBindingId ?? preview?.bindingId;
         const { executionSettings, cliDetectionAgents } = state;
         const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
         if (!requestedExecutionBindingId) {
@@ -3444,6 +3615,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const commonRequest = {
             mode: options?.mode ?? (shouldContinue ? "continue_project" : "generate_vdt"),
             ...(options?.outcome ? { outcome: options.outcome } : {}),
+            ...(options?.outcomeSelection ? { outcomeSelection: options.outcomeSelection } : {}),
             input,
             workspace,
             ...(conversationId ? { conversationId } : {}),
@@ -3455,16 +3627,48 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               researchMode: options?.researchMode ?? "auto"
             }
           };
-          const explicitBindingId = requestedExecutionBindingId ?? await prepareProviderAgentBinding(state.executionSettings, providerId, {...providerConfig,enableResearch:options?.researchMode==="on"});
+          const explicitBindingId = requestedExecutionBindingId;
           const bindings = await createAgentClient().getExecutionBindings({
             includePackagedCursor: providerConfig?.backendId === "cursor_subscription" || explicitBindingId?.startsWith("cursor_desktop_") === true
           });
+          const verifiedLocal = resolveVerifiedLocalModelBinding(bindings, state.executionSettings, providerConfig);
+          const adaptiveWorkspace = options?.adaptiveReasoning && state.workspace.activeProjectId && workspace.vdtId
+            ? { projectId: workspace.projectId, vdtId: workspace.vdtId } : undefined;
+          const assertAdaptiveScope = () => {
+            const current = get();
+            if (!adaptiveWorkspace || explicitBindingId || verifiedLocal || providerId !== "local_runner"
+              || providerConfig?.backendId !== "ollama" || providerConfig.modelReasoning !== FAST_LOCAL_REASONING
+              || current.executionSettings !== executionSettings
+              || current.workspace.activeProjectId !== adaptiveWorkspace.projectId || current.workspace.activeVdtId !== adaptiveWorkspace.vdtId) {
+              throw new Error("Adaptive reasoning requires the same saved VDT and eligible Ollama Fast model for this start.");
+            }
+            if (current.project !== state.project || current.projectRevision !== state.projectRevision || current.brief !== state.brief
+              || current.workspace.draftRevisionBase !== state.workspace.draftRevisionBase
+              || (shouldContinue && activeScenarioForAgent(current) !== activeScenarioId)
+              || (shouldContinue && options?.selectedNodeId !== null
+                && (current.selectedNodeId !== state.selectedNodeId
+                  || selectedNodeForAgentChat(current)?.id !== selectedNodeForAgentChat(state)?.id))) {
+              throw new Error("The VDT changed while preparing adaptive reasoning. Send your message again to use the current draft.");
+            }
+          };
+          if (options?.adaptiveReasoning) assertAdaptiveScope();
+          const admittedBinding = explicitBindingId ? (preview?.bindingId === explicitBindingId ? preview : undefined)
+            : verifiedLocal
+              ?? await prepareProviderAgentBinding(state.executionSettings, providerId, {
+                ...providerConfig,
+                enableResearch: options?.researchMode === "on"
+              }, fetch, adaptiveWorkspace);
+          if (options?.adaptiveReasoning) {
+            assertAdaptiveScope();
+            if (!admittedBinding?.adaptiveReasoning) throw new Error("The selected Ollama model did not admit adaptive reasoning.");
+          }
           const startRequest = buildAgentPublicStartRequest(
             commonRequest,
             state.executionSettings,
             bindings,
             {
               explicitBindingId,
+              admittedBinding,
               providerId,
               providerConfig
             }
@@ -3493,13 +3697,20 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           return false;
         }
       },
-      sendAgentAnswers: async (answers) => {
+      sendAgentAnswers: async (answers, spoken) => {
         const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
         if (!runId) {
           const message = "Agent run was not found. Reload the page or start a new run.";
           set({ agentError: message, aiError: message });
           return;
         }
+        if (spoken && (spoken.runId !== runId || spoken.checkpoint.projectId !== get().workspace.activeProjectId
+          || spoken.checkpoint.vdtId !== get().workspace.activeVdtId)) {
+          set({ agentError: "The voice answer belongs to an earlier run or workspace." });
+          return;
+        }
+        const execution = agentContinuationOptions(get(), runId, set);
+        if (!execution) return;
         const submittedAt = nowIso();
         set((state) => ({
           aiError: undefined,
@@ -3528,8 +3739,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         try {
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "user_answer",
+            ...(spoken ? { expectedQuestion: spoken.checkpoint } : {}),
             ...(Array.isArray(answers) ? { structuredAnswers: answers } : { answers })
-          });
+          }, execution);
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent answers could not be sent.";
@@ -3567,6 +3779,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({ agentError: message, aiError: message });
           return;
         }
+        const execution = agentContinuationOptions(get(), runId, set);
+        if (!execution) return;
         const submittedAt = nowIso();
         set((state) => ({
           aiError: undefined,
@@ -3592,7 +3806,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             : state.generateActivity
         }));
         try {
-          const snapshot = await createAgentClient().sendMessage(runId, { type: "continue_run" });
+          const snapshot = await createAgentClient().sendMessage(runId, { type: "continue_run" }, execution);
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent run could not be continued.";
@@ -3612,13 +3826,20 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
         }
       },
-      sendAgentApproval: async (approved, selectedChangeIds, proposalId) => {
+      sendAgentApproval: async (approved, selectedChangeIds, proposalId, expectedProposal) => {
         const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
         if (!runId) {
           const message = "Agent run was not found. Reload the page or start a new run.";
           set({ agentError: message, aiError: message });
           return;
         }
+        if (expectedProposal && (expectedProposal.runId !== runId || expectedProposal.projectId !== get().workspace.activeProjectId
+          || expectedProposal.vdtId !== get().workspace.activeVdtId)) {
+          set({ agentError: "This proposal belongs to an earlier run or workspace." });
+          return;
+        }
+        const execution = agentContinuationOptions(get(), runId, set);
+        if (!execution) return;
         const submittedAt = nowIso();
         set((state) => ({
           aiError: undefined,
@@ -3648,9 +3869,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "approval",
             approved,
+            ...(expectedProposal ? { expectedProposal } : {}),
             ...(proposalId ? { proposalId } : {}),
             ...(selectedChangeIds && selectedChangeIds.length > 0 ? { selectedChangeIds } : {})
-          });
+          }, execution);
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent approval could not be sent.";
@@ -3712,6 +3934,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
           return true;
         }
+        const execution = agentContinuationOptions(get(), runId, set);
+        if (!execution) return false;
         const submittedAt = nowIso();
         set((state) => ({
           aiError: undefined,
@@ -3743,7 +3967,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             ...(selectedNodeId !== undefined ? { selectedNodeId } : {}),
             activeScenarioId: activeScenarioForAgent(get()),
             ...(researchMode ? { researchMode } : {})
-          });
+          }, execution);
           applyAgentSnapshot(set, snapshot);
           return true;
         } catch (error) {
@@ -3893,6 +4117,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         if (canContinueCurrentRun) {
           const runId = state.agentRun?.runId ?? state.activeAgentRunId ?? state.generateActivity?.runId;
           if (!runId) return false;
+          const execution = agentContinuationOptions(state, runId, set);
+          if (!execution) return false;
           const requestedAt = nowIso();
           set((current) => ({
             aiError: undefined,
@@ -3919,7 +4145,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             const snapshot = await createAgentClient().sendMessage(runId, {
               type: "deepen_node",
               selectedNodeId: nodeId
-            });
+            }, execution);
             applyAgentSnapshot(set, snapshot);
             return true;
           } catch (error) {
@@ -4089,6 +4315,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
         const state = get();
         const { brief, executionSettings, cliDetectionAgents } = state;
+        if (appleIsExpected(executionSettings.analyticalSourceChoice, state.appleFirstLaunch)) {
+          await get().startAgentRun(undefined, { mode: "generate_vdt", includeCurrentProject: false, researchMode: "off" });
+          return;
+        }
 
         if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
           set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
@@ -4143,10 +4373,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
-          const explicitBindingId = await prepareProviderAgentBinding(executionSettings, providerId, resolvedProviderConfig);
           const bindings = await createAgentClient().getExecutionBindings({
-            includePackagedCursor: resolvedProviderConfig?.backendId === "cursor_subscription" || explicitBindingId?.startsWith("cursor_desktop_") === true
+            includePackagedCursor: resolvedProviderConfig?.backendId === "cursor_subscription"
           });
+          const admittedBinding = resolveVerifiedLocalModelBinding(bindings, executionSettings, resolvedProviderConfig)
+            ?? await prepareProviderAgentBinding(executionSettings, providerId, resolvedProviderConfig);
           const startRequest = buildAgentPublicStartRequest(
             {
               mode: "generate_vdt",
@@ -4161,7 +4392,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             executionSettings,
             bindings,
             {
-              explicitBindingId,
+              admittedBinding,
               providerId,
               providerConfig: resolvedProviderConfig
             }
@@ -4346,16 +4577,18 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         editScenario(state, { kind: "set_override", scenarioId, nodeId, value: value ?? null })),
       updateScenarioComment: (scenarioId, nodeId, text) => set((state) =>
         editScenario(state, { kind: "set_comment", scenarioId, nodeId, text })),
-      stageDataDiscoveryChangeSet: (changeSet, context) => {
+      stageDataDiscoveryChangeSet: (changeSet, context, handoff) => {
         const current = get();
+        if (handoff && !handoff.matchesOrigin(editorHandoffView(current))) return false;
         const contextError = context ? fileImportContextError(context, current.project, current.workspace) : undefined;
         if (contextError) {
           set({ aiActionError: contextError });
           return false;
         }
+        current.pendingFileImport?.handoff?.cancel();
         set((state) => ({
           pendingChangeSet: changeSet,
-          pendingFileImport: context ? { changeSetId: changeSet.id, context } : undefined,
+          pendingFileImport: context ? { changeSetId: changeSet.id, reviewedChangeSet: changeSet, context, handoff } : undefined,
           changeSetSelection: collectChangeEntryIds(changeSet),
           highlightedNodeIds: computeHighlightedNodeIds(state.project, changeSet),
           aiActionError: undefined
@@ -4378,6 +4611,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }),
       applyPendingChangeSet: () => {
         let appliedChangeSetId: string | undefined;
+        const before = editorHandoffView(get());
+        const fileImport = get().pendingFileImport;
         set((state) => {
           if (!state.pendingChangeSet || state.changeSetSelection.size === 0) {
             return {};
@@ -4385,6 +4620,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           if (state.pendingFileImport?.changeSetId === state.pendingChangeSet.id) {
             const contextError = fileImportContextError(state.pendingFileImport.context, state.project, state.workspace);
             if (contextError) return { aiActionError: contextError };
+            if (fileImport?.handoff && !fileImport.handoff.matchesOrigin(before)) {
+              return { aiActionError: "The draft changed. Reopen the file review for this KPI." };
+            }
           }
 
           const taskType = state.pendingChangeSet.taskType;
@@ -4411,20 +4649,38 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           calculateGraph(laidOut);
 
           appliedChangeSetId = state.pendingChangeSet.id;
+          const checkpoint = snapshotted.versions.at(-1);
+          let receipt: FileHandoffDraftReceipt | undefined;
+          if (checkpoint && state.workspace.draftRevisionBase !== null && fileImport?.handoff
+            && fileImport.reviewedChangeSet === state.pendingChangeSet && !state.pendingChangeSet.workspaceChange) {
+            const reviewedIds = collectChangeEntryIds(fileImport.reviewedChangeSet);
+            if (state.changeSetSelection.size === reviewedIds.size && [...reviewedIds].every(id => state.changeSetSelection.has(id))) {
+              receipt = fileImport.handoff.fileDraftReceipt(before, {
+                kind: "file", nodeId: fileImport.context.targetNodeId, changeSetId: appliedChangeSetId
+              }, laidOut.id, checkpoint.id);
+            }
+          }
           return {
             project: laidOut,
             projectRevision: state.projectRevision + 1,
+            fileHandoffDraftReceipt: receipt,
             ...clearPendingAiActionState()
           };
         });
         if (appliedChangeSetId) {
+          if (fileImport?.changeSetId === appliedChangeSetId) fileImport.handoff?.complete(before, editorHandoffView(get()), {
+            kind: "file", nodeId: fileImport.context.targetNodeId, changeSetId: appliedChangeSetId
+          });
           void get().sendManualProjectChange({
             kind: "change_set_applied",
             summary: `User applied change set "${appliedChangeSetId}".`
           });
         }
       },
-      discardPendingChangeSet: () => set(clearPendingAiActionState()),
+      discardPendingChangeSet: () => {
+        get().pendingFileImport?.handoff?.cancel();
+        set(clearPendingAiActionState());
+      },
       saveVersionSnapshot: (name) => {
         const state = get();
         const operation = applyVersionOperation(state.project, { kind: "save", name }, { operationId: makeId("edit"), now: nowIso() });
@@ -4504,6 +4760,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         personalisation: state.personalisation,
         project: state.project,
         projectRevision: state.projectRevision,
+        fileHandoffDraftReceipt: state.fileHandoffDraftReceipt,
         smartKpiOperation: state.smartKpiOperation,
         smartKpiUndo: state.smartKpiUndo,
         smartKpiRebaseRequired: state.smartKpiRebaseRequired,
@@ -4544,11 +4801,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const providerConfig = persistedProviderConfig(persisted?.providerConfig ?? currentState.providerConfig);
         const ui = mergeUiPreferences(persisted?.ui);
         const removedCliAgentIds = normalizeRemovedCliAgentIds(persisted?.removedCliAgentIds);
-        const executionSettings = reconcileRemovedCliSelections(reconcilePersistedExecutionSettings(
+        const restoredExecution = reconcileRemovedCliSelections(reconcilePersistedExecutionSettings(
           persisted?.providerId,
           providerConfig,
           persisted?.executionSettings
         ), removedCliAgentIds);
+        const executionSettings: ExecutionSettings = { ...restoredExecution, analyticalSourceChoice: restoreAnalyticalSourceChoice(
+          persisted?.executionSettings?.analyticalSourceChoice, Boolean(persisted?.executionSettings || persisted?.providerId)
+        ) };
         const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
         // An ambiguous immutable Smart request must reconcile against exactly
         // the submitted local base; normalization here would fabricate an edit.
@@ -4588,6 +4848,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           personalisation: normalizeInstructionPreferences(persisted?.personalisation),
           project,
           workspace,
+          fileHandoffDraftReceipt: readFileHandoffDraftReceipt(persisted?.fileHandoffDraftReceipt),
           smartKpiOperation: persisted?.smartKpiOperation?.phase === "committing" ? persisted.smartKpiOperation : undefined,
           smartKpiUndo: persisted?.smartKpiUndo,
           smartKpiFencedRunIds: persisted?.smartKpiFencedRunIds ?? [],
@@ -4599,6 +4860,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           providerId: synced.providerId,
           providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
           executionSettings,
+          appleFirstLaunch: undefined,
+          appleNativePreview: undefined,
           removedCliAgentIds,
           ui,
           generateActivity,
@@ -4617,6 +4880,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
 useVdtStudioStore.subscribe((state, previous) => {
   if (state === previous) return;
+  if (state.executionSettings !== previous.executionSettings && state.appleNativePreview?.settings === previous.executionSettings
+    && isAppleAnalyticalChoice(state.executionSettings.analyticalSourceChoice)) {
+    useVdtStudioStore.setState({ appleNativePreview: { ...state.appleNativePreview, settings: state.executionSettings } });
+  }
   const blockedReason = smartKpiBlockedReason(state), canUndo = canUndoSmartKpi(state);
   const undoBlockedReason = state.smartKpiUndo && !canUndo ? "Undo is unavailable after an edit, another revision, or a change of VDT. The checkpoint remains in Versions." : undefined;
   if (state.smartKpiBlockedReason !== blockedReason || state.smartKpiMutation.canUndo !== canUndo || state.smartKpiMutation.undoBlockedReason !== undoBlockedReason) {

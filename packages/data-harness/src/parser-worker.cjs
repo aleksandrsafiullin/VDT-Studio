@@ -4232,9 +4232,24 @@ function SSF_load(fmt, idx) {
   table_fmt[idx] = fmt;
   return idx;
 }
+function SSF_load_table(tbl) {
+  for (var i = 0; i != 392; ++i)
+    if (tbl[i] !== void 0) SSF_load(tbl[i], i);
+}
 function make_ssf() {
   table_fmt = SSF_init_table();
 }
+var SSF = {
+  format: SSF_format,
+  load: SSF_load,
+  _table: table_fmt,
+  load_table: SSF_load_table,
+  parse_date_code: SSF_parse_date_code,
+  is_date: fmt_is_date,
+  get_table: function get_table() {
+    return SSF._table = table_fmt;
+  }
+};
 var SSFImplicit = {
   "5": '"$"#,##0_);\\("$"#,##0\\)',
   "6": '"$"#,##0_);[Red]\\("$"#,##0\\)',
@@ -29774,22 +29789,34 @@ function parseWorkbookDataset(input, limits) {
       const layoutIssue = !hasHeader || first.some((cell) => !cell.trim()) || dataRows.some((row) => row.length > first.length) ? "The sheet does not have one clear, complete header row. Upload a clean table extract with one named header row; title rows, merged headers and multiple tables are not supported by this import." : void 0;
       const columnFormats = {};
       const columnEncodings = {};
+      const xlsxDateColumns = [];
       const sourceDataRows = sourceRows.slice(hasHeader ? 1 : 0);
       for (const [columnIndex, column] of columns.entries()) {
         let durationCells = 0;
         let otherCells = 0;
         let dateCells = 0;
+        let unambiguousDateCells = 0;
         for (const row of sourceDataRows) {
           const cell = sheet[utils.encode_cell({ r: sheetRange.s.r + row.matrixRowIndex, c: sheetRange.s.c + columnIndex })];
           if (!cell || cell.v === void 0 || cell.v === null || cell.v === "") continue;
           if (!columnFormats[column] && cell.z) columnFormats[column] = String(cell.z);
-          const encoding = typeof cell.v === "number" ? excelCellEncoding(String(cell.z ?? "General")) : "numeric";
+          const format = String(cell.z ?? "General");
+          const encoding = typeof cell.v === "number" ? excelCellEncoding(format) : "numeric";
           if (encoding === "duration_days") durationCells += 1;
-          else if (encoding === "datetime") dateCells += 1;
-          else otherCells += 1;
+          else if (encoding === "datetime") {
+            dateCells += 1;
+            if (workbook.bookType === "xlsx" && !/[;]|\[[<>=]/u.test(format) && SSF.is_date(format) === true) {
+              unambiguousDateCells += 1;
+            }
+          } else otherCells += 1;
         }
-        if (dateCells > 0) columnEncodings[column] = "excel_datetime";
-        else if (durationCells > 0) columnEncodings[column] = otherCells > 0 ? "mixed_excel_duration" : "excel_duration_days";
+        if (dateCells > 0) {
+          columnEncodings[column] = "excel_datetime";
+          if (workbook.bookType === "xlsx") {
+            const uniform = unambiguousDateCells === dateCells && durationCells === 0 && otherCells === 0;
+            xlsxDateColumns.push([column, uniform ? "excel_serial" : "ambiguous_excel_dates"]);
+          }
+        } else if (durationCells > 0) columnEncodings[column] = otherCells > 0 ? "mixed_excel_duration" : "excel_duration_days";
       }
       if (dataRows.length > limits.maxRows) {
         warnings.push(warning("warning", "data_discovery_validation_failed", `Rows in "${sheetName}" were sampled at ${limits.maxRows} rows.`));
@@ -29806,6 +29833,7 @@ function parseWorkbookDataset(input, limits) {
         layoutIssue,
         columnFormats,
         columnEncodings,
+        ...xlsxDateColumns.length ? { xlsxDateColumns } : {},
         numericColumns: columns.filter((_, columnIndex) => {
           const cells = sourceDataRows.map((row) => matrix[row.matrixRowIndex]?.[columnIndex]);
           return cells.some((cell) => typeof cell === "number") && cells.every((cell) => cell === "" || cell === void 0 || typeof cell === "number");

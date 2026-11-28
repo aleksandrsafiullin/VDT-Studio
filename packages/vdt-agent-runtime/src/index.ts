@@ -1,5 +1,5 @@
 export * from "./agent-question-prompt";
-export { groundedAnswerRecord } from "./chat-messages";
+export { answerPayloadsFromRecord, groundedAnswerRecord } from "./chat-messages";
 export * from "./agent-event-outbox";
 export * from "./agent-execution-contracts";
 export * from "./agent-supervisor-persistence";
@@ -31,3 +31,5 @@ export { skillCatalogProgress } from "./tools/run-skill-library";
 export * from "./types";
 export { collectLiteralUserQuantities, type LiteralUserQuantity } from "./value-provenance-contract";
 export type { VdtAgentQuestion } from "@vdt-studio/vdt-agent";
+
+export * from "./conversation-decision-proposal";

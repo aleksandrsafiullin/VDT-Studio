@@ -1,16 +1,21 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { inflateRawSync } from "node:zlib";
+import { SpeechError, admitDictationSelection, parseAppleVoicePreview, parseSpeechSelection } from "./admission";
+import { AppleVoiceOutputTooLargeError, type AppleVoiceAdapter } from "./apple-voice";
 import { pcmWave } from "./audio";
+import type { NeuralVoiceEngine } from "./neural-voice-engine";
 import { SPEECH_LICENSE_NOTICES } from "./notices";
 import {
-  SPEECH_MAX_AUDIO_BYTES, SPEECH_MODELS, SPEECH_SAMPLE_RATE,
-  isSpeechLanguage, isSpeechModelId,
-  type SpeechJobResult, type SpeechModelId, type SpeechRequest, type SpeechStatus
+  SPEECH_MAX_AUDIO_BYTES, SPEECH_MODELS, SPEECH_SAMPLE_RATE, SPEECH_TTS_MAX_TEXT, SPEECH_TTS_MAX_WAVE_BASE64,
+  isSpeechLanguage, isSpeechModelId, type AppleAssetOffer, type AppleAssetSetup, type AppleSpeechLanguage,
+  type SpeechJobResult, type SpeechModelId, type SpeechRequest, type SpeechResponse, type SpeechSessionAdmission, type SpeechStatus,
+  type SpeechSynthesisGrant, type SpeechSynthesisResult
 } from "./catalog";
 
 const MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
@@ -28,8 +33,23 @@ const ENGINES = {
 } as const;
 type Engine = (typeof ENGINES)[keyof typeof ENGINES];
 
-export class SpeechError extends Error {
-  constructor(message: string, readonly statusCode = 400) { super(message); }
+export { SpeechError } from "./admission";
+export { createAppleVoiceAdapter, type AppleVoiceAdapter } from "./apple-voice";
+export { NeuralVoiceAssetInstaller } from "./neural-voice-assets";
+export { NEURAL_VOICES } from "./neural-voice-catalog";
+export { createPiperVoiceEngine } from "./neural-voice-engine";
+
+const SESSION_IDLE_MS = 120_000;
+export const SPEECH_TTS_LEASE_MS = 30_000;
+const validIdentifier = (value: unknown): value is string => typeof value === "string"
+  && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+function parseTtsInput(confirmed: unknown, eventId: unknown, text: unknown) {
+  if (confirmed !== true || typeof eventId !== "string" || !/^[a-f0-9]{64}$/.test(eventId)
+    || typeof text !== "string" || !text.trim() || text.length > SPEECH_TTS_MAX_TEXT || /[\x00-\x1f\x7f]/.test(text)) {
+    throw new SpeechError("Confirm local speech and provide a valid spoken notification.");
+  }
+  return { confirmed, eventId, text } as const;
 }
 
 export function parseSpeechRequest(value: unknown): SpeechRequest {
@@ -37,22 +57,33 @@ export function parseSpeechRequest(value: unknown): SpeechRequest {
   const body = value as Record<string, unknown>;
   const keys: Record<string, string[]> = {
     status: ["operation"], install: ["operation", "modelId", "confirmed"], cancel_install: ["operation"],
-    transcribe: ["operation", "modelId", "language", "audioBase64", "jobId"],
-    result: ["operation", "jobId"], cancel: ["operation", "jobId"]
+    apple_status: ["operation"], apple_preview: ["operation", "preview"],
+    open_tts: ["operation", "selection", "preview", "eventId", "text", "confirmed"], tts_result: ["operation", "sessionId"], close_tts: ["operation", "sessionId"],
+    apple_install_offer: ["operation", "locale"], apple_install: ["operation", "locale", "setupId", "confirmed"],
+    apple_install_status: ["operation", "setupId"], apple_cancel_install: ["operation", "setupId"],
+    open_session: ["operation", "selection"], close_session: ["operation", "sessionId"], keep_session: ["operation", "sessionId"],
+    transcribe: ["operation", "sessionId", "audioBase64", "jobId"],
+    result: ["operation", "sessionId", "jobId"], cancel: ["operation", "sessionId", "jobId"]
   };
   const allowed = typeof body.operation === "string" && Object.hasOwn(keys, body.operation) ? keys[body.operation] : undefined;
   if (!allowed || Object.keys(body).some((key) => !allowed.includes(key))) throw new SpeechError("Unsupported voice input operation or field.");
-  if (body.operation === "install" || body.operation === "transcribe") {
+  if (body.operation === "install") {
     if (!isSpeechModelId(body.modelId)) throw new SpeechError("Choose a supported speech model.");
+    if (body.confirmed !== true) throw new SpeechError("Confirm the speech model download first.");
   }
-  if (body.operation === "install" && body.confirmed !== true) throw new SpeechError("Confirm the speech model download first.");
-  if (body.operation === "transcribe" || body.operation === "result" || body.operation === "cancel") {
-    if (typeof body.jobId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.jobId)) {
-      throw new SpeechError("Invalid transcription identifier.");
-    }
+  if (allowed.includes("locale") && (!isSpeechLanguage(body.locale) || body.locale === "auto")) throw new SpeechError("Choose a supported Apple speech language.");
+  if (allowed.includes("setupId") && !validIdentifier(body.setupId)) throw new SpeechError("Open the Apple speech setup confirmation first.");
+  if (body.operation === "apple_install" && body.confirmed !== true) throw new SpeechError("Confirm the Apple speech asset download first.");
+  if (body.operation === "apple_preview") return { operation: "apple_preview", preview: parseAppleVoicePreview(body.preview) };
+  if (body.operation === "open_tts") {
+    const utterance = parseTtsInput(body.confirmed, body.eventId, body.text);
+    return { operation: "open_tts", selection: parseSpeechSelection(body.selection), preview: parseAppleVoicePreview(body.preview),
+      ...utterance };
   }
+  if (body.operation === "open_session") return { operation: "open_session", selection: parseSpeechSelection(body.selection) };
+  if (allowed.includes("sessionId") && !validIdentifier(body.sessionId)) throw new SpeechError("Invalid voice session identifier.");
+  if (allowed.includes("jobId") && !validIdentifier(body.jobId)) throw new SpeechError("Invalid transcription identifier.");
   if (body.operation === "transcribe") {
-    if (!isSpeechLanguage(body.language)) throw new SpeechError("Choose a supported dictation language.");
     if (typeof body.audioBase64 !== "string" || body.audioBase64.length > Math.ceil(SPEECH_MAX_AUDIO_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audioBase64)) {
       throw new SpeechError("The audio fragment is invalid or too large.");
     }
@@ -72,21 +103,42 @@ interface SpeechRuntimeOptions {
   platform?: string;
   arch?: string;
   fetcher?: typeof fetch;
+  /** The native package host owns the exact installed helper. */
+  appleVoice?: AppleVoiceAdapter;
+  /** Optional host-owned external engine. Never accepted from browser/IPC requests. */
+  neuralVoice?: NeuralVoiceEngine;
   /** Test seam. Never accepted from browser/IPC requests. */
   recognize?: (model: string, wav: Uint8Array, language: string, signal: AbortSignal) => Promise<string>;
 }
 
-interface SpeechJob { result: SpeechJobResult; controller: AbortController; updated: number }
+interface SpeechJob { result: SpeechJobResult; controller: AbortController; updated: number; sessionId: string }
+interface ActiveSpeechSession { admission: SpeechSessionAdmission; touchedAt: number }
+interface ActiveTts {
+  admission: SpeechSynthesisGrant;
+  controller: AbortController;
+  expiry: ReturnType<typeof setTimeout>;
+  result?: SpeechSynthesisResult;
+}
 
 export class SpeechRuntime {
   readonly directory: string;
   readonly #engine: Engine | undefined;
   readonly #fetcher: typeof fetch;
   readonly #recognize: SpeechRuntimeOptions["recognize"];
+  readonly #appleVoice: AppleVoiceAdapter | undefined;
+  readonly #neuralVoice: NeuralVoiceEngine | undefined;
+  #preparingPreview = false;
+  #appleOffer: { value: AppleAssetOffer; expiresAt: number } | undefined;
+  #appleSetup: { id: string; controller: AbortController; result: AppleAssetSetup; active: boolean } | undefined;
   #installation: SpeechStatus["installation"] = { state: "idle", downloadedBytes: 0, totalBytes: 0 };
   #installController: AbortController | undefined;
   #jobs = new Map<string, SpeechJob>();
   #recognizing = false;
+  #captureSession: ActiveSpeechSession | undefined;
+  #openingSession = false;
+  #tts: ActiveTts | undefined;
+  #renderingTts = false;
+  #spokenEvents = new Set<string>();
   #verified = new Map<string, { size: number; mtime: number }>();
 
   constructor(options: SpeechRuntimeOptions = {}) {
@@ -94,26 +146,234 @@ export class SpeechRuntime {
     this.#engine = ENGINES[`${options.platform ?? process.platform}-${options.arch ?? process.arch}` as keyof typeof ENGINES];
     this.#fetcher = options.fetcher ?? fetch;
     this.#recognize = options.recognize;
+    this.#appleVoice = options.appleVoice;
+    this.#neuralVoice = options.neuralVoice;
   }
 
-  async request(input: unknown): Promise<SpeechStatus | SpeechJobResult> {
+  async request(input: unknown): Promise<SpeechResponse> {
     const request = parseSpeechRequest(input);
     if (request.operation === "status") return this.status();
-    if (!this.#engine) throw new SpeechError("Local voice input supports macOS (Apple silicon / Intel) and Windows x64.");
-    if (request.operation === "install") return this.install(request.modelId);
+    if (request.operation === "apple_status") {
+      return this.#appleVoice ? this.#appleVoice.status() : { state: "apple_voice_status", supported: false, recognition: [], voices: [] };
+    }
+    if (this.#captureSession && Date.now() - this.#captureSession.touchedAt > SESSION_IDLE_MS) {
+      this.closeSession(this.#captureSession.admission.sessionId);
+    }
+    if (request.operation === "apple_install_offer") return this.appleInstallOffer(request.locale);
+    if (request.operation === "apple_install") return this.beginAppleInstall(request);
+    if (request.operation === "apple_install_status" || request.operation === "apple_cancel_install") {
+      const setup = this.#appleSetup;
+      if (!setup || setup.id !== request.setupId) throw new SpeechError("This Apple speech setup has expired.", 404);
+      if (request.operation === "apple_cancel_install" && setup.active) {
+        setup.result = { ...setup.result, phase: "cancelling" };
+        setup.controller.abort();
+      }
+      return setup.result;
+    }
+    if (request.operation === "install") {
+      if (!this.#engine) throw new SpeechError("Local voice input supports macOS (Apple silicon / Intel) and Windows x64.");
+      return this.install(request.modelId);
+    }
     if (request.operation === "cancel_install") {
       this.#installController?.abort();
       return this.status();
     }
-    if (request.operation === "transcribe") return this.transcribe(request);
+    if (request.operation === "apple_preview") {
+      if (!this.#appleVoice) throw new SpeechError("Apple system voices are unavailable on this host.", 409);
+      if (this.#captureSession || this.#openingSession || this.#preparingPreview || this.#appleSetup?.active || this.#tts || this.#renderingTts) throw new SpeechError("Stop capture or the current spoken output before preparing a voice preview.", 409);
+      this.#preparingPreview = true;
+      try { return { state: "apple_voice_preview", waveformBase64: await this.#appleVoice.preview(request.preview) }; }
+      finally { this.#preparingPreview = false; }
+    }
+    if (request.operation === "open_tts") return this.openTts(request);
+    if (request.operation === "close_tts") {
+      this.closeTts(request.sessionId);
+      return { state: "closed" };
+    }
+    if (request.operation === "tts_result") {
+      const active = this.#tts;
+      if (!active || active.admission.sessionId !== request.sessionId) throw new SpeechError("Spoken output has expired.", 404);
+      const result = active.result;
+      if (result?.state === "tts_complete") active.result = { state: "tts_error" };
+      return result ?? { state: "tts_processing" };
+    }
+    if (request.operation === "open_session") {
+      const admitted = admitDictationSelection(request.selection, this.#appleVoice !== undefined);
+      if (this.#appleSetup?.active) throw new SpeechError("Wait for Apple speech asset setup before starting capture.", 409);
+      if (this.#preparingPreview || this.#tts || this.#renderingTts) throw new SpeechError("Wait for spoken playback to finish before starting capture.", 409);
+      if (this.#captureSession || this.#openingSession) throw new SpeechError("Voice input already owns the microphone.", 409);
+      this.#openingSession = true;
+      try {
+        await this.requireRecognizer(admitted);
+        const admission: SpeechSessionAdmission = { ...admitted, sessionId: randomUUID() };
+        this.#captureSession = { admission, touchedAt: Date.now() };
+        return admission;
+      } finally { this.#openingSession = false; }
+    }
+
+    if (request.operation === "close_session") {
+      this.closeSession(request.sessionId);
+      return { state: "closed" };
+    }
+    const session = this.#captureSession;
+    if (!session || session.admission.sessionId !== request.sessionId) {
+      throw new SpeechError("This voice session has expired. Start dictation again.", 404);
+    }
+    if (request.operation === "keep_session") {
+      session.touchedAt = Date.now();
+      return { state: "active" };
+    }
+    if (request.operation === "transcribe") {
+      session.touchedAt = Date.now();
+      return this.transcribe(request, session.admission);
+    }
     const job = this.#jobs.get(request.jobId);
-    if (!job) throw new SpeechError("This transcription has expired. Start dictation again.", 404);
+    if (!job || job.sessionId !== request.sessionId) throw new SpeechError("This transcription has expired. Start dictation again.", 404);
+    session.touchedAt = Date.now();
     job.updated = Date.now();
     if (request.operation === "cancel") {
       job.controller.abort();
       job.result = { state: "cancelled" };
     }
     return job.result;
+  }
+
+  private openTts(request: Extract<SpeechRequest, { operation: "open_tts" }>): SpeechSynthesisGrant {
+    const voice = this.#appleVoice;
+    const { selection, preview, eventId } = request;
+    if (!voice?.synthesize || selection.stt || selection.realtime || selection.tts?.providerId !== "apple_local"
+      || selection.tts.modelId !== preview.voiceId || selection.language !== preview.locale) {
+      throw new SpeechError("A verified installed Apple voice is required for spoken output.", 409);
+    }
+    return this.startTts(selection.scopeId, eventId, signal => voice.synthesize!(preview, request.text, signal));
+  }
+
+  /** Host-only entry point. The host selects the exact consented, installed voice. */
+  openNeuralTts(request: Pick<Extract<SpeechRequest, { operation: "open_tts" }>, "preview" | "eventId" | "text" | "confirmed">
+    & { scopeId: string }, engine = this.#neuralVoice): SpeechSynthesisGrant {
+    if (!engine) throw new SpeechError("An approved neural voice engine is required.", 409);
+    const { scopeId } = request;
+    const { eventId, text } = parseTtsInput(request.confirmed, request.eventId, request.text);
+    if (typeof scopeId !== "string" || !/^[a-f0-9]{64}$/.test(scopeId)) throw new SpeechError("Invalid speech scope.");
+    const preview = parseAppleVoicePreview(request.preview);
+    return this.startTts(scopeId, eventId, signal => engine.synthesize(preview, text, signal));
+  }
+
+  private startTts(scopeId: string, eventId: string, synthesize: (signal: AbortSignal) => Promise<string>): SpeechSynthesisGrant {
+    if (this.#captureSession || this.#openingSession || this.#preparingPreview || this.#appleSetup?.active || this.#tts || this.#renderingTts) {
+      throw new SpeechError("The local voice runtime is busy with capture or spoken output.", 409);
+    }
+    if (this.#spokenEvents.has(eventId)) throw new SpeechError("This notification was already received.", 409);
+    const admission = { state: "tts_open", sessionId: randomUUID(), scopeId, eventId,
+      boundary: "on_device", billing: "none", consent: "explicit_component" } as const;
+    const controller = new AbortController();
+    const active: ActiveTts = { admission, controller, expiry: setTimeout(() => this.closeTts(admission.sessionId), SPEECH_TTS_LEASE_MS) };
+    active.expiry.unref?.();
+    this.#tts = active;
+    this.#spokenEvents.add(eventId);
+    if (this.#spokenEvents.size > 2048) this.#spokenEvents.delete(this.#spokenEvents.values().next().value!);
+    this.#renderingTts = true;
+    void Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return synthesize(controller.signal);
+    }).then(waveformBase64 => {
+      if (this.#tts !== active) return;
+      if (!waveformBase64 || waveformBase64.length > SPEECH_TTS_MAX_WAVE_BASE64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(waveformBase64)) {
+        active.result = { state: "tts_error" };
+      } else active.result = { state: "tts_complete", eventId, waveformBase64 };
+    }, error => {
+      if (this.#tts === active) {
+        active.result = error instanceof AppleVoiceOutputTooLargeError
+          ? { state: "tts_error", code: "waveform_too_large", eventId }
+          : { state: "tts_error" };
+      }
+    }).finally(() => { this.#renderingTts = false; });
+    return admission;
+  }
+
+  private closeTts(sessionId: string) {
+    const active = this.#tts;
+    if (!active || active.admission.sessionId !== sessionId) return;
+    this.#tts = undefined;
+    clearTimeout(active.expiry);
+    active.controller.abort();
+  }
+
+  private async appleInstallOffer(locale: AppleSpeechLanguage): Promise<AppleAssetOffer> {
+    if (!this.#appleVoice?.install) throw new SpeechError("Apple speech asset setup is unavailable on this host.", 409);
+    if (this.#appleSetup?.active) throw new SpeechError("Apple speech asset setup is already in progress.", 409);
+    const status = await this.#appleVoice.status();
+    const match = status.recognition.find(item => item.locale === locale && item.status === "asset_required");
+    if (!status.supported || !match?.systemLocale) throw new SpeechError("The selected language does not need or cannot use Apple speech setup.", 409);
+    const value: AppleAssetOffer = { state: "apple_asset_offer", setupId: randomUUID(), locale, systemLocale: match.systemLocale };
+    this.#appleOffer = { value, expiresAt: Date.now() + 60_000 };
+    return value;
+  }
+
+  private beginAppleInstall(request: Extract<SpeechRequest, { operation: "apple_install" }>): AppleAssetSetup {
+    const offer = this.#appleOffer;
+    if (!offer || offer.expiresAt < Date.now() || offer.value.setupId !== request.setupId || offer.value.locale !== request.locale) {
+      throw new SpeechError("Confirm a fresh setup for this Apple speech language.", 409);
+    }
+    const adapter = this.#appleVoice;
+    if (!adapter?.install || this.#installController || this.#appleSetup?.active || this.#captureSession || this.#openingSession || this.#preparingPreview || this.#tts || this.#renderingTts) {
+      throw new SpeechError("Finish the current voice operation before starting Apple speech setup.", 409);
+    }
+    this.#appleOffer = undefined;
+    const setup = {
+      id: request.setupId, controller: new AbortController(), active: true,
+      result: { state: "apple_asset_setup", phase: "preparing", locale: request.locale } as AppleAssetSetup
+    };
+    this.#appleSetup = setup;
+    const signal = setup.controller.signal;
+    void Promise.resolve().then(async () => {
+      signal.throwIfAborted();
+      const current = await adapter.status();
+      signal.throwIfAborted();
+      if (!current.supported || !current.recognition.some(item => item.locale === request.locale
+        && item.systemLocale === offer.value.systemLocale && item.status === "asset_required")) {
+        throw new SpeechError("The selected Apple speech assets changed after confirmation.");
+      }
+      await adapter.install!(request.locale, offer.value.systemLocale, signal, fraction => {
+        if (!signal.aborted) setup.result = { ...setup.result, phase: "downloading", ...(fraction === undefined ? {} : { fraction }) };
+      });
+      signal.throwIfAborted();
+      setup.result = { ...setup.result, phase: "verifying" };
+      const latest = await adapter.status();
+      signal.throwIfAborted();
+      if (!latest.recognition.some(item => item.locale === request.locale && item.systemLocale === offer.value.systemLocale && item.status === "installed")) {
+        throw new SpeechError("Apple has not finished installing the selected assets.");
+      }
+      setup.result = { ...setup.result, phase: "ready" };
+    }).catch(() => {
+      setup.result = signal.aborted ? { ...setup.result, phase: "cancelled" }
+        : { ...setup.result, phase: "error", error: "Apple could not confirm the speech assets. Refresh readiness or try setup again." };
+    }).finally(() => { setup.active = false; });
+    return setup.result;
+  }
+
+  private closeSession(sessionId: string): void {
+    if (this.#captureSession?.admission.sessionId !== sessionId) return;
+    this.#captureSession = undefined;
+    for (const [jobId, job] of this.#jobs) {
+      if (job.sessionId !== sessionId) continue;
+      job.controller.abort();
+      this.#jobs.delete(jobId);
+    }
+  }
+
+  private async requireRecognizer(admission: Omit<SpeechSessionAdmission, "sessionId">): Promise<void> {
+    if (admission.stt.providerId === "apple_local") {
+      const status = await this.#appleVoice?.status();
+      if (!status?.supported || !status.recognition.some(entry => entry.locale === admission.language && entry.status === "installed")) {
+        throw new SpeechError("Apple recognition requires installed on-device assets for the selected language. Choose an installed language or select Whisper.", 409);
+      }
+      return;
+    }
+    const status = await this.status();
+    if (!status.engineReady || !status.installedModels.includes(admission.stt.modelId)) {
+      throw new SpeechError("Download the selected speech model in Settings → Voice input first.", 409);
+    }
   }
 
   async status(): Promise<SpeechStatus> {
@@ -146,7 +406,7 @@ export class SpeechRuntime {
   }
 
   private async install(modelId: SpeechModelId): Promise<SpeechStatus> {
-    if (this.#installController) throw new SpeechError("A speech model download is already in progress.", 409);
+    if (this.#installController || this.#appleSetup?.active) throw new SpeechError("A speech model download is already in progress.", 409);
     const controller = new AbortController();
     this.#installController = controller;
     try {
@@ -241,22 +501,30 @@ export class SpeechRuntime {
     } finally { await output.close(); }
   }
 
-  private async transcribe(request: Extract<SpeechRequest, { operation: "transcribe" }>): Promise<SpeechJobResult> {
+  private async transcribe(
+    request: Extract<SpeechRequest, { operation: "transcribe" }>, admission: SpeechSessionAdmission
+  ): Promise<SpeechJobResult> {
     for (const [id, job] of this.#jobs) if (Date.now() - job.updated > 120_000 && job.result.state !== "processing") this.#jobs.delete(id);
     if (this.#jobs.has(request.jobId)) throw new SpeechError("This transcription identifier is already in use.", 409);
     if (this.#recognizing) throw new SpeechError("Voice recognition is busy. Try again in a moment.", 409);
     if (this.#jobs.size >= 100) throw new SpeechError("Too many transcription requests. Try again shortly.", 429);
     const wav = Buffer.from(request.audioBase64, "base64");
     validateSpeechWave(wav);
-    const job: SpeechJob = { result: { state: "processing" }, controller: new AbortController(), updated: Date.now() };
+    const job: SpeechJob = { result: { state: "processing" }, controller: new AbortController(), updated: Date.now(), sessionId: admission.sessionId };
     this.#recognizing = true;
     this.#jobs.set(request.jobId, job);
     try {
-      const status = await this.status();
-      if (!status.engineReady || !status.installedModels.includes(request.modelId)) throw new SpeechError("Download the selected speech model in Settings → Voice input first.", 409);
+      if (admission.stt.providerId === "whisper_local") await this.requireRecognizer(admission);
     } catch (error) { this.#recognizing = false; this.#jobs.delete(request.jobId); throw error; }
     const recognize = this.#recognize ?? this.recognize.bind(this);
-    void Promise.resolve().then(() => recognize(this.modelPath(request.modelId), wav, request.language, job.controller.signal))
+    void Promise.resolve().then(() => {
+      job.controller.signal.throwIfAborted();
+      if (admission.stt.providerId === "apple_local") {
+        if (!this.#appleVoice || admission.language === "auto") throw new SpeechError("Apple recognition is unavailable.", 409);
+        return this.#appleVoice.recognize(wav, admission.language, job.controller.signal);
+      }
+      return recognize(this.modelPath(admission.stt.modelId), wav, admission.language, job.controller.signal);
+    })
       .then((text) => {
         if (!job.controller.signal.aborted) job.result = { state: "complete", text: text.trim().slice(0, 20_000) };
       })
@@ -269,13 +537,12 @@ export class SpeechRuntime {
   }
 
   private async recognize(model: string, wav: Uint8Array, language: string, signal: AbortSignal): Promise<string> {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "vdt-speech-audio-"));
-    try {
-      const input = path.join(directory, "input.wav");
-      await writeFile(input, wav, { flag: "wx", mode: 0o600 });
-      const output = await runWhisper(this.enginePath(), ["-m", model, "-f", input, "-l", language, "-nt", "-np", "-t", "4", "-bs", "1", "-bo", "1", "-ng"], directory, signal);
-      return output.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
-    } finally { await rm(directory, { recursive: true, force: true }); }
+    // The pinned CLI reads "-" from stdin. A fixed -of value preserves its
+    // transcript callback without creating a file (no output format flags).
+    const output = await runWhisper(this.enginePath(), [
+      "-m", model, "-f", "-", "-of", "vdt-dictation", "-l", language, "-nt", "-np", "-t", "4", "-bs", "1", "-bo", "1", "-ng"
+    ], this.directory, wav, signal);
+    return output.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
   }
 }
 
@@ -316,14 +583,16 @@ export function validateSpeechWave(wav: Buffer): void {
   }
 }
 
-function runWhisper(binary: string, args: string[], cwd: string, signal: AbortSignal): Promise<string> {
+function runWhisper(binary: string, args: string[], cwd: string, wav: Uint8Array, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
     const environment: NodeJS.ProcessEnv = { ...process.env, GGML_METAL_DEVICES: "0" };
     // Do not load foreign native backends; CPU avoids per-fragment Metal compilation.
     delete environment.GGML_BACKEND_PATH;
-    const child = spawn(binary, args, { cwd, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, shell: false });
+    const child = spawn(binary, args, { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+    const outputDecoder = new StringDecoder("utf8");
     let output = "";
+    let diagnostics = "";
     let size = 0;
     let failed = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -334,25 +603,38 @@ function runWhisper(binary: string, args: string[], cwd: string, signal: AbortSi
     };
     const timer = setTimeout(stop, 45_000);
     signal.addEventListener("abort", stop, { once: true });
-    child.stdout.on("data", (data: Buffer) => { size += data.length; if (size > 128 * 1024) stop(); else output += data.toString("utf8"); });
-    child.stderr.on("data", (data: Buffer) => { size += data.length; if (size > 128 * 1024) stop(); });
+    child.stdout.on("data", (data: Buffer) => { size += data.length; if (size > 128 * 1024) stop(); else output += outputDecoder.write(data); });
+    child.stderr.on("data", (data: Buffer) => {
+      size += data.length;
+      if (size > 128 * 1024) stop();
+      else diagnostics += data.toString("latin1");
+    });
     child.once("error", () => { failed = true; });
     child.once("close", (code) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal.removeEventListener("abort", stop);
-      if (failed || code !== 0) reject(new SpeechError("Local recognition failed. Try the Tiny model or restart dictation."));
-      else resolve(output);
+      // The pinned CLI can exit zero after a WAV decode failure. Both release
+      // sources acknowledge the byte count only after initializing the decoder.
+      const acknowledged = diagnostics.split(/\r?\n/).slice(0, -1)
+        .includes(`read_audio_data: read ${wav.byteLength} bytes from stdin`);
+      if (failed || code !== 0 || !acknowledged) {
+        reject(new SpeechError("Local recognition failed. Try the Tiny model or restart dictation."));
+      } else {
+        resolve(output + outputDecoder.end());
+      }
     });
+    child.stdin.on("error", stop);
+    child.stdin.end(wav);
   });
 }
 
 const globalSpeech = globalThis as typeof globalThis & { __vdtSpeechRuntime?: SpeechRuntime; __vdtSpeechRuntimeRevision?: number };
-export function getSpeechRuntime(): SpeechRuntime {
+export function getSpeechRuntime(options: Pick<SpeechRuntimeOptions, "appleVoice"> = {}): SpeechRuntime {
   // Deliberately invalidate only when the local speech runtime contract changes during development.
-  if (globalSpeech.__vdtSpeechRuntimeRevision !== 3) {
-    globalSpeech.__vdtSpeechRuntime = new SpeechRuntime();
-    globalSpeech.__vdtSpeechRuntimeRevision = 3;
+  if (globalSpeech.__vdtSpeechRuntimeRevision !== 9) {
+    globalSpeech.__vdtSpeechRuntime = new SpeechRuntime(options);
+    globalSpeech.__vdtSpeechRuntimeRevision = 9;
   }
-  return globalSpeech.__vdtSpeechRuntime ??= new SpeechRuntime();
+  return globalSpeech.__vdtSpeechRuntime ??= new SpeechRuntime(options);
 }

@@ -1,3 +1,5 @@
+import { assertLocalHttpTarget, LocalHttpRouteError, type ResolveOwnedLocalHttpRoute } from "@vdt-studio/model-bridge";
+import { localHttpFetch } from "./local-http-admission";
 import { CHAT_STARTER_INSTRUCTION, KPI_SUGGESTION_LIMITS, SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
 import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -7,12 +9,15 @@ import { promisify } from "node:util";
 import {
   assertArgsSafe,
   extractBoundedJson,
+  FAST_LOCAL_REASONING,
   getSubscriptionCliAdapter,
   verifyDirectClaudeSubscription,
   getRegisteredJsonSchema,
   getStrictResponseJsonSchema,
   isVdtSchemaId,
   normalizeRegisteredSchemaOutput,
+  parseLocalModelReasoningCapabilities,
+  resolveLocalReasoning,
   validateRegisteredSchemaDetailed,
   validateRegisteredSchema,
   type ExecFileProbe,
@@ -20,7 +25,7 @@ import {
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 import { cursorLaunchTarget, isWindowsCursorPayload, detectSubscriptionCli, selectCodexExecutable, windowsCursorLaunchIssueMessage } from "@vdt-studio/model-bridge/local-runtime";
-import { executeChatStarters, executeSmartSuggestion } from "./smart-suggestions";
+import { executeChatStarters, executeSmartSuggestion, readLocalSmartReasoningCapabilities } from "./smart-suggestions";
 import { executeHarnessCompletion } from "./harness-completion";
 import { probeHarnessModels } from "@vdt-studio/model-bridge/local-runtime";
 
@@ -471,6 +476,8 @@ export interface ExecutorOptions {
   env?: NodeJS.ProcessEnv;
   tempRoot?: string;
   fetch?: typeof globalThis.fetch;
+  requireVerifiedLocalHttp?: boolean;
+  resolveOwnedLocalHttpRoute?: ResolveOwnedLocalHttpRoute;
   spawn?: (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
   resolveExecutable?: (manifest: BackendManifest, env: NodeJS.ProcessEnv) => Promise<string>;
 }
@@ -1394,6 +1401,7 @@ async function listLocalHttpModels(
   options: ExecutorOptions
 ): Promise<readonly string[]> {
   if (!manifest.localHttp) return [];
+  assertLocalHttpTarget(manifest.localHttp.baseUrl);
   const urls = [
     appendPath(manifest.localHttp.baseUrl, "models"),
     ...(manifest.id === "ollama" ? [ollamaTagsUrl(manifest.localHttp.baseUrl)] : [])
@@ -1422,6 +1430,9 @@ async function postLocalHttpChat(
   timeoutMs: number
 ): Promise<string> {
   if (!manifest.localHttp) throw Object.assign(new Error("Backend has no local HTTP manifest."), { code: "INVALID_MANIFEST" });
+  const model = request.model ?? manifest.localHttp.defaultModel;
+  const task = request.schemaId === "connection-test-v1" ? "connection_test" : request.taskType;
+  const fetcher = localHttpFetch(manifest, task, model, options, request.localHttpSelection);
   const authorBudget = ollamaSkillAuthorBudget(manifest, request, messages);
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -1444,23 +1455,34 @@ async function postLocalHttpChat(
       ]
     : [{ type: "json_object" }];
   try {
+    let effectiveReasoning: CompletionRequest["modelReasoning"];
+    let nativeContext: unknown;
     if (authorBudget) {
-      const model = request.model ?? manifest.localHttp.defaultModel;
-      const metadata = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "show"), {
+      const metadata = await fetcher(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "show"), {
         method: "POST", redirect: "error", signal: controller.signal,
         headers: { "content-type": "application/json" }, body: JSON.stringify({ model })
       });
       const metadataText = await readBoundedResponse(metadata);
       controller.signal.throwIfAborted();
       if (!metadata.ok) throw Object.assign(new Error("Local model metadata request failed."), { code: "LOCAL_HTTP_FAILED" });
-      const declaredContext = ollamaDeclaredContext(JSON.parse(metadataText));
+      nativeContext = JSON.parse(metadataText);
+      const declaredContext = ollamaDeclaredContext(nativeContext);
       if (declaredContext !== undefined && declaredContext < authorBudget.num_ctx) throw Object.assign(new Error("The selected model cannot fit the bounded Skill Author context and output budget."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
-      response = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "chat"), {
+    }
+    if (request.modelReasoning !== undefined) {
+      const capabilities = authorBudget ? parseLocalModelReasoningCapabilities(nativeContext, manifest.id)
+        : await readLocalSmartReasoningCapabilities(manifest, model, controller.signal, options, request.localHttpSelection, task, request.modelReasoning === FAST_LOCAL_REASONING);
+      const effective = resolveLocalReasoning(capabilities, request.modelReasoning);
+      if (!effective.supported) throw Object.assign(new Error("The selected local model does not advertise this reasoning setting."), { code: "REASONING_UNSUPPORTED" });
+      effectiveReasoning = effective.value;
+    }
+    if (authorBudget || manifest.id === "ollama" && effectiveReasoning !== undefined) {
+      const format = getStrictResponseJsonSchema(request.schemaId as VdtSchemaId);
+      response = await fetcher(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "chat"), {
         method: "POST", redirect: "error", signal: controller.signal,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, stream: false, format: getStrictResponseJsonSchema("agent-decision-v2"),
-          // Preserve this legacy path's effective provider-default thinking.
-          // Forwarding explicit reasoning is a separate qualification gap.
+        body: JSON.stringify({ model, stream: false, format,
+          ...(effectiveReasoning === undefined ? {} : { think: effectiveReasoning }),
           options: { ...authorBudget, temperature: 0 }, messages })
       });
       rawResponse = await readBoundedResponse(response);
@@ -1471,32 +1493,34 @@ async function postLocalHttpChat(
       catch { throw Object.assign(new Error("Local model returned an invalid native response envelope."), { code: "INVALID_PROVIDER_RESPONSE" }); }
       if (!isRecord(native)) throw Object.assign(new Error("Local model returned an invalid native response envelope."), { code: "INVALID_PROVIDER_RESPONSE" });
       if (!response.ok || typeof native.error === "string") {
-        if (typeof native.error === "string" && /context|num_ctx/i.test(native.error) && /exceed|too (?:large|long|small)|insufficient|limit/i.test(native.error)) {
+        if (authorBudget && typeof native.error === "string" && /context|num_ctx/i.test(native.error) && /exceed|too (?:large|long|small)|insufficient|limit/i.test(native.error)) {
           throw Object.assign(new Error("The local model rejected the bounded Skill Author context."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
         }
         throw Object.assign(new Error("Local model endpoint failed."), { code: "LOCAL_HTTP_FAILED" });
       }
-      if (native.done_reason === "length") throw Object.assign(new Error("Skill Author exhausted its bounded generation budget before completing an answer."), { code: "SKILL_AUTHOR_OUTPUT_LIMIT" });
+      if (native.done_reason === "length") throw Object.assign(new Error("The local model exhausted its bounded generation budget."),
+        { code: authorBudget ? "SKILL_AUTHOR_OUTPUT_LIMIT" : "OUTPUT_TOO_LARGE" });
       const message = isRecord(native.message) ? native.message : undefined;
       if (message?.function_call != null || native.function_call != null
         || [message?.tool_calls, native.tool_calls].some(value => value != null && (!Array.isArray(value) || value.length > 0))) {
-        throw Object.assign(new Error("Read-only Skill Author returned native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
+        throw Object.assign(new Error("The local model returned unexpected native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
       }
       if (native.done !== true || native.done_reason !== "stop" || (message?.role !== undefined && message.role !== "assistant")
         || typeof message?.content !== "string" || !message.content.trim()) {
-        throw Object.assign(new Error("Local model did not return a completed nonempty Skill Author response."), { code: "INVALID_PROVIDER_RESPONSE" });
+        throw Object.assign(new Error("Local model did not return a completed nonempty response."), { code: "INVALID_PROVIDER_RESPONSE" });
       }
       return message.content;
     }
     for (const [index, responseFormat] of responseFormats.entries()) {
-      response = await (options.fetch ?? fetch)(`${manifest.localHttp.baseUrl}/chat/completions`, {
+      response = await fetcher(appendPath(manifest.localHttp.baseUrl, "chat/completions"), {
         method: "POST",
         redirect: "error",
         signal: controller.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: request.model ?? manifest.localHttp.defaultModel,
+          model,
           temperature: 0,
+          ...(typeof effectiveReasoning === "string" ? { reasoning_effort: effectiveReasoning } : {}),
           response_format: responseFormat,
           messages
         })
@@ -1568,7 +1592,8 @@ async function executeLocalHttp(
   const content = await postLocalHttpChat(
     manifest,
     [
-      { role: "system", content: `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
+      { role: "system", content: schemaId === "connection-test-v1" ? 'Return exactly {"ok":true}.'
+        : `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
       { role: "user", content: JSON.stringify(request.input) }
     ],
     signal,
@@ -1638,6 +1663,14 @@ export async function executeCompletion(
 ): Promise<ExecutionResult> {
   if (!isVdtSchemaId(request.schemaId)) throw Object.assign(new Error("Unknown schemaId."), { code: "UNKNOWN_SCHEMA" });
   if (signal.aborted) throw abortError();
+  if (options.requireVerifiedLocalHttp || request.localHttpSelection !== undefined) {
+    if (manifest.id !== request.backendId || manifest.kind !== "local_http" || (manifest.harness && manifest.harness.transport !== "native")) {
+      throw new LocalHttpRouteError("LOCAL_TARGET_REJECTED", "The requested backend has no reviewed local HTTP transport.");
+    }
+    if (request.localHttpSelection === undefined || !request.model) {
+      throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "A verified local request must name an exact host-admitted model.");
+    }
+  }
   if (request.taskType === "suggest_incoming_kpis") return executeSmartSuggestion(manifest, request, signal, options);
   if (request.taskType === "suggest_chat_starters" && manifest.kind !== "mock") return executeChatStarters(manifest, request, signal, options);
   if (manifest.harness && manifest.harness.transport !== "native") return executeHarnessCompletion(manifest, request, signal, options);
@@ -1666,6 +1699,9 @@ export async function listBackendModels(
   signal: AbortSignal,
   options: ExecutorOptions = {}
 ): Promise<readonly string[]> {
+  if (options.requireVerifiedLocalHttp) {
+    throw new LocalHttpRouteError("LOCAL_ROUTE_UNVERIFIED", "The host has no verified model catalog for this execution context.");
+  }
   if (!manifest.modelSelection) return [];
   if (signal.aborted) throw abortError("Model listing was cancelled.");
   if (manifest.harness && manifest.harness.transport !== "native") return (await probeHarnessModels(manifest.harness, signal, options.env)).map(m => m.id);

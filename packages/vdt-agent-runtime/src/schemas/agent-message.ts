@@ -25,9 +25,36 @@ export const manualProjectChangeSchema = z.object({
   summary: z.string().max(500).optional()
 });
 
+const checkpointId = z.string().min(1).max(160);
+export const agentAnswerCaptureSchema = z.object({
+  runId: checkpointId,
+  projectId: checkpointId,
+  vdtId: checkpointId,
+  questionSetId: checkpointId,
+  questionEventId: checkpointId,
+  questionId: checkpointId,
+  turnId: z.uuid()
+}).strict();
+export const agentQuestionExpectationSchema = agentAnswerCaptureSchema.extend({
+  captureSessionId: z.uuid(),
+  recognitionProof: z.uuid()
+}).strict();
+export type AgentAnswerCapture = z.infer<typeof agentAnswerCaptureSchema>;
+export const agentProposalExpectationSchema = z.object({
+  runId: checkpointId,
+  projectId: checkpointId,
+  vdtId: checkpointId,
+  proposalId: checkpointId,
+  baseRevisionId: checkpointId,
+  baseRevision: z.number().int().nonnegative()
+}).strict();
+export type AgentQuestionExpectation = z.infer<typeof agentQuestionExpectationSchema>;
+export type AgentProposalExpectation = z.infer<typeof agentProposalExpectationSchema>;
+
 export const agentUserMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("user_answer"),
+    expectedQuestion: agentQuestionExpectationSchema.optional(),
     answers: z.record(z.string(), answerValueSchema).optional(),
     structuredAnswers: z.array(agentAnswerPayloadSchema).max(20).optional()
   }),
@@ -53,6 +80,7 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("approval"),
+    expectedProposal: agentProposalExpectationSchema.optional(),
     approved: z.boolean(),
     proposalId: z.string().trim().min(1).max(160).optional(),
     selectedChangeIds: z.array(z.string().trim().min(1).max(160)).max(200).optional()

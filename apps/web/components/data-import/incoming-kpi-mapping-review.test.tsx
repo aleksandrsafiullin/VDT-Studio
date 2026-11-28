@@ -26,6 +26,17 @@ function render(snapshot = snapshotFixture(), extra: { mappingChanged?: boolean;
 }
 
 describe("incoming KPI mapping review", () => {
+  it("offers explicit numeric unit choices for an unresolved Apple mapping", () => {
+    const snapshot = snapshotFixture();
+    snapshot.incomingKpi!.requiresExplicitDuration = true;
+    delete snapshot.incomingKpi!.options.duration;
+    const html = render(snapshot);
+    expect(html).toContain('value="column:minutes"');
+    expect(html).toContain('value="column:target"');
+    expect(html).not.toContain('value="column"');
+    expect(html).toContain('value="" selected="">Choose the value calculation');
+  });
+
   it("shows the bounded parser failure when the analysis has no mapping", () => {
     const snapshot = snapshotFixture();
     const message = "Workbook could not be parsed: Workbook dimensions exceed the 25000 row / 80 column limit. Upload a smaller table extract.";

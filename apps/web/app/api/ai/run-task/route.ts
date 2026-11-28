@@ -1,3 +1,6 @@
+import { AppleTransportError } from "@vdt-studio/local-runner/apple-foundation-models";
+import { createAppleNativeChatStarterProvider } from "../../agent/runs/apple-native-chat-starters";
+import { APPLE_NATIVE_PROVIDER_ID } from "../../agent/runs/apple-native-host";
 import { NextResponse } from "next/server";
 import { prepareSmartKpiResponse } from "@/lib/smart-kpi-service";
 import { readAiRouteBody, SMART_HTTP_BODY_BYTES, aiRouteGuardStatus } from "@/lib/ai-route-body";
@@ -8,13 +11,8 @@ import {
   type RunAiTaskInputMap,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
-import {
-  AiRouteProviderError,
-  createAiProvider,
-  readLocalRunnerProviderConfig,
-  readMaxTokens,
-  type AiRouteProviderRequest
-} from "@/lib/ai-route-provider";
+import { AiRouteProviderError, readMaxTokens } from "@/lib/ai-route-provider";
+import { assertTaskProviderAdmission, createTaskAiProvider } from "../../agent/runs/managed-ai-provider";
 import {
   assertRunTaskBodySize,
   parseRunTaskRequest,
@@ -59,8 +57,19 @@ export async function POST(request: Request) {
 
     const { input } = parseRunTaskRequest(body);
     if (taskType === "suggest_incoming_kpis") {
-      const result = await prepareSmartKpiResponse({ input, providerId: String(body.providerId ?? ""), ...(body.providerConfig ? { providerConfig: body.providerConfig } : {}) }, request.signal, request.url);
+      if (body.providerId !== APPLE_NATIVE_PROVIDER_ID) assertTaskProviderAdmission(body, { task: "suggested_kpi", completions: [taskType] });
+      const result = await prepareSmartKpiResponse({
+        input, providerId: String(body.providerId ?? ""),
+        ...(body.providerConfig ? { providerConfig: body.providerConfig } : {}),
+        ...(body.expectedExecution === undefined ? {} : { expectedExecution: body.expectedExecution })
+      }, request.signal, request.url);
       return NextResponse.json({ ok: true, result: { kind: "suggestions", result } }, { headers: { "cache-control": "no-store" } });
+    }
+    if (body.providerId === APPLE_NATIVE_PROVIDER_ID) {
+      if (taskType !== "suggest_chat_starters") throw new AppleTransportError("invalid_request");
+      const provider = createAppleNativeChatStarterProvider(body);
+      const result = await runAiTask(taskType, provider, { ...input, signal: request.signal } as RunAiTaskInputMap[typeof taskType]);
+      return NextResponse.json({ ok: true, result }, { headers: { "cache-control": "no-store" } });
     }
     const maxTokens = readMaxTokens(body.providerConfig);
     const taskInput = { ...input, ...(maxTokens !== undefined ? { maxTokens } : {}), signal: request.signal };
@@ -77,13 +86,14 @@ export async function POST(request: Request) {
         for (const key of ["modelReasoning", "reasoningEffort", "thinkingBudget", "disableThinking", "adaptiveThinking"]) delete body.providerConfig[key];
       }
     }
-    const provider = createAiProvider(body as AiRouteProviderRequest, request.url);
+    const provider = createTaskAiProvider(body, request.url, { task: "bounded_task", completions: [taskType] });
     const result = await runAiTask(taskType, provider, taskInput as RunAiTaskInputMap[Exclude<RunTaskType, "suggest_incoming_kpis">]);
 
     const response = NextResponse.json({ ok: true, result });
     if (taskType === "suggest_chat_starters") response.headers.set("cache-control", "no-store");
     return response;
   } catch (error) {
+    if (error instanceof AppleTransportError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: 409 });
     if (error instanceof AiRouteProviderError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }
@@ -118,10 +128,10 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof Error && isLocalRunnerConnectionFailure(error)) {
-      const runnerUrl =
-        body?.providerId === "local_runner"
-          ? readLocalRunnerProviderConfig(body.providerConfig, new URL(request.url).origin).runnerUrl
-          : (process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765");
+      const requestedRunnerUrl = body?.providerId === "local_runner" && typeof body.providerConfig?.pairingToken === "string"
+        ? body.providerConfig.runnerUrl : undefined;
+      const runnerUrl = typeof requestedRunnerUrl === "string" ? requestedRunnerUrl
+        : (process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765");
       return NextResponse.json(
         {
           ok: false,

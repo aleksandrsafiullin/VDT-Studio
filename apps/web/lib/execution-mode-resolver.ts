@@ -1,3 +1,4 @@
+import { isAppleAnalyticalChoice } from "./apple-first-launch";
 import { isModelReasoningValue, modelReasoningKey } from "@vdt-studio/ai-harness/browser";
 import { resolveEffectiveByokUrls, resolveByokPreset } from "./byok-validation";
 import {
@@ -59,10 +60,13 @@ export interface LegacyProviderConfig {
   model?: string | undefined;
 }
 
-export interface ResolvedExecutionProvider {
+interface ConfiguredExecutionProvider {
   providerId: ResolvedProviderId;
   providerConfig?: Record<string, unknown> | undefined;
 }
+
+export type ResolvedExecutionProvider = ConfiguredExecutionProvider
+  | { providerId: "apple_foundation_models"; providerConfig?: undefined };
 
 function inferGatewayPresetId(providerId: ResolvedProviderId, config: LegacyProviderConfig): GatewayPresetId {
   if (providerId === "mock") {
@@ -264,7 +268,7 @@ export function syncLegacyProviderFromExecutionSettings(
   executionSettings: ExecutionSettings,
   existingConfig: LegacyProviderConfig = {}
 ): LegacyProviderState {
-  const resolved = resolveExecutionSettings(executionSettings);
+  const resolved = resolveConfiguredExecutionSettings(executionSettings);
   const providerId = resolved.providerId;
   const resolvedConfig = resolved.providerConfig ?? {};
 
@@ -446,7 +450,7 @@ function resolveLocalCliTimeoutMs(settings: ExecutionSettings, isSubscriptionCli
   return isSubscriptionCli ? Math.max(timeoutMs, AGENT_DECISION_TIMEOUT_FLOOR_MS) : timeoutMs;
 }
 
-function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider {
+function resolveLocalCli(settings: ExecutionSettings): ConfiguredExecutionProvider {
   const presetId = settings.localRunnerPresetId ?? "ollama_openai";
   const preset = getLocalRunnerPreset(presetId);
   let runnerProviderId = settings.runnerProviderId ?? preset.runnerProviderId;
@@ -484,7 +488,7 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
   };
 }
 
-function resolveByok(settings: ExecutionSettings): ResolvedExecutionProvider {
+function resolveByok(settings: ExecutionSettings): ConfiguredExecutionProvider {
   if (settings.useMockProvider || settings.gatewayPresetId === "mock") {
     return { providerId: "mock" };
   }
@@ -555,6 +559,13 @@ function resolveByok(settings: ExecutionSettings): ResolvedExecutionProvider {
 }
 
 export function resolveExecutionSettings(settings: ExecutionSettings): ResolvedExecutionProvider {
+  // Only host-admitted callers can attach the opaque Apple binding. This
+  // marker carries no credentials and cannot select another provider.
+  if (isAppleAnalyticalChoice(settings.analyticalSourceChoice)) return { providerId: "apple_foundation_models" };
+  return resolveConfiguredExecutionSettings(settings);
+}
+
+export function resolveConfiguredExecutionSettings(settings: ExecutionSettings): ConfiguredExecutionProvider {
   const resolved = settings.executionMode === "local_cli" ? resolveLocalCli(settings) : resolveByok(settings);
   const config = resolved.providerConfig ?? {};
   const key = modelReasoningKey(resolved.providerId, config);

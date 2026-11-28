@@ -1,22 +1,50 @@
 import { z } from "zod";
-import type { AgentTool } from "../tool-registry";
+import { AgentToolError, type AgentTool } from "../tool-registry";
 import { normalizeUserQuestions, publicStatusForPhase } from "../chat-messages";
 import { agentQuestionSchema } from "../schemas/agent-event";
+import { confirmConversationDecisionProposal, isReservedConfirmationQuestionId } from "../conversation-decision-proposal";
 
 export function createUserTools(): AgentTool[] {
   return [askUserTool, showStatusTool, requestApprovalTool];
 }
 
-const askUserTool: AgentTool = {
+const askInput = z.object({ questions: z.array(agentQuestionSchema).min(1).max(5) });
+
+const askUserTool: AgentTool<z.infer<typeof askInput>> = {
   name: "user.ask",
-  description: "Pause the run and ask required user questions.",
-  inputSchema: z.object({
-    questions: z.array(agentQuestionSchema).min(1).max(5)
-  }),
-  outputSchema: z.object({ status: z.literal("needs_user_input") }),
+  description: "Pause the run and ask required user questions. Use a bounded decisionProposal on one question to request confirmation of a definition in the latest submitted user message.",
+  inputSchema: askInput,
+  outputSchema: z.object({ status: z.literal("needs_user_input"), questions: z.array(agentQuestionSchema).optional() }),
   phase: "asking_clarifying_questions",
   run(context, input) {
-    const questions = normalizeUserQuestions(input.questions);
+    const received = input.questions;
+    const proposal = received.find(question => question.decisionProposal)?.decisionProposal;
+    if ((proposal && received.length !== 1) || received.some(question => isReservedConfirmationQuestionId(question.id))) {
+      throw new AgentToolError("DECISION_CONFIRMATION_INVALID", "Use a single decision proposal. Confirmation question IDs are created by the workspace.");
+    }
+    const state = context.store.getState(context.runId);
+    let questions;
+    if (proposal) {
+      const workspace = state.request.workspace;
+      const conversationId = state.request.conversationId;
+      const source = state.chatMessages.slice().reverse().find(message => message.runId === context.runId && message.role === "user");
+      const confirmation = workspace?.vdtId && conversationId && source
+        ? confirmConversationDecisionProposal(source, proposal, proposal.language, {
+          projectId: workspace.projectId, vdtId: workspace.vdtId, conversationId
+        })
+        : undefined;
+      if (!confirmation) throw new AgentToolError("DECISION_EVIDENCE_UNCONFIRMED", "Quote the latest submitted user text from this saved conversation verbatim.");
+      questions = [confirmation];
+      if (state.request.executionBindingId
+        && (state.request.providerId === "model_agent" || state.request.providerId === "external_cli_agent")) {
+        // The Supervisor publishes the form with the question-set ID needed
+        // to accept the answer. The phase reports the pause to the Gateway.
+        context.store.updateRun(context.runId, { status: "needs_user_input", phase: "asking_clarifying_questions" });
+        return { status: "needs_user_input", questions };
+      }
+    } else {
+      questions = normalizeUserQuestions(received.map(({ decisionProposal: _proposal, ...question }) => question));
+    }
     context.store.updateRun(context.runId, {
       status: "needs_user_input",
       phase: "asking_clarifying_questions",
@@ -35,7 +63,7 @@ const askUserTool: AgentTool = {
       message: `Agent needs ${questions.length} answer${questions.length === 1 ? "" : "s"} before continuing.`,
       questions
     });
-    return { status: "needs_user_input" };
+    return { status: "needs_user_input", ...(proposal ? { questions } : {}) };
   }
 };
 

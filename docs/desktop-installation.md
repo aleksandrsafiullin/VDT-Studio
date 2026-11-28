@@ -32,6 +32,22 @@ Mount the disk image on the Mac and copy VDT Studio into Applications. The built
 
 The local package has a Developer ID signature. Apple notarization and Gatekeeper acceptance of a quarantined download are separate distribution gates. The native alpha build targets Apple Silicon and configures macOS 14 as its deployment floor. Local host acceptance establishes only the tested macOS and hardware.
 
+### Apple AI preview package
+
+For an isolated engineering candidate, set `VDT_MACOS_APPLE_AI_PREVIEW=true`
+when building from the candidate source reference. The flag adds two signed
+helpers and requires macOS SDK 26.4 or later. The installed app keeps the
+macOS 14 deployment floor. Apple capabilities still check the running OS,
+system model, locale and speech assets independently. The flag exposes the
+preview transport. Shipping default selection, offline launch, microphone
+permission and notarization have separate gates.
+[Native transport and verification](implementation/APPLE_FOUNDATION_MODELS_TRANSPORT_2026-11-25.md)
+
+After Apple on-device is selected and ready, Settings → Local models offers
+**Run inference test**. It uses the selected Apple model for a fixed
+calculation and displays the verified result and the active model and locale.
+The test uses synthetic input and can be cancelled from Settings.
+
 ### Connect Cursor in the desktop app
 
 Install Cursor Agent CLI from [Cursor's installation guide](https://cursor.com/docs/cli/installation). In Settings, open **Your subscriptions**, find **Cursor CLI**, and choose **Sign in**. Finish the Cursor browser confirmation, then check the connection and choose a supported model in chat. VDT keeps a separate local Cursor sign-in for its confined desktop sessions. A browser or Cursor editor sign-in by itself does not establish this connection.

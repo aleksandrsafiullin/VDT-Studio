@@ -1,6 +1,7 @@
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { describe, expect, it, vi } from "vitest";
-import { AgentExecutionBindingRegistry } from "./execution-bindings";
+import { AgentExecutionBindingRegistry, executionBindingSummary } from "./execution-bindings";
+import { assertAnalyticalAdmission, hostExecutionAdmission } from "./execution-binding-admission";
 import {
   LocalModelAgentBindingRegistrar,
   createLocalModelAgentBinding,
@@ -61,6 +62,43 @@ describe("server-owned local Model Agent bindings", () => {
     await registrar.refresh();
     expect(registry.summaries()).toHaveLength(1);
     expect(registry.summaries()[0]?.modelId).toBe("qwen3:8b");
+  });
+
+  it("admits an exact host-installed route only while its owned transport and revision remain current", () => {
+    const proof = { providerId: "ollama", modelId: "qwen3:8b", profileVersion: "installed-v1", modelRevision: HASH } as const;
+    const binding = createLocalModelAgentBinding("ollama", proof.modelId, HASH, false, proof);
+    const fetcher = vi.fn();
+    let currentRevision = HASH;
+    const registry = new AgentExecutionBindingRegistry([], {
+      resolveOwnedLocalHttpRoute: (target, selection) =>
+        selection.modelRevision === currentRevision ? { ...target, ...selection, fetch: fetcher } : undefined
+    });
+    expect(() => new AgentExecutionBindingRegistry([binding])).toThrow("cannot verify");
+    registry.register(binding);
+    const admitted = registry.resolve(binding.bindingId);
+    const admission = hostExecutionAdmission(admitted);
+    expect(executionBindingSummary(admitted)).toMatchObject({
+      admission: {
+        mode: "local", modelRevision: HASH, runtimeProfileVersion: "installed-v1",
+        reasoning: false, boundary: "on_device", research: false, delegation: false
+      }
+    });
+    expect(() => assertAnalyticalAdmission(admission, "agent_run", "off", admission)).not.toThrow();
+    expect(() => assertAnalyticalAdmission(admission, "agent_run", "on")).toThrow("web research");
+    expect(() => assertAnalyticalAdmission(admission, "generation_diagnostics")).toThrow("cannot perform");
+    expect(() => assertAnalyticalAdmission(admission, "agent_run", "off", { ...admission, mode: "cli_subscription" })).toThrow("stale");
+    currentRevision = `sha256:${"b".repeat(64)}`;
+    expect(() => registry.resolve(binding.bindingId)).toThrow("cannot verify");
+    expect(() => registry.revalidateLocalRoute(admitted)).toThrow("cannot verify");
+    expect(registry.summaries()).toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refuses to attach local evidence to another provider or model", () => {
+    const binding = createLocalModelAgentBinding("ollama", "qwen3:8b", HASH, undefined, {
+      providerId: "vllm", modelId: "qwen3:8b", profileVersion: "installed-v1", modelRevision: HASH
+    });
+    expect(() => new AgentExecutionBindingRegistry([binding])).toThrow("exact local structured model");
   });
 
   it("rejects local endpoint overrides in a binding", () => {

@@ -7,7 +7,7 @@ import { dataDiscoveryToolNameSchema, runRawDataDiscovery } from "@vdt-studio/da
 import { getRegisteredJsonSchema } from "@vdt-studio/model-bridge";
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
-import { createManagedAwareAiProvider } from "../agent/runs/managed-ai-provider";
+import { createTaskAiProvider } from "../agent/runs/managed-ai-provider";
 
 type RuntimeContext = ReturnType<typeof createLocalRuntimeContext>;
 const runtimeGlobal = globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: RuntimeContext };
@@ -23,6 +23,27 @@ afterEach(async () => {
 });
 
 describe("managed data provider canonical runtime integration", () => {
+  it("dispatches the selected Ollama reasoning value on the file-analysis wire", async () => {
+    previousRuntime = runtimeGlobal.__vdtStudioDevelopmentRuntime;
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    const fetch = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith("/api/show")
+      ? Response.json({ thinking: { values: [false, true] } })
+      : Response.json({
+          done: true, done_reason: "stop",
+          message: { content: JSON.stringify({ type: "ask_user", rationale: "Clarify the denominator.", questions: ["Which period?"] }) }
+        }));
+    runtimeGlobal.__vdtStudioDevelopmentRuntime = createLocalRuntimeContext({ executor: { fetch }, auditSink: () => {} });
+    const provider = createTaskAiProvider({ providerId: "local_runner", providerConfig: {
+      backendId: "ollama", model: "selected", modelReasoning: "vdt-fast"
+    } }, "http://localhost:3000/api/data/discovery/runs", {
+      task: "file_analysis", completions: ["data_agent_decision"]
+    });
+    await expect(provider.completeStructured({
+      taskType: "data_agent_decision", input: {}, systemPrompt: "Review the file", userPrompt: "Check dates", schema: {}
+    })).resolves.toMatchObject({ type: "ask_user" });
+    expect(fetch.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(["/api/show", "/api/chat"]);
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ model: "selected", think: false });
+  });
   it.each(["cursor_subscription", "codex_subscription"])("keeps tool arguments, mapping suggestions and questions through %s", async (backendId) => {
     previousRuntime = runtimeGlobal.__vdtStudioDevelopmentRuntime;
     // A fake executable verifies the actual production transport, not live-provider qualification.
@@ -73,7 +94,14 @@ process.stdout.write(JSON.stringify(codex
     const project = structuredClone(productionVolumeProject);
     project.graph.nodes.find((node) => node.id === "unplanned_downtime")!.unit = "h/day";
     const bytes = new TextEncoder().encode("Class,System,Reason,Start,End\nPlanned,Mechanical,Inspection,01/02/2026 00:00,01/02/2026 02:00\nUnplanned,Electrical,Power loss,03/02/2026 00:00,03/02/2026 01:00");
-    const provider = createManagedAwareAiProvider({ providerId: "local_runner", providerConfig: { backendId, timeoutMs: 10_000 } }, "http://localhost:3000/api/data/discovery/runs");
+    const provider = createTaskAiProvider({
+      providerId: "local_runner", providerConfig: { backendId, model: "fixture-model", timeoutMs: 10_000 },
+      ...(backendId === "codex_subscription" ? {
+        expectedExecution: { profileVersion: 1, mode: "cli_subscription", providerId: backendId, modelId: "fixture-model", modelRevision: null }
+      } : {})
+    }, "http://localhost:3000/api/data/discovery/runs", {
+      task: "file_analysis", completions: ["data_agent_decision", "analyze_raw_dataset", "review_dataset_proposal"]
+    });
     const snapshot = await runRawDataDiscovery({
       datasetId: "dataset_canonical_transport", bytes, project, provider,
       file: { fileName: "synthetic-downtime.csv", mimeType: "text/csv", sizeBytes: bytes.length, contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, storageRef: "dataset_canonical_transport", uploadedAt: "2026-10-16T00:00:00.000Z" },

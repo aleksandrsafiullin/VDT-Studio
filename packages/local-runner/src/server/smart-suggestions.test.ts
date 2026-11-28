@@ -154,6 +154,17 @@ describe("Smart task-scoped local transport", () => {
     await expect(executeCompletion(createManifestRegistry().get("lm_studio")!, { ...await request("lm_studio"), modelReasoning: false }, new AbortController().signal, { fetch })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("sends Fast as the lowest advertised Ollama level when Off is unavailable", async () => {
+    const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => String(url).endsWith("/api/show")
+      ? json({ thinking: { values: ["high", "low", "medium"] } })
+      : json({ done: true, done_reason: "stop", message: { content: JSON.stringify(empty), thinking: "private thinking" } }));
+    const result = await executeCompletion(createManifestRegistry().get("ollama")!, {
+      ...await request("ollama"), modelReasoning: "vdt-fast"
+    }, new AbortController().signal, { fetch });
+    expect(result.output).toEqual(empty);
+    expect(JSON.stringify(result)).not.toContain("private thinking");
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ think: "low" });
+  });
   it("dispatches the exact registered task/schema through the native sidecar boundary", async () => {
     const input = await request("mock");
     const result = await handleSidecarRequest({ protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "request", requestId: input.requestId, method: "complete",

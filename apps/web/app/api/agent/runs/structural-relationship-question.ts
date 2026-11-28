@@ -34,6 +34,46 @@ export function ollamaRelationshipDecision(assessment: unknown, source: readonly
   return { question: decision.relationship === "unresolved" ? decision.question : null };
 }
 
+export const OLLAMA_STRUCTURAL_RELATIONSHIP_REVIEW_PROMPT = [
+  "Independently review whether the draft question is necessary to build the model requested in the literal user brief. The draft question and its reason are unverified, not additional facts.",
+  "Choose stated if the user already supplied the relationship or basis. Choose out_of_scope if the requested model does not depend on the proposed distinction. For either choice use an exact supporting quote from the brief. Choose a grounded suppression even if the question misstates a value when the user's wording settles what it asks.",
+  "Choose material only if the same original question and reason contain no invented or contradictory facts and distinguish two unresolved, plausible real-world arrangements that change the requested model. Quote two distinct, nonoverlapping phrases from the original question that describe those arrangements. Cite the exact user wording that supports the relevant process and scope.",
+  "Choose unsupported if the draft itself contains an error, changes the requested KPI or horizon, asks for later measurements, or cannot be justified from the submitted brief. Never rewrite the question or choose a Skill."
+].join(" ");
+
+const reviewAlternative = z.string().trim().min(1).max(120);
+export const ollamaRelationshipReviewSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("material"), userQuote: explanation,
+    alternatives: z.array(reviewAlternative).length(2) }).strict(),
+  z.object({ disposition: z.literal("stated"), userQuote: explanation }).strict(),
+  z.object({ disposition: z.literal("out_of_scope"), userQuote: explanation }).strict(),
+  z.object({ disposition: z.literal("unsupported") }).strict()
+]);
+
+export function ollamaRelationshipReview(review: unknown, draft: NonNullable<z.infer<typeof structuralRelationshipAssessmentSchema>["question"]>,
+  source: readonly unknown[]): "show" | "continue" | "discard" | "hold" {
+  const checked = ollamaRelationshipReviewSchema.safeParse(review);
+  const evidence = source.filter((value): value is string => typeof value === "string");
+  if (!checked.success) return "hold";
+  const decision = checked.data;
+  if (decision.disposition === "unsupported") return "discard";
+  if (!evidence.some(text => text.includes(decision.userQuote))) return "hold";
+  if (decision.disposition !== "material") return "continue";
+  const [first, second] = decision.alternatives;
+  const appearsBefore = (left: string, right: string) => {
+    const start = draft.text.indexOf(left);
+    return start >= 0 && draft.text.includes(right, start + left.length);
+  };
+  if (!first || !second || first.toLowerCase() === second.toLowerCase()
+    || (!appearsBefore(first, second) && !appearsBefore(second, first))) return "hold";
+  // A question can name supplied values, but it must not introduce a fresh
+  // numeric claim before the plan or calculator has verified anything.
+  const numerals = (text: string) => text.match(/[+-]?\p{Nd}+(?:[.,]\p{Nd}+)*/gu) ?? [];
+  const submittedNumerals = new Set(evidence.flatMap(numerals));
+  return numerals(`${draft.text}
+${draft.reason}`).every(value => submittedNumerals.has(value)) ? "show" : "hold";
+}
+
 export function structuralRelationshipQuestion(exchangeId: string, assessment: unknown) {
   const { question } = structuralRelationshipAssessmentSchema.parse(assessment);
   if (!question) return undefined;

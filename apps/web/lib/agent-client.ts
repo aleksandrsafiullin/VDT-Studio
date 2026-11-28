@@ -33,6 +33,9 @@ export interface StartAgentRunResponse {
 }
 
 export interface PublicAgentExecutionBindingSummary {
+  adaptiveReasoning?: import("@/app/api/agent/runs/adaptive-reasoning").AdaptiveReasoningPolicy | undefined;
+  appleIdentity?: { osBuild: string; locale: string } | undefined;
+  admission?: NonNullable<VdtAgentPublicStartRequest["expectedExecution"]> | undefined;
   modelReasoning?: boolean | string | number | undefined;
   bindingId: string;
   executionProfile: "model_agent" | "external_cli_agent";
@@ -52,9 +55,14 @@ export interface AgentExecutionBindingSelection {
 
 export interface AgentEventHandlers {
   onEvent?: (event: VdtAgentEvent) => void;
+  onCanonicalEvent?: (event: AgentRunEventV2) => void;
   onSupervisorUpdate?: () => void;
   onError?: (error: Event) => void;
   onOpen?: () => void;
+}
+
+interface AgentMessageExecutionOptions {
+  expectedExecutionMode?: NonNullable<VdtAgentPublicStartRequest["expectedExecution"]>["mode"] | undefined;
 }
 
 export interface AgentClient {
@@ -62,7 +70,7 @@ export interface AgentClient {
   startRun(request: VdtAgentPublicStartRequest): Promise<StartAgentRunResponse>;
   getRun(runId: string): Promise<VdtAgentRunSnapshot>;
   subscribe(runId: string, handlers: AgentEventHandlers): () => void;
-  sendMessage(runId: string, message: AgentUserMessage): Promise<VdtAgentRunSnapshot>;
+  sendMessage(runId: string, message: AgentUserMessage, options?: AgentMessageExecutionOptions): Promise<VdtAgentRunSnapshot>;
   cancel(runId: string, options?: { awaitTerminal?: boolean }): Promise<void>;
 }
 
@@ -106,18 +114,19 @@ export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
         }
         // The durable final event precedes finish persistence and the public
         // chat projection. RUN_SUCCEEDED follows both.
-        if (update.schemaVersion === 2 && update.type !== "final" && update.type !== "checkpoint") {
-          handlers.onSupervisorUpdate?.();
+        if (update.schemaVersion === 2) {
+          handlers.onCanonicalEvent?.(update);
+          if (update.type !== "final" && update.type !== "checkpoint") handlers.onSupervisorUpdate?.();
         }
       });
       source.addEventListener("error", (event) => handlers.onError?.(event));
       return () => source.close();
     },
-    async sendMessage(runId, message) {
+    async sendMessage(runId, message, options) {
       const response = await fetcher(`/api/agent/runs/${encodeURIComponent(runId)}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(message)
+        body: JSON.stringify({ ...message, expectedExecutionMode: options?.expectedExecutionMode })
       });
       const payload = await readJsonResponse<{ ok: true; snapshot: VdtAgentRunSnapshot }>(
         response,

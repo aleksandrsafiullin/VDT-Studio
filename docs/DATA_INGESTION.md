@@ -72,6 +72,60 @@ For event logs, use **Unique event ID** to select the column that the source gua
 
 Provider-assisted discovery uses the same three canonical data-task contracts in the managed CLI runtime and data harness. Strict response schemas put the decision union inside the root object's decision field, as required by Codex. The transport unwraps it before canonical validation of the chosen tool and its arguments. Incoming mapping proposals can supply observed columns and duration settings. Human review owns event identity, the decision to include blank categories, mapping confirmation and clarification answers. Canonical data validation rejects malformed enum values, fractional timezone offsets/tool limits and nonpositive denominators before the deterministic compiler. Synthetic fake-CLI transport tests establish the contract only.
 
+### Apple on-device file analysis preview
+
+When Apple is selected and verified in the desktop preview, **Analyze with AI** passes the admitted Local binding to Data Discovery for the saved tree and selected incoming KPI. It starts with one native mapping proposal. The model receives at most four table profiles with up to 24 column headers per table, bounded redacted examples and the target KPI label and unit. The host checks the proposed IDs against those profiles. The parser retains the original file and SHA-256 under the owning project and VDT. Workbook bytes, storage paths and project identifiers stay outside the native request.
+
+Apple's guided choices use distinct aliases for categories, amounts, start times and end times. The host resolves them to exact parsed columns and rejects overlaps. If a guided Excel serial-time proposal assigns either selected timestamp column to grouping, Apple can make one category-only correction within the same analysis deadline. The table, timestamp columns and format are fixed, and the user still confirms the corrected proposal. On a guided XLSX worksheet with both timestamp and amount candidates, when an amount proposal assigns the same physical column to grouping and amount, Apple can make one same-table proposal within the original deadline. The new proposal uses the saved KPI scope and still needs the same mapping validation and confirmation. Duplicate parsed column names block Apple analysis because the physical source column cannot be identified unambiguously. When the bounded profile lacks distinct columns for a usable mapping, review asks for the missing information with Apply blocked.
+
+For XLSX incoming KPIs, the Apple guide uses the parser's numeric date-cell
+encoding evidence. Date-encoded columns are candidates for timestamp boundaries.
+An explicit grouping can still name a separate date column. When every candidate
+endpoint has a uniform date encoding across its nonblank cells, Excel serial is
+the guide's timestamp format. A selected endpoint with mixed or ambiguous encodings requires
+clarification. The mapping review still owns format confirmation and timezone,
+and the compiler validates all rows.
+
+For a complete single-sheet XLSX with only uniform timestamp endpoints, the
+native guide excludes the recognized event ID from proposed grouping unless
+the saved KPI explicitly names it. An explicit hierarchy keeps the exact
+resolvable header order. If the saved KPI leaves a grouping request unresolved,
+the mapping asks for clarification. Where the scope supplies no grouping, the
+model can propose one source classification for review or ask which grouping
+the user wants. In that exploratory mode the native guide returns one category
+alias. The host validates it through the same ordered mapping contract used
+for other proposals. A subject referenced by the measure can still be used
+when the user explicitly requests grouping by it.
+
+An unambiguous duration unit declared by the selected source column grounds the proposed mapping before review. Conflicting or compound time units require clarification. The user can correct the mapping in the review. Workbook encodings remain part of the canonical compiler's validation.
+
+The native proposal can suggest ordered categories and a value, duration or timestamp mapping, or ask a focused question. Reporting period, denominator, unique-event identity, missing-category review and confirmation remain explicit. Complete-row calculations and lineage come from the local compiler, and the existing preview still requires Apply. If elapsed plant downtime requires merging overlapping intervals, or the proposal requires a join or unsupported deduplication, the native route blocks that attempt. An additive equipment-hour total cannot establish elapsed plant downtime.
+
+A single unambiguous Event ID header is available for event identity and
+is excluded from the native value, duration and timestamp choices.
+Repeated identity headers require review. If a proposal still refers to
+the excluded column as a measure, review asks for the intended field
+without selecting a replacement. The confirmed event identifier cannot
+also supply a calculation value or timestamp. A conflicting mapping
+remains editable before calculation and Apply.
+
+A stale binding, unsupported locale, native refusal or invalid response stops the AI attempt. The retained source stays available for a separate, explicit local analysis. Limits and mapping review are the same for CSV, XLS and XLSX, subject to the parser's supported layouts. Original source downloads and saved scenario workbook exports continue through their own file and revision-bound artifact routes. Controlled route fixtures exercise native binding and prompt projection with a test host. On the M3, two revised English native runs reopened review with 3 and 14,997 source rows. Both still failed the independent expected-mapping check. The original heads were unchanged and Apply without confirmation was rejected. Live mapping quality, signed desktop operation and offline operation remain open.
+
+The explicit-header repair passed a subsequent three-row live replay through the source route with the signed helper. Apply remained blocked before confirmation. All three rows contributed, and the exact staged revision reopened at 1.75 h/day with the retained file hash and column lineage.
+
+For a complete single-table profile with an explicit ordered grouping, a declared
+duration unit and both duration and timestamp candidates inside the guided
+bounds, the native mapper can use a compact scalar guide. It retains the
+eligible candidates, resolves every choice back to the current profile and
+passes the existing canonical mapping and review validation. Other profiles
+continue through the original bounded guide. The final live English Q01
+replay through the production source route with the Developer ID helper used
+the corrected CSV. It rejected unconfirmed Apply, saved revision 2 with
+14,997 valid rows after approval, then reopened with all four independently
+calculated category totals and a total of 150.02333333333326 equipment-hours
+per calendar day. Installed offline Data and broader input layouts and
+locales remain separate checks.
+
 Warning IDs include a hash of the complete severity, type and message rather than only a truncated readable prefix. Exact semantic warning duplicates are still collapsed by the harness; the mapping review preserves every warning occurrence in older snapshots even when their stored IDs collide.
 
 If the selected provider reaches its usage limit, file discovery returns an actionable HTTP 429 response without exposing raw provider diagnostics or retrying the request as a JSON repair. The retained source stays available while the user selects another available model or waits for access.

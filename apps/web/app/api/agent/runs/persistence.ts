@@ -42,7 +42,13 @@ import {
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
 import { defaultAgentRunDataDir, resolveConfiguredDataDir } from "./agent-data-dir";
+import { instructionDecision } from "./conversation-context-decisions";
 import { supervisorFenceOwnership } from "./supervisor-controller-owner";
+import { readOnlyScenarioRevision } from "./read-only-scenario-revision";
+import { expectedWorkbookHead, readExactNamedWorkbookScope, type ExactNamedWorkbookScope } from "./outcome-admission";
+
+import { describeExcelWorkbook, ExcelWorkbookError, hasPersistedExcelDescriptor } from "./excel-workbook";
+import { isDeepStrictEqual } from "node:util";
 
 const DEFAULT_AGENT_PROJECT_ID = "project_agent_workspace";
 const DEFAULT_AGENT_PROJECT_NAME = "VDT Studio workspace";
@@ -147,12 +153,18 @@ interface PersistMutationProposalResultV1 {
   tipContentIdentity: RevisionContentIdentityV1;
 }
 
+type SqliteAgentRunPersistence = AgentRunPersistence & {
+  hasBoundWorkbookExport(run: VdtAgentRunState, resultArtifact: unknown): boolean;
+  readNamedWorkbookScope(runId: string, scope: Parameters<typeof readExactNamedWorkbookScope>[1], quote: string): ExactNamedWorkbookScope | undefined;
+  readScenarioRevision(run: Parameters<typeof readOnlyScenarioRevision>[1], project: VdtProject): string | undefined;
+};
+
 export function createLazySqliteAgentRunPersistence(
   projectRoot: string,
   options: LazySqliteAgentRunPersistenceOptions = {}
-): AgentRunPersistence {
-  let delegate: AgentRunPersistence | undefined;
-  const persistence = (): AgentRunPersistence => {
+): SqliteAgentRunPersistence {
+  let delegate: SqliteAgentRunPersistence | undefined;
+  const persistence = (): SqliteAgentRunPersistence => {
     if (delegate) return delegate;
     const database =
       options.databaseFactory?.() ??
@@ -163,6 +175,17 @@ export function createLazySqliteAgentRunPersistence(
     return delegate;
   };
   return {
+    hasBoundWorkbookExport(run, resultArtifact) {
+      return delegate?.hasBoundWorkbookExport(run, resultArtifact) ?? false;
+    },
+    readNamedWorkbookScope(runId, scope, quote) {
+      // Preview never opens or recovers storage. Only the initialized run
+      // persistence connection can authenticate this read.
+      return delegate?.readNamedWorkbookScope(runId, scope, quote);
+    },
+    readScenarioRevision(run, project) {
+      return delegate?.readScenarioRevision(run, project);
+    },
     createRun(state) {
       persistence().createRun(state);
     },
@@ -184,9 +207,36 @@ export function createLazySqliteAgentRunPersistence(
 export function createSqliteAgentRunPersistence(
   database: VdtDatabase,
   options: SqliteAgentRunPersistenceOptions = {}
-): AgentRunPersistence {
+): SqliteAgentRunPersistence {
   const actorFactory = options.actorFactory ?? createStorageWriteActor;
   return {
+    hasBoundWorkbookExport(run, resultArtifact) {
+      const { workspace, artifactIntent } = run.request;
+      if (!workspace?.vdtId || !artifactIntent?.revisionId || !artifactIntent.scenarioId) return false;
+      const expectedHead = expectedWorkbookHead(database, workspace);
+      if (!expectedHead) return false;
+      try {
+        const exact = describeExcelWorkbook(database, {
+          runId: run.runId, projectId: workspace.projectId, vdtId: workspace.vdtId,
+          revisionId: artifactIntent.revisionId, scenarioId: artifactIntent.scenarioId
+        });
+        return isDeepStrictEqual(exact, resultArtifact)
+          && hasPersistedExcelDescriptor({ artifacts: run.artifacts }, run.runId, exact)
+          && hasPersistedExcelDescriptor(database.getAgentRun(run.runId)?.publicSnapshot, run.runId, exact)
+          && expectedWorkbookHead(database, workspace) === expectedHead;
+      } catch (error) {
+        if (error instanceof ExcelWorkbookError) return false;
+        throw error;
+      }
+    },
+    readNamedWorkbookScope(runId, scope, quote) {
+      const persisted = database.getAgentRun(runId);
+      if (!scope.vdtId || persisted?.projectId !== scope.projectId || persisted.vdtId !== scope.vdtId) return;
+      return readExactNamedWorkbookScope(database, scope, quote);
+    },
+    readScenarioRevision(run, project) {
+      return readOnlyScenarioRevision(database, run, project);
+    },
     createRun(state) {
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
@@ -1661,7 +1711,10 @@ function chatMessageContent(message: AgentChatMessage): string {
 }
 
 function chatMessageRunContext(message: AgentChatMessage): Record<string, unknown> {
+  const decision = message.role === "user" && message.kind === "instruction" && message.text
+    ? instructionDecision(message.text) : undefined;
   return {
+    ...(decision ? { decision } : {}),
     kind: message.kind,
     sourceMessageId: message.id,
     ...(message.questions ? { questions: message.questions } : {}),

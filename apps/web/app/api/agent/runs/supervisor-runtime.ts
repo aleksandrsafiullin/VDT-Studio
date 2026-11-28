@@ -1,9 +1,20 @@
+import { VdtStorageError } from "@vdt-studio/storage";
+import { AppleTransportError } from "@vdt-studio/local-runner/apple-foundation-models";
+import { APPLE_NATIVE_PROVIDER_ID, packagedAppleNativePort, revalidateAppleNativeCapability } from "./apple-native-host";
+import { AppleNativeTurnTransport, type AppleNativeStage } from "./apple-native-turn";
+import { boundedMeasuredFacts, guide as appleStructuralGuide, repairFormulaGuide } from "./apple-native-structural-guide";
+import { assertAnalyticalAdmission, hostExecutionAdmission, type ExecutionMode } from "./execution-binding-admission";
 import { formatAiPersonalisation, PERSONALISATION_PROMPT_RULE, type AiPersonalisation } from "@vdt-studio/vdt-core";
+import { resolveTrustedStorageWriteMode } from "../../vdt/storage-write-adapter";
+import { consumeVoiceAnswerProof, packagedVoiceAnswerRevision, verifyPackagedVoiceAnswerSession } from "@/lib/voice-answer-proof-host";
+import { questionMatches, proposalMatches, requiresNumericReadback } from "@/lib/voice-confirmation";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
 import { isAdmittedHarnessSession } from "./harness-session-bindings";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
+import { awaitingOutcome, outcomeRecoveryQuestion, OUTCOME_ADMISSION_PROMPT, PROPOSE_OUTCOME, readExplicitWorkbookRevisionIds } from "./outcome-admission";
 import { toProviderJsonSchema } from "./provider-json-schema";
 import type { AiProvider } from "@vdt-studio/ai-harness";
 import { VdtBuilderSession, type VdtNodePatch, type VdtProject } from "@vdt-studio/vdt-core";
@@ -12,6 +23,8 @@ import {
   AgentRunStateSupervisorPersistence,
   AgentSupervisorPersistenceError,
   isAgentToolError,
+  AgentToolError,
+  ToolRegistry,
   StructuredInProductModelAgentEngine,
   VdtRunSupervisor,
   AGENT_QUESTION_PROMPT_RULE,
@@ -29,8 +42,8 @@ import {
   constructionFinishEvidence,
   constructionSourceFacts,
   excavationDowntimeCoverage,
-  excludedExcavationSkillIds,
   groundedAnswerRecord,
+  answerPayloadsFromRecord,
   rejectPendingMutationProposal,
   requiresDerivedRootForRun,
   skillCatalogProgress,
@@ -38,6 +51,7 @@ import {
   summarizeAgentSupervisorPersistenceState,
   projectFinishOutcome,
   verifyDeterministicRunFinish,
+  vdtGatewayToolResultSchema,
   finishReadinessPurpose,
   type AgentHumanInput,
   type AgentExecutionEngine,
@@ -57,10 +71,11 @@ import {
 import { createAiProvider } from "@/lib/ai-route-provider";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
 import type { PublicAgentRunSnapshot } from "./public-snapshot";
-import type { StructuredModelAgentExecutionBindingDefinition } from "./execution-bindings";
-import type {
-  AgentExecutionBindingDefinition,
-  ExternalCliExecutionBindingDefinition
+import {
+  isStructuredModelExecutionBinding,
+  type AgentExecutionBindingDefinition,
+  type ExternalCliExecutionBindingDefinition,
+  type StructuredModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
 import {
   TARGET_MODEL_AGENT_TOOLS,
@@ -74,6 +89,7 @@ import { isLocalModelAgentBackend } from "./local-model-bindings";
 import { createLocalModelAgentProvider } from "./local-model-provider";
 import { compactOpenAiFirstPlanPrompt, localModelWorkingContext } from "./local-model-context";
 import { LocalModelKnowledge } from "./local-model-knowledge";
+import { OllamaStructuralSkillGap } from "./ollama-structural-skill-gap";
 import { CONSTRUCTION_QUESTION_CHECK, constructionQuestionReview } from "./local-model-question-review";
 import { resultLanguageInstruction, resultLocale } from "./model-agent-result-language";
 import { formatVerifiedResult, summarizeVerifiedResult, verifiedResultSchema } from "./model-agent-verified-result";
@@ -85,11 +101,16 @@ import {
   structuralRelationshipAssessmentSchema,
   structuralRelationshipQuestion
 } from "./structural-relationship-question";
-import { excelScenarioRequestPrompt, namedVersionWorkbookDelivery, requestedVersionRestoreId, requestedWorkbookDeliveryScenarioId } from "./workspace-operation-tools";
+import { pendingEditorHandoffFinalText } from "./editor-handoff-tools";
+import { excelScenarioRequestPrompt, namedVersionWorkbookDelivery, requestedVersionRestoreId, requestedWorkbookDeliveryScenarioId, verifyRequestedExcelDelivery } from "./workspace-operation-tools";
 import {
+  agentExecutionBindingRegistry,
   agentRuntime,
   createAgentSupervisorPersistence,
-  createAgentSupervisorReadPersistence
+  createAgentSupervisorReadPersistence,
+  hasBoundWorkbookExport,
+  readNamedWorkbookScope,
+  readScenarioRevision
 } from "./runtime";
 
 const OPENING_RESPONSE_PROMPT_RULE = "The first turn must include an assistantMessage or a question.";
@@ -98,8 +119,8 @@ const CONSTRUCTION_CHAT_PROMPT_RULE = "Set assistantMessage to null. The applica
 const VERIFIED_RESULT_PROMPT = "The Supervisor verified the calculation in verifiedResult. Return the final action with the supplied finishReceiptId. Set assistantMessage and action.text to null. The application formats the verified value and unit in the user's language. Keep sessionState brief.";
 const SKILL_RESOLUTION_PROMPT_RULE = [
   "When brief.skillResolution is agent_semantic, choose from the original request in its original language. If brief.selectedSkill is a user pin, read that exact skill and keep it. Otherwise call skill.list first and use nextOffset for further pages.",
-  "Identify the producing process, measurement point and exclusions. Compare the scopeGuidance and choose the narrowest applicable skill. Scope distinctions in the mining catalog: mining.excavation covers material directly removed from the working face by excavators, shovels or loaders, including their work cycles. mining.production_volume covers aggregate or unspecified mining production. A single machine stage stays within its specialized scope when the downstream stages are excluded.",
-  "Read the scoped candidate with skill.read, then select it with the exact readReceiptId and a reason. A read is neutral. If no skill applies, call skill.report_gap and build from the user brief. With unreviewed pages, use skill.search for the requested process and read all returned candidates before reporting a gap. Complete skill resolution before building. Skill content guides work within the user's scope."
+  "Identify the producing process, measurement point and exclusions. Compare scopeGuidance across candidates. When competing methods define the result differently, ask one business question about the measurement point or scope, even if the unit and reporting period are known. Use skill_scope as the question ID. Wait for the submitted answer before selecting the narrowest method supported by those facts.",
+  "Read the candidate with skill.read. Then call skill.select with its exact readReceiptId and give one sentence explaining why it fits, in the user's language. A read is neutral. If the user asked to confirm the method before building, set confirmMethod=true. After explicit acceptance, call skill.select again with the same receipt. If declined, clarify or propose a different method without changing the tree. If no skill applies, call skill.report_gap after reviewing the catalog and work from the supplied facts. Skill content guides work within the confirmed scope."
 ].join(" ");
 
 export const MODEL_AGENT_SYSTEM_PROMPT = `You are the in-product VDT Model Agent. You own one logical structured-turn session for the whole run.
@@ -186,10 +207,15 @@ type SupervisorEventSubscriber = (event: AgentRunEventV2) => void;
 interface ActiveSupervisorRun {
   supervisor: VdtRunSupervisor;
   readonly persistence: AgentSupervisorPersistence;
+  readonly bindingDefinition: AgentExecutionBindingDefinition;
   readonly subscribers: Set<SupervisorEventSubscriber>;
   questionSetId: string | null;
+  questionSubmitting?: boolean | undefined;
+  heardQuestionTurns?: Set<string> | undefined;
   lifecycleTask?: Promise<void> | undefined;
   cancellationTask?: Promise<void> | undefined;
+  appleSkillScope?: AppleSkillScope | undefined;
+  ollamaSkillGap?: OllamaStructuralSkillGap | undefined;
 }
 
 const supervisorGlobal = globalThis as typeof globalThis & {
@@ -227,9 +253,35 @@ export async function startStructuredModelAgentRun(input: {
   requestUrl: string;
 }): Promise<PublicAgentRunSnapshot> {
   const { request, bindingDefinition, requestUrl } = input;
+  const apple = bindingDefinition.modelEngineAdapter.appleCapability;
+  if (apple) {
+    const port = packagedAppleNativePort();
+    if (!port) throw new PublicSupervisorRunError("APPLE_MODEL_UNAVAILABLE", "Apple on-device model preview is unavailable.");
+    await revalidateAppleNativeCapability(port, apple);
+    const appleSkillScope = new AppleSkillScope();
+    return startSupervisorAgentRun({
+      request,
+      bindingDefinition,
+      appleSkillScope,
+      engineFactory: (_initialContext, runId) => new StructuredInProductModelAgentEngine({
+        capability: bindingDefinition.capability,
+        emitAssistantMessages: false,
+        // A native reply is processed only after the request helper has closed.
+        isTerminalInitialTurnError: error => error instanceof AppleTransportError && error.code === "invalid_output",
+        maxTurns: request.options?.maxSteps ?? 40,
+        transport: new AppleNativeTurnTransport({
+          port, pinned: apple, projectId: authoritativeAgentRunProjectId(agentRuntime.store.getState(runId)), runId,
+          readStage: input => appleNativeStage(runId, input, appleSkillScope)
+        })
+      })
+    });
+  }
+  const ollamaSkillGap = bindingDefinition.modelEngineAdapter.providerId === "ollama"
+    ? new OllamaStructuralSkillGap() : undefined;
   return startSupervisorAgentRun({
     request,
     bindingDefinition,
+    ollamaSkillGap,
     engineFactory: (initialContextDelta, runId) => {
       const provider = createStructuredModelProvider(bindingDefinition, requestUrl, runId);
       const requireDerivedRoot = requiresDerivedRootForRun(request);
@@ -238,7 +290,7 @@ export async function startStructuredModelAgentRun(input: {
         && !requireDerivedRoot && request.mode !== "deepen_node";
       return new StructuredInProductModelAgentEngine({
         capability: bindingDefinition.capability,
-        emitAssistantMessages: !directOpenAiConstruction && !ollamaWorkspace,
+        emitAssistantMessages: !awaitingOutcome(request) && !directOpenAiConstruction && !ollamaWorkspace,
         maxTurns: request.options?.maxSteps ?? 40,
         transport: new AiProviderStructuredTurnTransport(
           provider,
@@ -246,13 +298,17 @@ export async function startStructuredModelAgentRun(input: {
           initialContextDelta,
           bindingDefinition.modelEngineAdapter.providerId === "openai_compatible" ? () => {
             const state = agentRuntime.store.getState(runId);
-            const builder = state.builder;
+            const { builder, request } = state;
+            const requireDerivedRoot = !awaitingOutcome(request) && requiresDerivedRootForRun(request);
+            const directOpenAiConstruction = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
             if (!builder) throw new Error("The Model Agent working draft is unavailable.");
             const project = builder.getProject();
             const observation = {
               ...localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request, project), request.outcome ?? finishReadinessPurpose(request.mode)),
-              skillResolution: skillResolutionContext(state),
-              confirmedUserAnswers: request.outcome === "structural_model" ? structuralUserAnswers(state) : undefined
+              outcomeAdmissionPending: awaitingOutcome(request),
+              skillResolution: awaitingOutcome(request) ? undefined : skillResolutionContext(state),
+              confirmedUserAnswers: request.outcome === "structural_model" || state.request.skillResolution
+                ? structuralUserAnswers(state) : undefined
             };
             const constructionPlan = directOpenAiConstruction ? openAiConstructionPlan(project) : undefined;
             const sourceFacts = requireDerivedRoot ? constructionFinishEvidence(project, state) : undefined;
@@ -278,7 +334,9 @@ export async function startStructuredModelAgentRun(input: {
               ...(unboundSourceFacts.length ? { projectReadyForFinish: false, unboundSourceFacts } : {}) };
           } : undefined,
           () => agentRuntime.store.getState(runId).request.input.personalisation ?? {},
-          () => agentRuntime.store.getState(runId).chatMessages.filter((message) => message.role === "user" && message.kind === "instruction").at(-1)?.text
+          () => agentRuntime.store.getState(runId).chatMessages.filter((message) => message.role === "user" && message.kind === "instruction").at(-1)?.text,
+          () => agentRuntime.store.getState(runId).request,
+          ollamaSkillGap
         )
       });
     }
@@ -324,9 +382,12 @@ async function startSupervisorAgentRun(input: {
   engine?: AgentExecutionEngine | undefined;
   engineFactory?: ((initialContext: Extract<ModelAgentTurnDelta, { type: "initial_context" }>, runId: string) => AgentExecutionEngine) | undefined;
   allowUnqualifiedExternalCanary?: boolean | undefined;
+  appleSkillScope?: AppleSkillScope | undefined;
+  ollamaSkillGap?: OllamaStructuralSkillGap | undefined;
 }): Promise<PublicAgentRunSnapshot> {
   const { request, bindingDefinition } = input;
-  const outcome = request.outcome;
+  const admission = hostExecutionAdmission(bindingDefinition);
+  assertAnalyticalAdmission(admission, "agent_run", request.options?.researchMode);
   const actualToolCatalogHash = currentModelAgentToolCatalogHash();
   if (actualToolCatalogHash !== bindingDefinition.capability.toolCatalogHash) {
     throw new PublicSupervisorRunError(
@@ -360,7 +421,7 @@ async function startSupervisorAgentRun(input: {
     status: "running",
     phase: "classifying_request",
     builder,
-    ...(initialProject.graph.nodes.length > 0 ? { draftProject: initialProject } : {})
+    ...(!awaitingOutcome(request) && initialProject.graph.nodes.length > 0 ? { draftProject: initialProject } : {})
   });
   agentRuntime.store.updatePublicStatus(runId, {
     phase: "reading_request",
@@ -399,7 +460,10 @@ async function startSupervisorAgentRun(input: {
   const active: ActiveSupervisorRun = {
     supervisor: undefined as unknown as VdtRunSupervisor,
     persistence,
+    bindingDefinition,
     subscribers,
+    appleSkillScope: input.appleSkillScope,
+    ollamaSkillGap: input.ollamaSkillGap,
     questionSetId: null
   };
   const outbox = new AgentRunEventOutbox(runId, {
@@ -417,9 +481,14 @@ async function startSupervisorAgentRun(input: {
       }
     }
   });
-  const ollamaStructural = outcome === "structural_model" && "modelEngineAdapter" in bindingDefinition
-    && bindingDefinition.modelEngineAdapter?.providerId === "ollama";
-  const requirePlanOperands = requiresDerivedRootForRun(request) && (usesOpenAiNativeTurns(bindingDefinition) || ollamaStructural);
+  const toolContext = () => {
+    const pinned = agentRuntime.store.getState(runId).request;
+    const ollamaStructural = pinned.outcome === "structural_model" && "modelEngineAdapter" in bindingDefinition
+      && bindingDefinition.modelEngineAdapter?.providerId === "ollama";
+    return createToolContext(runId, !awaitingOutcome(pinned) && requiresDerivedRootForRun(pinned)
+      && (usesOpenAiNativeTurns(bindingDefinition) || ollamaStructural
+        || input.appleSkillScope?.requiresPlannedOperands(agentRuntime.store.getState(runId))));
+  };
   const supervisor = new VdtRunSupervisor({
     engine,
     binding,
@@ -427,10 +496,11 @@ async function startSupervisorAgentRun(input: {
     allowUnqualifiedExternalCanary: input.allowUnqualifiedExternalCanary,
     outbox,
     gateway: {
-      tools: agentRuntime.tools,
-      allowedTools: new Set(TARGET_MODEL_AGENT_TOOLS),
-      toolContext: () => createToolContext(runId, requirePlanOperands),
-      allowTool: (toolName, context) => allowTargetTool(request, toolName, context, outcome),
+      tools: input.appleSkillScope?.registry(agentRuntime.tools)
+        ?? input.ollamaSkillGap?.registry(agentRuntime.tools) ?? agentRuntime.tools,
+      allowedTools: new Set(TARGET_MODEL_AGENT_TOOLS.filter(tool => admission.research || tool !== "research.search_web")),
+      toolContext,
+      allowTool: allowTargetTool,
       revisionReconciliation: ({ expectedRevision, currentRevision, context }) => {
         const state = context.store.getState(context.runId);
         return {
@@ -453,6 +523,8 @@ async function startSupervisorAgentRun(input: {
     },
     verifyFinish: async ({ externalCallId, expectedProjectRevision }) => {
       const current = agentRuntime.store.getState(runId);
+      const { request } = current;
+      const { outcome } = request;
       const supervisorState = await persistence.load(runId);
       const revisionBeforeSnapshot = builder.getRevision();
       const project = builder.getProject();
@@ -460,6 +532,8 @@ async function startSupervisorAgentRun(input: {
       const requireDerivedRoot = requiresDerivedRootForRun(request);
       const directOpenAiConstruction = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
       const sourceFacts = requireDerivedRoot ? constructionFinishEvidence(project, current) : undefined;
+      const delivery = verifyRequestedExcelDelivery(current, project);
+      if (delivery && "blocker" in delivery) return delivery.blocker;
       const verification = verifyDeterministicRunFinish({
         binding: active.supervisor.binding,
         project,
@@ -467,6 +541,7 @@ async function startSupervisorAgentRun(input: {
         expectedHeadRevision: expectedProjectRevision ?? revisionBeforeSnapshot,
         mode: request.mode,
         outcome,
+        ...(delivery?.artifact ? { artifactDelivery: delivery.artifact } : {}),
         requireDerivedRoot,
         requireHierarchy: requiresHierarchyForRun(request, project),
         unboundSourceFacts: sourceFacts?.unbound,
@@ -484,18 +559,27 @@ async function startSupervisorAgentRun(input: {
           : {})
       });
       if (!verification.accepted) return verification;
-      const missingWorkbook = namedExcelFinishBlocker(project.scenarios, excelScenarioRequestPrompt(current),
-        current.workspaceRevision?.head.activeRevisionId, current.artifacts);
+      const missingWorkbook = !request.outcomeSelection && !request.outcome && !request.artifactIntent
+        ? namedExcelFinishBlocker(project.scenarios, excelScenarioRequestPrompt(current),
+          current.workspaceRevision?.head.activeRevisionId, current.artifacts)
+        : undefined;
       if (missingWorkbook) return missingWorkbook;
       if ("modelEngineAdapter" in bindingDefinition && bindingDefinition.modelEngineAdapter?.providerId === "ollama") {
         const instruction = current.chatMessages.filter(message => message.runId === runId
           && message.role === "user" && message.kind === "instruction").at(-1);
-        const verifiedFinalText = instruction && supervisorState && verifiedScenarioReport({
+        const comparisonReceipts = supervisorState?.toolOperationReceipts;
+        const hasSavedAnswerScope = outcome === "answer" && current.request.workspace?.expectedRevision !== undefined;
+        const savedRevisionId = hasSavedAnswerScope
+          ? (comparisonReceipts?.some(receipt => receipt.toolName === "scenario.compare" && receipt.state === "completed")
+            ? readScenarioRevision(agentRuntime.store, current, project) : undefined)
+          : current.workspaceRevision?.head.activeRevisionId;
+        const verifiedFinalText = instruction && comparisonReceipts && (!hasSavedAnswerScope || savedRevisionId) && verifiedScenarioReport({
+          runId,
           project,
           revision: revisionAfterSnapshot,
-          savedRevisionId: current.workspaceRevision?.head.activeRevisionId,
+          savedRevisionId,
           instructionAt: instruction.createdAt,
-          receipts: supervisorState.toolOperationReceipts,
+          receipts: comparisonReceipts,
           locale: resultLocale(instruction.text ?? "", current.request.input.personalisation?.userInstructions)
         });
         if (verifiedFinalText) return { ...verification, payload: { ...verification.payload, verifiedFinalText } };
@@ -526,10 +610,18 @@ async function startSupervisorAgentRun(input: {
         }
         : verification;
     },
+    resolveFinalText: async receipt => {
+      const durable = await persistence.load(runId);
+      if (durable?.finishReceipt?.receiptId !== receipt.receiptId || receipt.outcome !== "answer") return;
+      const current = agentRuntime.store.getState(runId);
+      return pendingEditorHandoffFinalText(current, durable.toolOperationReceipts,
+        resultLocale(excelScenarioRequestPrompt(current) ?? "", current.request.input.personalisation?.userInstructions), receipt.verifiedAt);
+    },
     onFinal: async ({ text, receiptId, finishOutcome }) => {
       const completedAt = new Date().toISOString();
       const project = builder.getProject();
       const before = agentRuntime.store.getState(runId);
+      const outcome = before.request.outcome;
       if (!before.chatMessages.some((message) => message.kind === "final_report" && message.text === text)) {
         agentRuntime.store.appendChatMessage(runId, {
           role: "assistant",
@@ -596,7 +688,7 @@ async function startSupervisorAgentRun(input: {
     throw error;
   }
 
-  return compactPublicAgentSnapshot(agentRuntime.store.getSnapshot(runId));
+  return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
 }
 
 export async function isPersistedSupervisorRun(runId: string): Promise<boolean> {
@@ -625,6 +717,8 @@ export async function compactSupervisorAwareSnapshot(
   const compact = compactPublicAgentSnapshot(snapshot);
   if (!durable) return compact;
   compact.executionSummary = summarizeAgentSupervisorPersistenceState(durable);
+  const active = activeRuns.get(snapshot.runId);
+  if (active) compact.executionSummary.executionMode = hostExecutionAdmission(active.bindingDefinition).mode;
   const receipt = durable.finishReceipt;
   const finishOutcome = receipt?.state === "final_persisted" ? projectFinishOutcome(receipt) : undefined;
   compact.finishOutcome = finishOutcome && { ...finishOutcome, state: "final_persisted" };
@@ -660,9 +754,29 @@ export async function getPersistedSupervisorEvents(runId: string): Promise<Agent
 }
 
 async function loadSupervisorAuthority(runId: string) {
-  const persistence = activeRuns.get(runId)?.persistence
-    ?? createAgentSupervisorReadPersistence(agentRuntime.store);
-  return persistence.load(runId);
+  const active = activeRuns.get(runId);
+  if (active) return active.persistence.load(runId);
+
+  const normalized = await createAgentSupervisorReadPersistence(agentRuntime.store).load(runId);
+  if (normalized || !agentRuntime.store.has(runId)) return normalized;
+
+  // The development Codex canary writes its Supervisor authority inside the
+  // durable run state. A released controller must still use that authority.
+  const state = agentRuntime.store.getState(runId);
+  const executionBindingId = state.request.executionBindingId;
+  const binding = state.supervisorPersistenceV2?.binding;
+  if (!executionBindingId || !binding || binding.runId !== runId
+    || binding.projectId !== authoritativeAgentRunProjectId(state)
+    || binding.bindingId !== deriveModelAgentSessionBindingId(executionBindingId, runId)
+    || binding.executionProfile !== "external_cli_agent"
+    || binding.backendId !== "codex_subscription"
+    || binding.engineAdapterId !== "codex-resume-checkpoint-v1"
+    || binding.protocolVersion !== "codex-exec-jsonl-checkpoint-v1"
+    || binding.qualificationStatus !== "unverified"
+    || !matchesCliSessionBinding(executionBindingId, "codex_session_canary", binding.modelId)) {
+    return null;
+  }
+  return new AgentRunStateSupervisorPersistence(agentRuntime.store).load(runId);
 }
 
 export function subscribeToSupervisorEvents(
@@ -679,17 +793,58 @@ export function isStructuredModelAgentRunActive(runId: string): boolean {
   return activeRuns.has(runId);
 }
 
+function directOpenAiSpeechCredential(definition: AgentExecutionBindingDefinition): string | undefined {
+  if (!isStructuredModelExecutionBinding(definition) || definition.modelEngineAdapter.providerId !== "openai_compatible") return;
+  const config = definition.modelEngineAdapter.providerConfig;
+  if (config?.baseUrl === "https://api.openai.com/v1" && typeof config.apiKey === "string" && /^[\x21-\x7e]{1,1024}$/.test(config.apiKey)) {
+    return config.apiKey;
+  }
+}
+
+/** Projects the current process-owned analytics identity and credential presence. */
+export function activeSupervisorVoiceBinding(runId: string) {
+  const active = activeRuns.get(runId);
+  if (!active || active.cancellationTask || shouldReleaseSupervisor(active.supervisor.status)) return undefined;
+  const admission = hostExecutionAdmission(active.bindingDefinition);
+  if (admission.mode === "legacy") return undefined;
+  return { bindingId: active.bindingDefinition.bindingId, providerId: admission.providerId, modelId: admission.modelId,
+    mode: admission.mode,
+    sessionEpoch: active.supervisor.binding.sessionEpoch, directOpenAiCredentialPresent: Boolean(directOpenAiSpeechCredential(active.bindingDefinition)) };
+}
+
+export function activeSupervisorApiSpeechBinding(runId: string) {
+  const owner = activeSupervisorVoiceBinding(runId);
+  return owner?.mode === "api_keys" ? owner : undefined;
+}
+
+/** Invoke the trusted transport with the active binding's key without returning or retaining it. */
+export function withActiveSupervisorOpenAiSpeechCredential<T>(runId: string, bindingId: string, sessionEpoch: number,
+  invoke: (credential: string) => T): T | undefined {
+  const owner = activeSupervisorApiSpeechBinding(runId);
+  const active = activeRuns.get(runId);
+  if (!active || !owner?.directOpenAiCredentialPresent || owner.bindingId !== bindingId || owner.sessionEpoch !== sessionEpoch) return;
+  const credential = directOpenAiSpeechCredential(active.bindingDefinition);
+  if (credential) return invoke(credential);
+}
+
 export async function handleStructuredModelAgentMessage(
   runId: string,
-  message: AgentUserMessage
+  message: AgentUserMessage,
+  expectedExecutionMode?: ExecutionMode
 ): Promise<PublicAgentRunSnapshot> {
   const active = activeRuns.get(runId);
-  if (!active) {
+  if (!active?.bindingDefinition) {
     throw new PublicSupervisorRunError(
       "MODEL_AGENT_RECOVERY_REQUIRED",
       "The persisted Model Agent run has no active session controller on this host.",
       409
     );
+  }
+
+  const admission = hostExecutionAdmission(active.bindingDefinition);
+  if (expectedExecutionMode && expectedExecutionMode !== admission.mode) {
+    throw new PublicSupervisorRunError("AGENT_EXECUTION_CAPABILITY_DENIED",
+      "The selected execution mode differs from this run's pinned mode. Start a new run.");
   }
 
   if (message.type === "manual_project_change") {
@@ -704,37 +859,97 @@ export async function handleStructuredModelAgentMessage(
     return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
   }
 
+  try {
+    agentExecutionBindingRegistry.revalidateLocalRoute(active.bindingDefinition);
+  } catch {
+    throw new PublicSupervisorRunError("BINDING_CAPABILITY_DENIED", "The pinned local model revision is no longer verified.");
+  }
+  const apple = "modelEngineAdapter" in active.bindingDefinition ? active.bindingDefinition.modelEngineAdapter?.appleCapability : undefined;
+  if (apple) {
+    const port = packagedAppleNativePort();
+    if (!port) throw new PublicSupervisorRunError("APPLE_MODEL_UNAVAILABLE", "Apple on-device model preview is unavailable.");
+    try { await revalidateAppleNativeCapability(port, apple); }
+    catch (error) {
+      if (error instanceof AppleTransportError) throw new PublicSupervisorRunError(error.code, error.message);
+      throw error;
+    }
+  }
+  if (!admission.research && message.type === "user_instruction" && message.researchMode === "on") {
+    throw new PublicSupervisorRunError("BINDING_CAPABILITY_DENIED", "The pinned execution route does not permit web research.");
+  }
   let input: AgentHumanInput;
   let inputCheckpointAlreadyDurable = false;
   if (message.type === "user_answer") {
-    if (!active.questionSetId) {
-      throw new PublicSupervisorRunError("MODEL_AGENT_QUESTION_MISSING", "The run has no pending question set.");
-    }
-    const current = agentRuntime.store.getState(runId);
-    const answers = groundedAnswerRecord(
-      current.answers,
-      message.answers,
-      message.structuredAnswers,
-      current.pendingQuestions
-    );
-    input = {
-      type: "user_answer",
-      questionSetId: active.questionSetId,
-      answers: {
-        ...(message.answers ?? {}),
-        ...(message.structuredAnswers ? { structuredAnswers: message.structuredAnswers } : {})
+    const voiceMode = message.expectedQuestion ? resolveTrustedStorageWriteMode() : undefined;
+    if (voiceMode === "desktop" && message.expectedQuestion) {
+      const transcript = message.structuredAnswers?.length === 1 ? message.structuredAnswers[0]?.fields?.answer : undefined;
+      if (typeof transcript !== "string" || message.expectedQuestion.runId !== runId
+        || !await verifyPackagedVoiceAnswerSession(message.expectedQuestion, transcript)) {
+        throw new PublicSupervisorRunError("AGENT_INTERACTION_STALE", "The spoken answer no longer matches the live question. Review the question before responding.");
       }
-    };
-    agentRuntime.store.appendChatMessage(runId, {
-      role: "user",
-      kind: "answer",
-      text: "User answered the pending Model Agent questions.",
-      answers: message.structuredAnswers ?? []
-    });
-    agentRuntime.store.updateRun(runId, {
-      pendingQuestions: undefined,
-      answers
-    });
+    }
+    // Any native session check above can yield. Observe the current checkpoint
+    // and consume its proof immediately before the existing Supervisor claim.
+    const current = agentRuntime.store.getState(runId);
+    const questionSetId = active.questionSetId;
+    const questionEvent = current.events.slice().reverse().find(event => event.type === "clarifying_questions");
+    if (active.questionSubmitting || active.supervisor.status !== "waiting_user" || !questionSetId || !current.pendingQuestions?.length) {
+      throw new PublicSupervisorRunError(message.expectedQuestion ? "AGENT_INTERACTION_STALE" : "MODEL_AGENT_QUESTION_MISSING",
+        "The run has no matching pending question set.");
+    }
+    let voiceTurn: string | undefined;
+    if (message.expectedQuestion) {
+      const expected = message.expectedQuestion;
+      voiceTurn = `${expected.captureSessionId}:${expected.turnId}`;
+      const scope = current.request.workspace;
+      const question = current.pendingQuestions.length === 1 ? current.pendingQuestions[0] : undefined;
+      const answer = message.structuredAnswers?.length === 1 ? message.structuredAnswers[0] : undefined;
+      const spokenText = answer?.fields?.answer;
+      if (active.heardQuestionTurns?.has(voiceTurn) || !questionMatches(expected, scope?.projectId && scope.vdtId && questionEvent && question
+        ? { runId, projectId: scope.projectId, vdtId: scope.vdtId, questionSetId, questionEventId: questionEvent.id, questionId: question.id }
+        : undefined)
+        || questionEvent?.metadata?.questionSetId !== questionSetId || !question || "decisionProposal" in question
+        || question.freeTextAllowed === false || question.options?.length || question.fields?.length
+        || (question.answerKind ?? question.expectedAnswerType ?? "text") !== "text"
+        || !answer || answer.questionId !== expected.questionId || typeof spokenText !== "string" || !spokenText.trim() || spokenText.length > 2_000
+        || requiresNumericReadback(spokenText) || Object.keys(answer.fields ?? {}).length !== 1
+        || answer.freeText !== undefined || answer.selectedOptionIds !== undefined || message.answers !== undefined) {
+        throw new PublicSupervisorRunError("AGENT_INTERACTION_STALE", "The spoken answer no longer matches the live question. Review the question before responding.");
+      }
+      const revision = voiceMode === "desktop" ? packagedVoiceAnswerRevision(current) : undefined;
+      if ((voiceMode !== "development_web" && revision === undefined) || !consumeVoiceAnswerProof(expected, spokenText, revision)) {
+        throw new PublicSupervisorRunError("AGENT_INTERACTION_STALE", "The spoken answer no longer matches the live question. Review the question before responding.");
+      }
+    }
+    const answers = groundedAnswerRecord(current.answers, message.answers, message.structuredAnswers, current.pendingQuestions);
+    // Claim the live checkpoint synchronously, before durable submission or the
+    // next model step. Typed and fenced answers share the same claim.
+    active.questionSubmitting = true;
+    if (voiceTurn) {
+      const turns = active.heardQuestionTurns ??= new Set();
+      turns.add(voiceTurn);
+      if (turns.size > 128) turns.delete(turns.values().next().value!);
+    }
+    try {
+      await submitSkillScopedInput(active, {
+        type: "user_answer", questionSetId,
+        answers: { ...(message.answers ?? {}), ...(message.structuredAnswers ? { structuredAnswers: message.structuredAnswers } : {}) }
+      });
+      const after = agentRuntime.store.getState(runId);
+      const latestQuestion = after.events.slice().reverse().find(event => event.type === "clarifying_questions");
+      const sameQuestion = active.questionSetId === questionSetId && latestQuestion?.id === questionEvent?.id;
+      agentRuntime.store.appendChatMessage(runId, {
+        role: "user", kind: "answer", text: "User answered the pending Model Agent questions.",
+        answers: message.structuredAnswers ?? answerPayloadsFromRecord(message.answers ?? {})
+      });
+      agentRuntime.store.updateRun(runId, { answers, ...(sameQuestion ? {
+        pendingQuestions: undefined,
+        ...(after.status === "needs_user_input" ? { status: "running" as const, phase: "planning_decomposition" as const } : {})
+      } : {}) });
+      if (sameQuestion) active.questionSetId = null;
+      watchActiveSupervisorLifecycle(runId, active);
+      return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+    } finally { active.questionSubmitting = false; }
   } else if (message.type === "user_instruction") {
     const state = agentRuntime.store.getState(runId);
     if (active.questionSetId || state.status === "waiting_approval") {
@@ -773,6 +988,15 @@ export async function handleStructuredModelAgentMessage(
     const state = agentRuntime.store.getState(runId);
     let approvalInstruction: string;
     const pendingProposal = state.pendingMutationProposal;
+    const expected = message.expectedProposal;
+    if (expected && (
+      active.supervisor.status !== "waiting_approval" || pendingProposal?.status !== "proposed"
+      || message.proposalId !== expected.proposalId || state.builder?.getRevision() !== expected.baseRevision
+      || !proposalMatches(expected, state.request.workspace?.projectId && state.request.workspace.vdtId && pendingProposal
+        ? { runId, projectId: state.request.workspace.projectId, vdtId: state.request.workspace.vdtId,
+            proposalId: pendingProposal.id, baseRevisionId: pendingProposal.baseRevisionId, baseRevision: pendingProposal.baseRevision }
+        : undefined)
+    )) throw new PublicSupervisorRunError("AGENT_INTERACTION_STALE", "The proposal has changed. Reopen the current review before approving or declining.");
     if (
       pendingProposal
       && message.proposalId
@@ -820,7 +1044,7 @@ export async function handleStructuredModelAgentMessage(
         controlCall,
         () => {
           const current = agentRuntime.store.getState(runId).pendingMutationProposal;
-          if (!current || current.id !== proposalId) {
+          if (!current || current.id !== proposalId || (expected && (current.baseRevision !== expected.baseRevision || current.baseRevisionId !== expected.baseRevisionId))) {
             return {
               status: "failed" as const,
               resultCode: "APPROVAL_PROPOSAL_NOT_PENDING",
@@ -854,7 +1078,17 @@ export async function handleStructuredModelAgentMessage(
             };
           }
         }
-      );
+      ).catch(error => {
+        // The CLI canary's durable run-state write may see the saved-head
+        // conflict before the Gateway can persist its own stale receipt.
+        if (expected && pendingProposal?.id === proposalId
+          && active.persistence instanceof AgentRunStateSupervisorPersistence
+          && active.bindingDefinition.capability.backendId === "codex_subscription"
+          && error instanceof VdtStorageError && error.code === "REVISION_CONFLICT") {
+          throw new PublicSupervisorRunError("AGENT_INTERACTION_STALE", "The proposal has changed. Reopen the current review before approving or declining.", 409);
+        }
+        throw error;
+      });
       if (
         execution.result.resultCode === "AMBIGUOUS_TOOL_CALL"
         || execution.result.resultCode === "APPROVAL_PROPOSAL_NOT_PENDING"
@@ -923,7 +1157,7 @@ export async function handleStructuredModelAgentMessage(
   }
 
   try {
-    await active.supervisor.submit(input);
+    await submitSkillScopedInput(active, input);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "RUN_NOT_WAITING") {
       throw new PublicSupervisorRunError(
@@ -940,14 +1174,22 @@ export async function handleStructuredModelAgentMessage(
 }
 
 const confirmedSupervisorClosures = new Set<string>();
+
+function hasTerminalRunStatus(snapshot: PublicAgentRunSnapshot): boolean {
+  return snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "cancelled";
+}
 /** Optional selected-layer handoff: cancellation status alone is not cleanup. */
 export async function cancelStructuredModelAgentRun(runId: string, awaitTerminal = false): Promise<PublicAgentRunSnapshot> {
   if (!awaitTerminal) return cancelStructuredModelAgentRunInternal(runId, false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([cancelStructuredModelAgentRunInternal(runId, true), new Promise<never>((_, reject) => {
+    const snapshot = await Promise.race([cancelStructuredModelAgentRunInternal(runId, true), new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409)), 5_000);
     })]);
+    if (snapshot.executionSummary?.backendId === APPLE_NATIVE_PROVIDER_ID && !hasTerminalRunStatus(snapshot)) {
+      throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
+    }
+    return snapshot;
   } catch (error) {
     if (error instanceof PublicSupervisorRunError) throw error;
     if (error instanceof AgentSupervisorPersistenceError) throw new PublicSupervisorRunError(error.code, error.message, 409);
@@ -957,7 +1199,10 @@ export async function cancelStructuredModelAgentRun(runId: string, awaitTerminal
 async function cancelStructuredModelAgentRunInternal(runId: string, awaitTerminal: boolean): Promise<PublicAgentRunSnapshot> {
   const active = activeRuns.get(runId);
   if (!active) {
-    if (confirmedSupervisorClosures.has(runId)) return compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+    if (confirmedSupervisorClosures.has(runId)) {
+      const snapshot = await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+      if (snapshot.executionSummary?.backendId !== APPLE_NATIVE_PROVIDER_ID || hasTerminalRunStatus(snapshot)) return snapshot;
+    }
     const persistence = createAgentSupervisorPersistence(agentRuntime.store);
     try {
       if (!persistence.cancelOrphanedRun) {
@@ -1029,7 +1274,31 @@ async function persistStoppedSupervisorCancellation(runId: string, active: Activ
   if (activeRuns.get(runId) !== active) {
     throw new PublicSupervisorRunError("STALE_SUPERVISOR_CALLBACK", "The stopped Supervisor no longer owns this run.", 409);
   }
-  const persistence = createAgentSupervisorPersistence(agentRuntime.store);
+  const store = agentRuntime.store;
+  const legacyCodexOwner = active.persistence instanceof AgentRunStateSupervisorPersistence
+    && active.bindingDefinition.capability.backendId === "codex_subscription"
+    && active.supervisor.status === "cancelled";
+  const persistence: AgentSupervisorPersistence = legacyCodexOwner
+    ? new AgentRunStateSupervisorPersistence({
+        has: id => store.has(id),
+        getState: id => store.getState(id),
+        updateRun(id, patch) {
+          const binding = active.supervisor.binding;
+          const current = store.getState(runId).supervisorPersistenceV2?.binding;
+          if (id !== runId || activeRuns.get(runId) !== active || current?.bindingId !== binding.bindingId
+            || current.sessionEpoch !== binding.sessionEpoch) {
+            throw new PublicSupervisorRunError("SESSION_EPOCH_MISMATCH", "The stopped Supervisor no longer owns the current session epoch.", 409);
+          }
+          return store.updateRun(id, {
+            ...patch,
+            status: "cancelled",
+            phase: "reporting",
+            pendingQuestions: undefined,
+            completedAt: new Date().toISOString()
+          });
+        }
+      })
+    : createAgentSupervisorPersistence(store);
   try {
     const durable = await persistence.load(runId), binding = active.supervisor.binding;
     if (!durable || durable.binding.bindingId !== binding.bindingId || durable.binding.sessionEpoch !== binding.sessionEpoch) {
@@ -1211,6 +1480,7 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     private readonly definition: StructuredModelAgentExecutionBindingDefinition,
     initialContext?: Extract<ModelAgentTurnDelta, { type: "initial_context" }> | undefined,
     private readonly workingContext?: (() => ReturnType<typeof localModelWorkingContext> & {
+      outcomeAdmissionPending?: boolean;
       skillResolution?: ReturnType<typeof skillResolutionContext>;
       confirmedUserAnswers?: ReturnType<typeof structuralUserAnswers> | undefined;
       constructionPlan?: ReturnType<typeof openAiConstructionPlan>;
@@ -1220,13 +1490,16 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
       requiredDowntimeInputs?: NonNullable<ReturnType<typeof excavationDowntimeCoverage>>["required"] | undefined;
     }) | undefined,
     private readonly personalisation?: (() => AiPersonalisation) | undefined,
-    private readonly latestRequest?: (() => string | undefined) | undefined
+    private readonly latestRequest?: (() => string | undefined) | undefined,
+    private readonly currentRequest?: (() => VdtAgentStartRequest) | undefined,
+    private readonly ollamaSkillGap?: OllamaStructuralSkillGap | undefined
   ) {
     this.initialContextHash = initialContext?.contextHash ?? null;
     this.openAiToolCatalog = usesOpenAiNativeTurns(definition) ? initialContext?.context.tools : undefined;
   }
 
   async completeTurn(request: ModelAgentTurnRequest): Promise<ModelAgentTurnResponse> {
+    this.ollamaSkillGap?.present(request.delta);
     if (request.delta.type === "initial_context") {
       if (
         this.initialContextHash
@@ -1322,7 +1595,14 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
       result.toolName === "vdt.set_decomposition_plan" && (result.status === "succeeded" || result.status === "replayed"));
     const allowPlanRevision = request.delta.type === "human_inputs" || request.delta.type === "checkpoint_inputs"
       || request.delta.type === "manual_reconciliation";
-    const brief = this.knowledge.originalBrief();
+    const originalBrief = this.knowledge.originalBrief();
+    const hostRequest = this.currentRequest?.();
+    const admissionPending = hostRequest ? awaitingOutcome(hostRequest) : false;
+    const brief = hostRequest?.outcomeSelection ? { ...originalBrief, outcome: hostRequest.outcome } : originalBrief;
+    const activeCatalog = Array.isArray(this.openAiToolCatalog) ? this.openAiToolCatalog.filter(tool =>
+      admissionPending ? tool.name === PROPOSE_OUTCOME
+        : tool.name !== PROPOSE_OUTCOME && (hostRequest?.outcome !== "answer"
+          || !tool.mutatesProject && !["approval.request", "user.request_approval"].includes(tool.name))) : undefined;
     const structuralGoal = brief?.outcome === "structural_model";
     if (this.openAiToolCatalog && structuralGoal && request.delta.type === "initial_context"
       && observation?.constructingTree && observation.needsStructure && observation.nodeCount === 1
@@ -1370,7 +1650,7 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
       verifiedFinalText = formatVerifiedResult(locale, verifiedResult);
       payload.userPrompt = JSON.stringify({ userRequest, personalisation, finishReceiptId, verifiedResult });
     }
-    const native = this.openAiToolCatalog && outputSchema ? buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog,
+    const native = this.openAiToolCatalog && outputSchema ? buildOpenAiModelTurn(outputSchema, activeCatalog,
       nativeContext, request.exchangeId, finishReceiptId,
       { planRecorded, allowPlanRevision, ...(observation?.constructionPlan ? { constructionPlan: observation.constructionPlan } : {}),
         ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}),
@@ -1378,6 +1658,11 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     if (this.openAiToolCatalog && !native) {
       throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI turn schema could not be built from the admitted tool catalog.");
     }
+    if (hostRequest?.outcomeSelection) payload.userPrompt = JSON.stringify({
+      ...JSON.parse(payload.userPrompt),
+      outcomeAdmission: admissionPending ? "awaiting_user_goal" : brief?.outcome,
+      ...(hostRequest.artifactIntent ? { artifactIntent: hostRequest.artifactIntent } : {})
+    });
     if (native && verifiedFinalText === undefined) {
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), originalBrief: brief, availableTools: native.toolGuidance,
         ...(observation?.constructingTree && observation.skillResolution?.selectedSkillId === "mining.excavation" ? {
@@ -1417,7 +1702,10 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
         "The bounded structured-turn checkpoint delta exceeded the configured prompt limit."
       );
     }
-    const actionPrompt = native?.hasHierarchyRepair
+    const actionPrompt = admissionPending
+      ? `${OUTCOME_ADMISSION_PROMPT}
+${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} Return one question action or a singleton action_batch. Set assistantMessage to null. Keep the session checkpoint concise.`
+      : native?.hasHierarchyRepair
       ? OPENAI_HIERARCHY_REPAIR_PROMPT
       : native && resolvingSkill
       ? `${structuralGoal && !observation?.skillResolution?.pinnedSkillId ? OPENAI_STRUCTURAL_SKILL_PROMPT : SKILL_RESOLUTION_PROMPT_RULE}
@@ -1457,13 +1745,23 @@ Compare originalBrief with confirmedKnowledge.discoveredSkills. If a tool is nex
       maxTokens: this.definition.modelEngineAdapter.maxTokens ?? 8_000,
       signal: request.signal
     };
-    let parsed = request.responseSchema.parse(await this.provider.completeStructured<typeof payload.input, unknown>(completion));
+    let parsed: z.infer<ModelAgentTurnRequest["responseSchema"]>;
+    try {
+      parsed = request.responseSchema.parse(await this.provider.completeStructured<typeof payload.input, unknown>(completion));
+    } catch (error) {
+      const invalidOutput = error instanceof z.ZodError || errorCode(error, "") === "INCOMPLETE_OUTPUT"
+        || error instanceof Error && /parsed or validated|no message content|invalid structured turn|did not contain valid JSON/iu.test(error.message);
+      if (!admissionPending || request.signal.aborted || !invalidOutput) throw error;
+      // An undecodable first turn grants no authority. Let the user choose the
+      // goal rather than guessing or silently reverting to a legacy finish.
+      return this.confirmTurn(request, request.responseSchema.parse(outcomeRecoveryQuestion(request.exchangeId, resultLocale(userRequest, personalisation?.userInstructions) ?? "en")));
+    }
     const proposedPlan = planningFirstLayer && parsed.action.type === "action_batch"
       ? parsed.action.batch.calls.find(({ toolName }) => toolName === "vdt.set_decomposition_plan")?.args.plan : undefined;
     const planIssues = proposedPlan && observation ? initialPlanIssues(proposedPlan, observation.rootNodeId) : [];
     if (planIssues.length && observation) {
       const checkedPlan = checkedInitialPlanRepair(proposedPlan, observation.rootNodeId, facts);
-      const retry = outputSchema && buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog,
+      const retry = outputSchema && buildOpenAiModelTurn(outputSchema, activeCatalog,
         nativeContext, request.exchangeId, undefined, { reviewInitialPlan: true, ...(checkedPlan ? { initialPlanRepair: checkedPlan } : {}) });
       const userPrompt = JSON.stringify({
         originalBrief: brief, literalUserQuantities: facts, personalisation,
@@ -1505,7 +1803,7 @@ Compare originalBrief with confirmedKnowledge.discoveredSkills. If a tool is nex
         parsed.action.questions = remaining;
       } else {
         if (enterKnownFacts) this.lastSourceReviewRevision = observation.revision;
-        const recovery = buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog, nativeContext, request.exchangeId, undefined, {
+        const recovery = buildOpenAiModelTurn(outputSchema, activeCatalog, nativeContext, request.exchangeId, undefined, {
           continueWithoutQuestion: true, requireOpeningMessage: this.confirmedTurnCount === 0, planRecorded, allowPlanRevision,
           ...(observation.constructionPlan ? { constructionPlan: observation.constructionPlan } : {}),
           ...(observation.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {})
@@ -1564,7 +1862,7 @@ export { OPENAI_STRUCTURAL_RELATIONSHIP_PROMPT, structuralRelationshipQuestion }
 export const OPENAI_STRUCTURAL_SKILL_PROMPT = [
   "Resolve the skill for the exact process in originalBrief and hostObservation.confirmedUserAnswers. If a material process relationship is still unresolved, ask one focused question before choosing a skill or writing a formula. If the user already answered, carry that answer forward instead of re-asking.",
   "Select a specialized skill only when the user supplied process or domain evidence for its scope. A generic KPI name, shared unit or keyword is insufficient. The explicit KPI unit and scope take priority over fallback reporting metadata.",
-  "Use skill.list to review the catalog. Read the applicable candidate and select it with its exact readReceiptId. Use general guidance or report a skill gap when no specialist fits, following the required catalog review."
+  SKILL_RESOLUTION_PROMPT_RULE
 ].join(" ");
 
 export const OPENAI_WORKSPACE_ACTION_PROMPT = [
@@ -1674,20 +1972,21 @@ function createStructuredModelProvider(
   runId: string
 ): AiProvider {
   if (isLocalModelAgentBackend(definition.modelEngineAdapter.providerId)) {
+    const localRoute = agentExecutionBindingRegistry.revalidateLocalRoute(definition);
     return createLocalModelAgentProvider(definition, () => {
       const state = agentRuntime.store.getState(runId);
       const { builder, request } = state;
       if (!builder) throw new Error("The local Model Agent working draft is unavailable.");
       const project = builder.getProject();
-      const requireDerivedRoot = requiresDerivedRootForRun(request);
+      const requireDerivedRoot = !awaitingOutcome(request) && requiresDerivedRootForRun(request);
       const evidence = requireDerivedRoot ? constructionFinishEvidence(project, state) : undefined;
       const structuralPlan = definition.modelEngineAdapter.providerId === "ollama" && requireDerivedRoot
         && request.outcome === "structural_model" ? openAiConstructionPlan(project) : undefined;
       const identityWrapper = requireDerivedRoot ? rootIdentityWrapper(project, request, state) : undefined;
-      let workbookScenarioId: string | undefined;
+      let workbookScenarioId = request.artifactIntent?.scenarioId;
       const ollamaWorkspace = definition.modelEngineAdapter.providerId === "ollama" && !requireDerivedRoot;
       const workspacePrompt = ollamaWorkspace ? excelScenarioRequestPrompt(state) : undefined;
-      if (workspacePrompt) {
+      if (!workbookScenarioId && workspacePrompt && !request.outcomeSelection && !request.outcome) {
         try {
           workbookScenarioId = requestedWorkbookDeliveryScenarioId(project.scenarios, workspacePrompt);
         } catch (error) {
@@ -1697,8 +1996,17 @@ function createStructuredModelProvider(
       const workbookScenario = project.scenarios.find(scenario => scenario.id === workbookScenarioId);
       const restoreVersionId = requestedVersionRestoreId(project.versions, workspacePrompt);
       const namedWorkbookDelivery = workbookScenario ? namedVersionWorkbookDelivery(state, project, builder.getRevision()) : undefined;
+      const outcomeAdmissionInstruction = definition.modelEngineAdapter.providerId === "ollama" && awaitingOutcome(request)
+        ? state.chatMessages.filter(message => message.runId === runId && message.role === "user" && message.kind === "instruction").at(-1)
+        : undefined;
       return {
         ...localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request, project), request.outcome ?? finishReadinessPurpose(request.mode)),
+        outcomeAdmissionPending: awaitingOutcome(request),
+        ...(outcomeAdmissionInstruction ? {
+          outcomeAdmissionInstruction: { id: outcomeAdmissionInstruction.id, text: outcomeAdmissionInstruction.text }
+        } : {}),
+        skillMethodConfirmationRequired: request.skillResolution?.confirmationRequired,
+        pendingSkillMethod: request.skillResolution?.pendingMethod,
         ...(workbookScenario ? { requestedWorkbookScenario: { id: workbookScenario.id, name: workbookScenario.name } } : {}),
         ...(restoreVersionId ? { requestedRestoreVersionId: restoreVersionId } : {}),
         ...(namedWorkbookDelivery ? { namedWorkbookDelivery } : {}),
@@ -1708,7 +2016,12 @@ function createStructuredModelProvider(
         ...(identityWrapper ? { projectReadyForFinish: false, duplicateRootOutput: { nodeId: identityWrapper.id, formula: identityWrapper.formula } } : {}),
         personalisation: request.input.personalisation ?? {}
       };
-    });
+    }, localRoute, definition.modelEngineAdapter.adaptiveReasoning ? receipt => {
+      if (!activeRuns.has(runId) || agentRuntime.store.getState(runId).abortController.signal.aborted) return;
+      agentRuntime.store.appendEvent(runId, { type: "repair_started", title: "Adaptive model repair",
+        message: "The selected Ollama model used its admitted higher setting for a checked plan repair.",
+        metadata: { ...receipt } });
+    } : undefined);
   }
   const providerConfig = {
     ...(definition.modelEngineAdapter.providerConfig ?? {}),
@@ -1735,6 +2048,7 @@ function createSessionBinding(
   projectId: string
 ): AgentSessionBinding {
   const capability = definition.capability;
+  const adaptive = "modelEngineAdapter" in definition ? definition.modelEngineAdapter?.adaptiveReasoning : undefined;
   return {
     schemaVersion: 2,
     bindingId: deriveModelAgentSessionBindingId(definition.bindingId, runId),
@@ -1752,7 +2066,9 @@ function createSessionBinding(
     capabilityEvidenceHash: capability.qualification.evidenceHash,
     settingsHash: hashJson({
       engineAdapterId: capability.engineAdapterId,
-      modelId: definition.modelId
+      modelId: definition.modelId,
+      admission: hostExecutionAdmission(definition),
+      ...(adaptive ? { adaptiveReasoning: adaptive } : {})
     }),
     capabilityProfileHash: hashJson(capability),
     toolCatalogHash: capability.toolCatalogHash,
@@ -1806,12 +2122,14 @@ function createInitialContext(
   builder: VdtBuilderSession
 ): Readonly<Record<string, unknown>> {
   const project = builder.getProject();
+  const research = hostExecutionAdmission(definition).research;
   const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const literalUserQuantities = definition.capability.executionProfile === "external_cli_agent"
     ? collectLiteralUserQuantities([request.input.prompt, request.input.businessContext], request.input.unit)
     : undefined;
   return {
     personalisationPolicy: PERSONALISATION_PROMPT_RULE,
+    ...(awaitingOutcome(request) ? { outcomeAdmissionPolicy: OUTCOME_ADMISSION_PROMPT } : {}),
     ...(request.conversationContext ? { conversationContext: request.conversationContext } : {}),
     ...(request.skillResolution ? { skillResolutionPolicy: SKILL_RESOLUTION_PROMPT_RULE } : {}),
     selectedNode: selectedKpiContext(project, request.input.selectedNodeId),
@@ -1822,6 +2140,7 @@ function createInitialContext(
     brief: {
       mode: request.mode,
       outcome: request.outcome,
+      outcomeSelection: request.outcomeSelection,
       activeScenarioId: request.input.activeScenarioId,
       rootKpi: request.input.rootKpi,
       industry: request.input.industry,
@@ -1851,16 +2170,20 @@ function createInitialContext(
     },
     hierarchyPolicy: {required:requiresHierarchyForRun(request), planStoredOnRoot:true, buildOrder:"complete each factor level before the next", repairTool:"vdt.reparent_branch", validationTool:"vdt.inspect_hierarchy"},
     toolCatalogHash: definition.capability.toolCatalogHash,
-    tools: currentModelAgentToolCatalog().filter(tool => request.outcome !== "answer" || !tool.mutatesProject)
+    tools: currentModelAgentToolCatalog().filter(tool =>
+      (tool.name !== PROPOSE_OUTCOME || awaitingOutcome(request))
+      && (request.outcome !== "answer" || !tool.mutatesProject
+        && !["approval.request", "user.request_approval"].includes(tool.name))
+      && (research || tool.name !== "research.search_web"))
   };
 }
 
-export function structuralUserAnswers(state: Pick<VdtAgentRunState, "runId" | "chatMessages" | "answers">) {
+export function structuralUserAnswers(state: Pick<VdtAgentRunState, "runId" | "chatMessages" | "answers">, excludedQuestionId?: string) {
   const questions = new Map(state.chatMessages
     .filter(message => message.runId === state.runId && message.kind === "question")
     .flatMap(message => (message.questions ?? []).map(question => [question.id, question] as const)));
   return [...questions.values()].flatMap(question => {
-    if (!Object.hasOwn(state.answers, question.id)) return [];
+    if (question.id === excludedQuestionId || !Object.hasOwn(state.answers, question.id)) return [];
     const answer = state.answers[question.id];
     if (answer === undefined || answer === "" || (Array.isArray(answer) && !answer.length)) return [];
     const values = (Array.isArray(answer) ? answer : [answer]).slice(0, 5);
@@ -1879,14 +2202,15 @@ function skillResolutionContext(state: VdtAgentRunState) {
   if (!resolution) return undefined;
   if (resolution.outcome) return { outcome: resolution.outcome, selectedSkillId: state.selectedSkills[0]?.id };
   const pinned = state.request.input.skillSelection;
-  if (pinned?.source === "user") return { pinnedSkillId: pinned.id };
   const reads = state.events.flatMap((event) => event.type === "skill_read" && typeof event.metadata?.id === "string"
     && typeof event.metadata?.readReceiptId === "string"
     ? [{ skillId: event.metadata.id, readReceiptId: event.metadata.readReceiptId }] : []).slice(-12);
+  if (pinned?.source === "user") return { pinnedSkillId: pinned.id, reads: reads.filter(read => read.skillId === pinned.id),
+    confirmationRequired: resolution.confirmationRequired, pendingMethod: resolution.pendingMethod };
   const { catalogBrowsed, catalogComplete, nextOffset, scopedSearchReviewed, candidateIds } = skillCatalogProgress(state);
-  const scopeExcludedSkillIds = excludedExcavationSkillIds(state.request, candidateIds);
   return { catalogBrowsed, catalogComplete, nextOffset, scopedSearchReviewed, candidateIds, reads,
-    ...(scopeExcludedSkillIds.length ? { scopeExcludedSkillIds } : {}) };
+    confirmationRequired: resolution.confirmationRequired,
+    pendingMethod: resolution.pendingMethod };
 }
 
 function createToolContext(runId: string, requirePlanOperands = false): AgentToolContext {
@@ -1906,20 +2230,468 @@ function createToolContext(runId: string, requirePlanOperands = false): AgentToo
   };
 }
 
-function allowTargetTool(
-  request: VdtAgentStartRequest,
-  toolName: string,
-  context: AgentToolContext,
-  outcome: VdtAgentStartRequest["outcome"]
-): boolean {
+function appleNativeSkillTools(
+  selection: NonNullable<ReturnType<typeof skillResolutionContext>>,
+  searched: boolean,
+  gapReviewed: boolean,
+  scopeQuestionReady: boolean
+): string[] {
+  if ("pinnedSkillId" in selection && selection.pinnedSkillId) {
+    return ["skill.read", "skill.select", "user.ask"];
+  }
+  if (!("catalogBrowsed" in selection) || !selection.catalogBrowsed) {
+    return scopeQuestionReady ? ["skill.list", "user.ask"] : ["skill.list"];
+  }
+  const candidates = [
+    ...(selection.catalogComplete ? [] : ["skill.list"]),
+    ...(searched ? [] : ["skill.search"]),
+    "skill.read",
+    ...(selection.reads.length ? ["skill.select"] : []),
+    ...(selection.catalogComplete && gapReviewed ? ["skill.report_gap"] : []),
+    ...(scopeQuestionReady ? ["user.ask"] : [])
+  ];
+  return candidates;
+}
+
+async function submitSkillScopedInput(active: ActiveSupervisorRun, input: AgentHumanInput) {
+  const rollback = (active.appleSkillScope ?? active.ollamaSkillGap)?.queue(input);
+  try {
+    await active.supervisor.submit(input);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error
+      && ["RUN_NOT_WAITING", "MODEL_INPUT_QUEUE_FULL", "MODEL_SESSION_TERMINAL", "MODEL_SESSION_NOT_PAUSED"].includes(String(error.code))) rollback?.();
+    throw error;
+  }
+}
+
+function isAppleSkillScopeInput(input: AgentHumanInput) {
+  return input.type === "user_answer" || input.type === "user_instruction";
+}
+
+class AppleSkillScope {
+  // A queued input fences an older proposal before it reaches the prompt.
+  // A checkpoint can present a waiting question's answer before older
+  // instructions, so reconcile cloned inputs by identity rather than count.
+  private presented = Symbol();
+  private awaitingPresentation: { token: symbol; digest: string }[] = [];
+  private searchProof: { scope: symbol; searchSeq: number } | undefined;
+  private gapScope: symbol | undefined;
+  private measuredWrite: { scope: symbol; toolName: string } | undefined;
+  private readonly readMethods = new Map<string, {
+    skillId: string; version: number; contentHash: string; excerpt: string;
+    formulaTemplates: readonly string[]; executableTopology: boolean;
+  }>();
+  private fullConstruction = false;
+
+  hasQueuedInput() { return this.awaitingPresentation.length > 0; }
+
+  discoveryEvidence(reads: readonly { skillId: string; readReceiptId: string }[], scopedCandidates: ReadonlySet<string>) {
+    const evidence = reads.flatMap(({ skillId, readReceiptId }) => {
+      const method = this.readMethods.get(readReceiptId);
+      if (!method || method.skillId !== skillId) return [];
+      const { version, contentHash, excerpt } = method;
+      return [{ skillId, readReceiptId, version, contentHash, excerpt }];
+    });
+    return evidence.filter(method => scopedCandidates.has(method.skillId))
+      .concat(evidence.filter(method => !scopedCandidates.has(method.skillId)));
+  }
+
+  method(state: VdtAgentRunState) {
+    const selected = state.selectedSkills[0];
+    if (state.request.skillResolution?.outcome !== "selected" || !selected) return;
+    const receipt = state.events.slice().reverse().find(event => event.type === "skill_selected" && event.metadata?.id === selected.id
+      && event.metadata.version === selected.version && event.metadata.contentHash === selected.contentHash)?.metadata?.readReceiptId;
+    if (typeof receipt !== "string") return;
+    const read = this.readMethods.get(receipt);
+    if (!read || read.skillId !== selected.id || read.version !== selected.version || read.contentHash !== selected.contentHash) return;
+    const { excerpt, formulaTemplates, executableTopology } = read;
+    return { id: selected.id, title: selected.title, readReceiptId: receipt,
+      version: read.version, contentHash: read.contentHash, excerpt, formulaTemplates, executableTopology };
+  }
+
+  structuralGuide(state: VdtAgentRunState) {
+    const { request, builder } = state;
+    if (state.status !== "running" || this.fullConstruction || !builder || awaitingOutcome(request)
+      || request.outcome !== "structural_model" || !requiresDerivedRootForRun(request)
+      || request.artifactIntent || request.input.levelOfDetail === "high") return;
+    const method = this.method(state);
+    const outcome = request.skillResolution?.outcome;
+    if (outcome !== "no_applicable_skill" && (outcome !== "selected" || !method || method.executableTopology)) return;
+    const { prompt, businessContext, unit } = request.input;
+    const userMessages = state.chatMessages.filter(message => message.runId === state.runId && message.role === "user");
+    const sources = [prompt, businessContext, ...userMessages.map(message => message.text),
+      ...Object.values(state.answers).flat().map(String)];
+    const literal = collectLiteralUserQuantities(sources, unit);
+    const measurements = literal.complete ? boundedMeasuredFacts(literal.quantities) : undefined;
+    if (!measurements) return;
+    if (measurements.length) {
+      if (outcome !== "selected" || this.hasQueuedInput()
+        || userMessages.some(message => message.kind === "instruction" && message.text?.trim() !== prompt?.trim())) return;
+      const original = collectLiteralUserQuantities([prompt, businessContext], unit);
+      if (!original.complete || !isDeepStrictEqual(measurements, boundedMeasuredFacts(original.quantities))) return;
+    }
+    const guide = appleStructuralGuide(builder.getProject(), measurements);
+    if (guide?.phase === "draft" && request.mode !== "generate_vdt") return;
+    return guide;
+  }
+
+  requiresPlannedOperands(state: VdtAgentRunState) {
+    const phase = this.structuralGuide(state)?.phase;
+    return phase === "add" || phase === "fill" || phase === "formula";
+  }
+
+  private rememberConstructionEvidence(delta: ModelAgentTurnDelta) {
+    const checkpoint = delta.type === "checkpoint_inputs" ? delta.checkpointDelta : delta;
+    if (checkpoint.type !== "tool_results" && checkpoint.type !== "manual_reconciliation") return;
+    for (const result of checkpoint.results) {
+      const ok = result.status === "succeeded" || result.status === "replayed";
+      if ((ok && result.toolName === "vdt.inspect_hierarchy")
+        || (!ok && (result.toolName === "run.request_finish" || result.toolName === "vdt.fill_input_values_batch"
+          || result.toolName === "vdt.update_node"))) {
+        this.fullConstruction = true;
+      }
+      if (!ok || result.toolName !== "skill.read") continue;
+      const receipt = z.object({ output: z.object({
+        id: z.string(), readReceiptId: z.string(), version: z.number(), contentHash: z.string(), excerpt: z.string(),
+        formulaTemplates: z.array(z.string()).optional(), executableTopology: z.unknown().optional()
+      }) }).safeParse(result.payload);
+      if (!receipt.success) continue;
+      const { id, readReceiptId, version, contentHash, excerpt, formulaTemplates, executableTopology } = receipt.data.output;
+      this.readMethods.set(readReceiptId, { skillId: id, version, contentHash, excerpt: excerpt.slice(0, 2_400),
+        formulaTemplates: formulaTemplates?.filter(template => template.length <= 240).slice(0, 8) ?? [],
+        executableTopology: Boolean(executableTopology) });
+      if (this.readMethods.size > 12) {
+        const oldest = this.readMethods.keys().next().value;
+        if (oldest) this.readMethods.delete(oldest);
+      }
+    }
+  }
+
+  queue(input: AgentHumanInput): (() => void) | undefined {
+    if (!isAppleSkillScopeInput(input)) return;
+    const token = Symbol();
+    this.awaitingPresentation.push({ token, digest: hashJson(input) });
+    return () => { this.awaitingPresentation = this.awaitingPresentation.filter(item => item.token !== token); };
+  }
+
+  present(delta: ModelAgentTurnDelta) {
+    this.rememberConstructionEvidence(delta);
+    const inputs = delta.type === "human_input" ? [delta.input]
+      : delta.type === "checkpoint_inputs" ? [
+        ...(delta.checkpointDelta.type === "human_input" ? [delta.checkpointDelta.input] : []),
+        ...delta.inputs
+      ] : delta.type === "human_inputs" ? delta.inputs : [];
+    for (const input of inputs) {
+      if (!isAppleSkillScopeInput(input)) continue;
+      const digest = hashJson(input);
+      const queued = this.awaitingPresentation.findIndex(item => item.digest === digest);
+      if (queued >= 0) this.awaitingPresentation.splice(queued, 1);
+      this.presented = Symbol();
+    }
+    this.gapScope = undefined;
+  }
+
+  hasSearch(searchSeq: number) {
+    return !this.awaitingPresentation.length && this.searchProof?.scope === this.presented && this.searchProof.searchSeq === searchSeq;
+  }
+
+  authorizeGap() {
+    this.gapScope = this.presented;
+  }
+
+  recordMeasuredWrite(guide: ReturnType<typeof appleStructuralGuide>) {
+    const toolName = guide?.measured && guide.phase !== "finish" ? guide.names[0] : undefined;
+    this.measuredWrite = toolName ? { scope: this.presented, toolName } : undefined;
+  }
+
+  registry(source: ToolRegistry) {
+    const registry = new ToolRegistry(source.getMetadata());
+    for (const tool of source.list()) {
+      if (tool.name === "skill.search") registry.register({ ...tool, run: async (context, args) => {
+        const scope = this.presented;
+        if (this.awaitingPresentation.length) throw new AgentToolError("APPLE_SKILL_SCOPE_CHANGED", "Review the newer instruction before searching.");
+        const startSeq = context.store.getState(context.runId).seq;
+        const output = await tool.run(context, args);
+        const search = context.store.getState(context.runId).events.find(event =>
+          event.seq > startSeq && event.type === "skill_search" && event.metadata?.toolName === "skill.search");
+        if (search) {
+          this.searchProof = { scope, searchSeq: search.seq };
+        }
+        return output;
+      } });
+      else if (tool.name === "skill.select") registry.register({ ...tool, run: (context, args) => {
+        // Check at dispatch and immediately after canonical catalog access,
+        // before the tool can propose or persist an exact selection.
+        const scope = this.presented;
+        const assertSkillSelectionScope = () => {
+          if (this.awaitingPresentation.length || this.presented !== scope) {
+            throw new AgentToolError("APPLE_SKILL_SCOPE_CHANGED", "Review the newer instruction before selecting a Skill.");
+          }
+        };
+        assertSkillSelectionScope();
+        return tool.run({ ...context, assertSkillSelectionScope }, args);
+      } });
+      else if (tool.name === "skill.report_gap") registry.register({ ...tool, run: (context, args) => {
+        // Recheck inside dispatch, after the Gateway's async ledger and outbox
+        // writes. The canonical gap tool applies the outcome synchronously.
+        if (this.awaitingPresentation.length || this.gapScope !== this.presented) {
+          throw new AgentToolError("APPLE_SKILL_SCOPE_CHANGED", "Review the current scope and complete Skill discovery before reporting a gap.");
+        }
+        return tool.run(context, args);
+      } });
+      else if (["vdt.create_draft", "vdt.update_node", "vdt.set_decomposition_plan", "vdt.add_drivers_batch",
+        "vdt.fill_input_values_batch", "vdt.set_formula"].includes(tool.name)) registry.register({ ...tool, run: (context, args) => {
+        // The compact evidence and the projected write belong to the scope
+        // shown before model completion, including its independent fill audit.
+        if (this.measuredWrite?.toolName === tool.name
+          && (this.awaitingPresentation.length || this.measuredWrite.scope !== this.presented)) {
+          throw new AgentToolError("APPLE_SKILL_SCOPE_CHANGED", "Review the newer instruction before changing the measured draft.");
+        }
+        return tool.run(context, args);
+      } });
+      else registry.register(tool);
+    }
+    return registry;
+  }
+}
+
+function sameInitialWorkbookRequest(state: VdtAgentRunState, skillScope: AppleSkillScope) {
+  const { request } = state;
+  const users = state.chatMessages.filter(message => message.runId === state.runId && message.role === "user");
+  const original = users[0];
+  return state.status === "running" && request.mode === "continue_project" && request.outcomeSelection === "automatic"
+    && request.outcome === "answer" && request.artifactIntent?.kind === "excel_workbook"
+    && !state.pendingQuestions?.length && !state.pendingMutationProposal && !state.pendingChangeSet
+    && !state.events.some(event => event.type === "mutation_applied")
+    && users.length === 1 && original?.kind === "instruction" && original.text === request.input.prompt
+    && !skillScope.hasQueuedInput();
+}
+
+async function completedAppleWorkbook(runId: string, request: ModelAgentTurnRequest, skillScope: AppleSkillScope, callId: string) {
+  const active = activeRuns.get(runId);
+  if (!active || active.appleSkillScope !== skillScope || request.signal.aborted
+    || request.delta.type !== "tool_results" || request.delta.results.length !== 1) return false;
+  const parsed = vdtGatewayToolResultSchema.safeParse(request.delta.results[0]);
+  if (!parsed.success) return false;
+  const result = parsed.data;
+  const { payload } = result;
+  if (result.externalCallId !== callId || result.toolName !== "export.excel" || result.status !== "succeeded"
+    || result.resultCode !== "OK" || !payload || typeof payload !== "object"
+    || !("projectChanged" in payload) || payload.projectChanged !== false || !("output" in payload)) return false;
+  const initial = agentRuntime.store.getState(runId);
+  if (!sameInitialWorkbookRequest(initial, skillScope)) return false;
+  const saved = await active.persistence.load(runId);
+  const current = agentRuntime.store.getState(runId);
+  if (!saved || saved.finishReceipt || activeRuns.get(runId) !== active || request.signal.aborted
+    || !sameInitialWorkbookRequest(current, skillScope) || !isDeepStrictEqual(current.request, initial.request)
+    || saved.binding.runId !== runId || saved.binding.bindingId !== request.binding.bindingId
+    || saved.binding.sessionEpoch !== request.binding.sessionEpoch) return false;
+  const latest = new Map(saved.toolOperationReceipts.map(entry => [entry.externalCallId, entry]));
+  const receipt = latest.get(callId);
+  const currentRevision = current.builder?.getRevision();
+  if (!receipt || receipt.runId !== runId || receipt.bindingId !== request.binding.bindingId
+    || receipt.sessionEpoch !== request.binding.sessionEpoch || receipt.toolName !== "export.excel"
+    || receipt.state !== "completed" || receipt.resultCode !== "OK" || receipt.resultHash !== result.resultHash
+    || receipt.argsHash !== hashJson({ toolName: "export.excel", args: {} })
+    || typeof currentRevision !== "number" || receipt.expectedRevision !== currentRevision || receipt.committedRevision !== currentRevision
+    // The in-process result contains optional undefined fields omitted by SQLite's JSON receipt.
+    || !receipt.replayResult || hashJson(receipt.replayResult) !== hashJson(result)
+    || hashJson({ resultCode: result.resultCode, payload }) !== result.resultHash
+    || [...latest.values()].some(entry => entry.state === "reserved" || entry.state === "in_flight")) return false;
+  const output = payload.output;
+  return Boolean(output && typeof output === "object" && "status" in output && output.status === "ok"
+    && "savedRevisionId" in output && output.savedRevisionId === current.request.artifactIntent?.revisionId
+    && "revision" in output && output.revision === currentRevision && "artifact" in output
+    && hasBoundWorkbookExport(agentRuntime.store, current, output.artifact));
+}
+
+function appleNativeStage(runId: string, turn: ModelAgentTurnRequest, skillScope: AppleSkillScope): AppleNativeStage {
+  const { delta } = turn;
+  skillScope.present(delta);
+  const context = createToolContext(runId);
+  const state = context.store.getState(runId);
+  const { request, builder } = state;
+  if (!builder) throw new AppleTransportError("invalid_request");
+  const project = builder.getProject();
+  const requireRoot = !awaitingOutcome(request) && requiresDerivedRootForRun(request);
+  const summary = localModelWorkingContext(project, builder.getRevision(), requireRoot,
+    requiresHierarchyForRun(request, project), request.outcome ?? finishReadinessPurpose(request.mode));
+  const selection = skillResolutionContext(state);
+  const discovery = requireRoot && selection && !request.skillResolution?.outcome;
+  let lastSearch: VdtAgentRunState["events"][number] | undefined;
+  const successfulReadReceipts = new Set<string>();
+  const successfulReadSkillIds = new Set<string>();
+  const browsedCatalogIds = new Set<string>();
+  if (discovery && "reads" in selection) {
+    let search: typeof lastSearch;
+    let catalog: unknown;
+    let read: { skillId: string; receipt: string } | undefined;
+    for (const event of state.events) {
+      if (event.runId !== runId) continue;
+      if (event.type === "skill_search" && event.metadata?.toolName === "skill.search") {
+        search = event;
+      } else if (event.type === "skill_search" && event.metadata?.toolName === "skill.list") {
+        catalog = event.metadata.candidateIds;
+      } else if (event.type === "skill_read" && typeof event.metadata?.id === "string" && typeof event.metadata.readReceiptId === "string") {
+        read = { skillId: event.metadata.id, receipt: event.metadata.readReceiptId };
+      } else if (event.type === "tool_call_completed" && event.metadata?.toolName === "skill.search") {
+        if (search && event.metadata.ok === true) lastSearch = search;
+        search = undefined;
+      } else if (event.type === "tool_call_completed" && event.metadata?.toolName === "skill.list") {
+        if (event.metadata.ok === true && Array.isArray(catalog)) {
+          for (const candidate of catalog) if (typeof candidate === "string") browsedCatalogIds.add(candidate);
+        }
+        catalog = undefined;
+      } else if (event.type === "tool_call_completed" && event.metadata?.toolName === "skill.read") {
+        if (read && event.metadata.ok === true) {
+          successfulReadReceipts.add(read.receipt);
+          successfulReadSkillIds.add(read.skillId);
+        }
+        read = undefined;
+      }
+    }
+  }
+  // One successful search per submitted scope. An empty result is evidence,
+  // but neither an earlier scope nor a rejected search can open the gap tool.
+  const searched = lastSearch !== undefined && skillScope.hasSearch(lastSearch.seq);
+  const candidatesFromSearch = lastSearch?.metadata?.candidateIds;
+  const readableCandidates = discovery && "pinnedSkillId" in selection && selection.pinnedSkillId
+    ? [selection.pinnedSkillId]
+    : searched && Array.isArray(candidatesFromSearch) && candidatesFromSearch.length
+      ? candidatesFromSearch.filter((id): id is string => typeof id === "string") : [...browsedCatalogIds];
+  const skillReadableIds = [...new Set(readableCandidates)].filter(id => !successfulReadSkillIds.has(id));
+  const gapReviewed = searched && Array.isArray(candidatesFromSearch)
+    && candidatesFromSearch.every(id => typeof id === "string" && successfulReadSkillIds.has(id))
+    && !request.skillResolution?.pendingMethod && !request.skillResolution?.confirmationRequired;
+  const exposedReads = discovery && "reads" in selection
+    ? selection.reads.filter(read => successfulReadReceipts.has(read.readReceiptId)) : [];
+  // For an unpinned structural tree, ground the first scope question in a
+  // read method or an actual empty search. Browsing a card is provisional.
+  const scopeQuestionReady = request.outcome !== "structural_model" || exposedReads.length > 0
+    || (searched && Array.isArray(candidatesFromSearch) && candidatesFromSearch.length === 0);
+  const skillSelectReceipts = new Map(exposedReads.map(read => [read.skillId, read.readReceiptId]));
+  const pendingMethod = request.skillResolution?.pendingMethod;
+  if (pendingMethod && exposedReads.some(read => read.skillId === pendingMethod.skillId && read.readReceiptId === pendingMethod.readReceiptId)) {
+    // Confirmation belongs to the exact receipt in the pending method.
+    skillSelectReceipts.set(pendingMethod.skillId, pendingMethod.readReceiptId);
+  }
+  const compactGuide = skillScope.structuralGuide(state);
+  const rejectedFormula = delta.type === "tool_results" ? delta.results.find(result =>
+    result.toolName === "vdt.set_formula" && result.status === "failed"
+      && (result.resultCode === "FORMULA_PARSE_ERROR" || result.resultCode === "MISSING_FORMULA_REFERENCES")) : undefined;
+  const resultCode = rejectedFormula?.resultCode;
+  const structuralGuide = compactGuide && typeof resultCode === "string"
+    ? repairFormulaGuide(compactGuide, resultCode) : compactGuide;
+  skillScope.recordMeasuredWrite(structuralGuide);
+  const selectedInput = request.mode === "continue_project" && request.workspace?.vdtId && !requireRoot && !awaitingOutcome(request)
+    ? project.graph.nodes.find(node => node.id === request.input.selectedNodeId && node.type === "input")
+    : undefined;
+  const artifact = request.artifactIntent;
+  const boundWorkbook = request.outcome === "answer" && artifact?.kind === "excel_workbook"
+    && artifact.scenarioId && artifact.revisionId
+    ? { scenarioId: artifact.scenarioId, revisionId: artifact.revisionId, scenarioName: artifact.scenarioName }
+    : undefined;
+  const candidates = awaitingOutcome(request)
+    ? [PROPOSE_OUTCOME, "user.ask"]
+    : discovery
+      ? appleNativeSkillTools(selection, searched, gapReviewed, scopeQuestionReady)
+        .filter(name => (name !== "skill.select" || skillSelectReceipts.size > 0)
+          && (name !== "skill.read" || skillReadableIds.length > 0))
+      : request.outcome === "answer"
+        ? ["project.get_current", "project.get_subtree", "data.list_sources", "data.inspect", "vdt.probe_factor",
+          "scenario.list", "user.ask", ...(artifact?.kind === "excel_workbook" ? ["export.excel"] : []), "run.request_finish"]
+        : structuralGuide?.names ?? ["project.get_subtree", "user.ask", "skill.seed_topology", "vdt.create_draft", "vdt.set_decomposition_plan",
+          "vdt.add_driver", "vdt.add_drivers_batch", "vdt.set_formula", "vdt.update_node", "vdt.fill_input_values_batch",
+          "vdt.validate", "vdt.calculate", "vdt.inspect_hierarchy", "vdt.reparent_branch",
+          "scenario.list", "scenario.edit", "version.edit", "export.excel", "data.list_sources",
+          "data.inspect", "data.aggregate", "data.write_inputs", "run.request_finish"];
+  const registry = new Map(agentRuntime.tools.list().map(tool => [tool.name, tool]));
+  const tools = candidates.flatMap(name => {
+    if (!allowTargetTool(name, context)) return [];
+    if (name === "run.request_finish") {
+      return [{
+        name, summary: "Request verified finish.", arguments: {},
+        validateArguments(value: unknown) {
+          if (!value || typeof value !== "object" || Object.keys(value).length) throw new AppleTransportError("invalid_output");
+          return {};
+        }
+      }];
+    }
+    const tool = registry.get(name);
+    if (!tool) return [];
+    return [{
+      name, summary: tool.description, arguments: structuralGuide ? {} : tool.inputJsonSchema ?? toProviderJsonSchema(tool.inputSchema),
+      validateArguments: (value: unknown) => tool.inputSchema.parse(value) as Readonly<Record<string, unknown>>
+    }];
+  });
+  if (tools.some(({ name }) => name === "skill.report_gap")) skillScope.authorizeGap();
+  const selectedMethod = requireRoot ? skillScope.method(state) : undefined;
+  const readSkillMethods = discovery ? skillScope.discoveryEvidence(exposedReads, new Set(
+    searched && Array.isArray(candidatesFromSearch) ? candidatesFromSearch.filter((id): id is string => typeof id === "string") : []
+  )) : [];
+  const authenticatedWorkbookWorkspace = (quote: string) => {
+    if (!agentRuntime.store.has(runId)) return;
+    const current = agentRuntime.store.getState(runId);
+    const currentWorkspace = current.request.workspace;
+    if (current.status !== "running" || !awaitingOutcome(current.request) || !currentWorkspace?.expectedRevision
+      || currentWorkspace.projectId !== request.workspace?.projectId || currentWorkspace.vdtId !== request.workspace?.vdtId
+      || !isDeepStrictEqual(currentWorkspace.expectedRevision, request.workspace?.expectedRevision)) return;
+    const latest = current.chatMessages.filter(message => message.runId === runId && message.role === "user"
+      && (message.kind === "instruction" || message.kind === "answer")).at(-1);
+    return latest?.kind === "instruction" && latest.text === quote ? currentWorkspace : undefined;
+  };
+  return {
+    tools,
+    ...(structuralGuide ? { structuralGuide } : {}),
+    ...(selectedInput ? { selectedInputUpdateId: selectedInput.id } : {}),
+    ...(boundWorkbook ? { boundWorkbook, verifyCompletedWorkbook: (callId: string) => completedAppleWorkbook(runId, turn, skillScope, callId) } : {}),
+    ...(awaitingOutcome(request) && request.workspace?.vdtId && request.workspace.expectedRevision ? {
+      readExplicitWorkbookRevisionIds: (quote: string) => readExplicitWorkbookRevisionIds(authenticatedWorkbookWorkspace(quote), quote),
+      readExactNamedWorkbookScope: (quote: string) => {
+        const workspace = authenticatedWorkbookWorkspace(quote);
+        return workspace ? readNamedWorkbookScope(agentRuntime.store, runId, workspace, quote) : undefined;
+      }
+    } : {}),
+    ...(discovery ? { skillDiscovery: true as const } : {}),
+    ...(tools.some(({ name }) => name === "skill.list") ? {
+      skillListArguments: selection && "nextOffset" in selection && typeof selection.nextOffset === "number"
+        ? { offset: selection.nextOffset } : {}
+    } : {}),
+    ...(tools.some(({ name }) => name === "skill.select") ? { skillSelectReceipts } : {}),
+    ...(tools.some(({ name }) => name === "skill.read") ? { skillReadableIds } : {}),
+    observation: {
+      revision: summary.revision, selectedNode: selectedKpiContext(project, request.input.selectedNodeId),
+      ...(selectedInput ? { selectedInputBaselineState: Number.isFinite(selectedInput.baselineValue ?? selectedInput.value) ? "populated" : "blank" } : {}),
+      outcome: request.outcome, outcomeAdmissionPending: awaitingOutcome(request),
+      rootNodeId: summary.rootNodeId, nodeCount: summary.nodeCount, nodeColumns: summary.nodeColumns,
+      nodes: summary.nodes.slice(0, 12), nodesTruncated: summary.nodeCount > 12,
+      skillResolution: selection,
+      // Discovery pairs are keyed by the exact submitted question set in the Apple adapter.
+      confirmedUserAnswers: structuralUserAnswers(state, "skill_scope").slice(-6),
+      ...(readSkillMethods.length ? { readSkillMethods } : {}),
+      ...(selectedMethod ? { selectedMethod } : {}),
+      ...(structuralGuide ? { missingPlannedInputIds: structuralGuide.missingNodeIds } : {}),
+      decompositionPlan: summary.decompositionPlan, scenarios: summary.scenarios, versions: summary.versions,
+      unresolvedInputs: summary.unresolvedInputs, calculation: summary.calculation, hierarchy: summary.hierarchy
+    }
+  };
+}
+
+function allowTargetTool(toolName: string, context: AgentToolContext): boolean {
   const state = context.store.getState(context.runId);
   if (state.status !== "running") return false;
+  const { request } = state;
+  const { outcome } = request;
   const canonical = toolName === "approval.request" ? "user.request_approval" : toolName;
+  if (awaitingOutcome(request)) return canonical === PROPOSE_OUTCOME || canonical === "user.ask";
+  if (canonical === PROPOSE_OUTCOME) return false;
+  if (canonical === "export.excel" && request.outcomeSelection === "automatic" && !request.artifactIntent) return false;
   if (canonical === "skill.report_gap" && !state.request.skillResolution) return false;
   if (canonical === "run.request_finish" && state.request.skillResolution && !state.request.skillResolution.outcome) return false;
   const spec = canonical === "run.request_finish" ? undefined : agentRuntime.tools.getSpec(canonical);
   if (outcome === "answer" && canonical === "user.request_approval") return false;
   if ((outcome === "answer" || request.mode === "review_project") && spec?.mutatesProject) return false;
+  if (request.artifactIntent?.successorVersion && spec?.mutatesProject && canonical !== "version.edit") return false;
   if (request.mode !== "generate_vdt" && canonical === "vdt.create_draft") return false;
   return true;
 }
@@ -2048,7 +2820,8 @@ function syncDurableEventToLegacyState(
     const project = builder.getProject();
     agentRuntime.store.updateRun(runId, {
       phase: event.payload.status === "waiting_approval" ? "planning_decomposition" : "building_graph",
-      ...(project.graph.nodes.length > 0 ? { draftProject: project } : {})
+      ...(!awaitingOutcome(agentRuntime.store.getState(runId).request)
+        && agentRuntime.store.getState(runId).request.outcome !== "answer" && project.graph.nodes.length > 0 ? { draftProject: project } : {})
     });
     agentRuntime.store.appendEvent(runId, {
       type: "tool_call_completed",
@@ -2199,7 +2972,7 @@ function applyManualProjectChange(
   } else {
     return;
   }
-  agentRuntime.store.updateRun(runId, { draftProject: state.builder.getProject() });
+  if (!awaitingOutcome(state.request)) agentRuntime.store.updateRun(runId, { draftProject: state.builder.getProject() });
 }
 
 function hasNewImmediateChild(request: VdtAgentStartRequest, builder: VdtBuilderSession): boolean {
